@@ -917,7 +917,7 @@ class DictTest(unittest.TestCase):
         b['a'] = 1
 
         self.assertGreater(size_b, size_a)
-        self.assertEqual(list(a), ['x', 'y', 'z', 'a', 'b'])
+        self.assertEqual(list(a), ['4', 'y', 'z', 'a', 'b'])
         self.assertEqual(list(b), ['x', 'y', 'z', 'b', 'a'])
 
     @support.cpython_only

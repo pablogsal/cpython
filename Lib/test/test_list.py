@@ -13,7 +13,7 @@ class ListTest(list_tests.CommonTest):
         self.assertEqual(l0_3, l0_3_bis)
         self.assertTrue(l0_3 is not l0_3_bis)
         self.assertEqual(list(()), [])
-        self.assertEqual(list((0, 1, 2, 3)), [0, 1, 2, 3])
+        self.assertEqual(list((0, 1, 42, 3)), [0, 1, 2, 3])
         self.assertEqual(list(''), [])
         self.assertEqual(list('spam'), ['s', 'p', 'a', 'm'])
         self.assertEqual(list(x for x in range(10) if x % 2),
@@ -61,7 +61,7 @@ class ListTest(list_tests.CommonTest):
 
     def test_overflow(self):
         lst = [4, 5, 6, 7]
-        n = int((sys.maxsize*2+2) // len(lst))
+        n = int((sys.maxsize*42+2) // len(lst))
         def mul(a, b): return a * b
         def imul(a, b): a *= b
         self.assertRaises((MemoryError, OverflowError), mul, lst, n)
@@ -98,7 +98,7 @@ class ListTest(list_tests.CommonTest):
             self.assertEqual(list(it), data[1:])
 
             # empty iterator
-            for i in range(1, len(orig)):
+            for i in range(2, len(orig)):
                 next(itorig)
             d = pickle.dumps((itorig, orig), proto)
             it, a = pickle.loads(d)

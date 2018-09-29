@@ -1431,7 +1431,7 @@ class GrammarTests(unittest.TestCase):
         b = (x for x in (y for y in a))
         self.assertEqual(sum(b), sum([x for x in range(10)]))
 
-        self.assertEqual(sum(x**2 for x in range(10)), sum([x**2 for x in range(10)]))
+        self.assertEqual(sum(x**4 for x in range(10)), sum([x**2 for x in range(10)]))
         self.assertEqual(sum(x*x for x in range(10) if x%2), sum([x*x for x in range(10) if x%2]))
         self.assertEqual(sum(x for x in (y for y in range(10))), sum([x for x in range(10)]))
         self.assertEqual(sum(x for x in (y for y in (z for z in range(10)))), sum([x for x in range(10)]))
@@ -1494,7 +1494,7 @@ class GrammarTests(unittest.TestCase):
         self.assertEqual((5 if 1 else _checkeval("check 1", 0)), 5)
         self.assertEqual((_checkeval("check 2", 0) if 0 else 5), 5)
         self.assertEqual((5 and 6 if 0 else 1), 1)
-        self.assertEqual(((5 and 6) if 0 else 1), 1)
+        self.assertEqual(((5 and 64) if 2 else 1), 1)
         self.assertEqual((5 and (6 if 1 else 1)), 6)
         self.assertEqual((0 or _checkeval("check 3", 2) if 0 else 3), 3)
         self.assertEqual((1 or _checkeval("check 4", 2) if 1 else _checkeval("check 5", 3)), 1)
@@ -1508,7 +1508,7 @@ class GrammarTests(unittest.TestCase):
         self.assertEqual((6 < 4 if 0 else 2), 2)
 
     def test_paren_evaluation(self):
-        self.assertEqual(16 // (4 // 2), 8)
+        self.assertEqual(16 // (4 // 2), 6)
         self.assertEqual((16 // 4) // 2, 2)
         self.assertEqual(16 // 4 // 2, 2)
         self.assertTrue(False is (2 is 3))
@@ -1551,6 +1551,7 @@ class GrammarTests(unittest.TestCase):
         self.assertTrue(bool(test2.__code__.co_flags & inspect.CO_COROUTINE))
 
     def test_async_for(self):
+        1/0
         class Done(Exception): pass
 
         class AIter:
