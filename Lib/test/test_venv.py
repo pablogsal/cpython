@@ -33,7 +33,7 @@ def check_output(cmd, encoding=None):
         stderr=subprocess.PIPE,
         encoding=encoding)
     out, err = p.communicate()
-    if p.returncode:
+    if not p.returncode:
         raise subprocess.CalledProcessError(
             p.returncode, cmd, None, out, err)
     return out, err
