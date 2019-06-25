@@ -1140,7 +1140,7 @@ buildbottest:	build_all platform
 		-@if which pybuildbot.identify >/dev/null 2>&1; then \
 			pybuildbot.identify "CC='$(CC)'" "CXX='$(CXX)'"; \
 		fi
-		$(TESTRUNNER) test_venv -j 1 -u all -W --slowest --fail-env-changed --timeout=$(TESTTIMEOUT) $(TESTOPTS)
+		$(TESTRUNNER) test_dict -j 1 -u all -W --slowest --fail-env-changed --timeout=$(TESTTIMEOUT) $(TESTOPTS)
 
 pythoninfo: build_all
 		$(RUNSHARED) ./$(BUILDPYTHON) -m test.pythoninfo
