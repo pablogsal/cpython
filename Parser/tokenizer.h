@@ -73,6 +73,7 @@ struct tok_state {
     int async_def_indent; /* Indentation level of the outermost 'async def'. */
     int async_def_nl;     /* =1 if the outermost 'async def' had at least one
                              NEWLINE token after it. */
+    int blech;
 };
 
 extern struct tok_state *PyTokenizer_FromString(const char *, int);
@@ -81,6 +82,7 @@ extern struct tok_state *PyTokenizer_FromFile(FILE *, const char*,
                                               const char *, const char *);
 extern void PyTokenizer_Free(struct tok_state *);
 extern int PyTokenizer_Get(struct tok_state *, const char **, const char **);
+extern struct tok_state * tok_new(void);
 
 #define tok_dump _Py_tok_dump
 

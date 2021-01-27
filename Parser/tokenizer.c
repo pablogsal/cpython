@@ -37,7 +37,7 @@
 #define TABSIZE 8
 
 /* Forward */
-static struct tok_state *tok_new(void);
+struct tok_state *tok_new(void);
 static int tok_nextc(struct tok_state *tok);
 static void tok_backup(struct tok_state *tok, int c);
 
@@ -48,7 +48,7 @@ static const char* type_comment_prefix = "# type: ";
 
 /* Create and initialize a new tok_state structure */
 
-static struct tok_state *
+struct tok_state *
 tok_new(void)
 {
     struct tok_state *tok = (struct tok_state *)PyMem_Malloc(
@@ -86,6 +86,8 @@ tok_new(void)
     tok->async_def = 0;
     tok->async_def_indent = 0;
     tok->async_def_nl = 0;
+
+    tok->blech = 0;
 
     return tok;
 }
@@ -363,6 +365,11 @@ fp_readl(char *s, int size, struct tok_state *tok)
     {
         buf = PyUnicode_AsUTF8AndSize(bufobj, &buflen);
         if (buf == NULL) {
+            goto error;
+        }
+    }
+    else if (PyBytes_CheckExact(bufobj)) {
+        if (PyBytes_AsStringAndSize(bufobj, &buf, &buflen) == -1) {
             goto error;
         }
     }
@@ -832,7 +839,7 @@ tok_nextc(struct tok_state *tok)
         }
         if (tok->done != E_OK)
             return EOF;
-        if (tok->fp == NULL) {
+        if (tok->fp == NULL && !tok->blech) {
             char *end = strchr(tok->inp, '\n');
             if (end != NULL)
                 end++;
@@ -849,6 +856,8 @@ tok_nextc(struct tok_state *tok)
             tok->lineno++;
             tok->inp = end;
             return Py_CHARMASK(*tok->cur++);
+        }
+        else if (tok->fp == NULL && tok->blech) {
         }
         if (tok->prompt != NULL) {
             char *newtok = PyOS_Readline(stdin, stdout, tok->prompt);
