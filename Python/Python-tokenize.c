@@ -42,12 +42,14 @@ typedef struct {
 _tokenizer.tokenizeriter.__new__ as tokenizeriter_new
 
     readline: object
+    encoding: str
     /
 [clinic start generated code]*/
 
 static PyObject *
-tokenizeriter_new_impl(PyTypeObject *type, PyObject *readline)
-/*[clinic end generated code: output=ac00c7cc655eaba2 input=2892a20181ed295f]*/
+tokenizeriter_new_impl(PyTypeObject *type, PyObject *readline,
+                       const char *encoding)
+/*[clinic end generated code: output=6cb601519163ec24 input=2d3e008380a2742c]*/
 {
     tokenizeriterobject* self = (tokenizeriterobject*) type->tp_alloc(type, 0);
     if (self == NULL) {
@@ -57,6 +59,7 @@ tokenizeriter_new_impl(PyTypeObject *type, PyObject *readline)
     if (self->tok == NULL) {
         return NULL;
     }
+    self->tok->filename = PyUnicode_FromString("<string>");
     self->tok->blech = 1;
     if ((self->tok->buf = (char *)PyMem_Malloc(BUFSIZ)) == NULL) {
         PyTokenizer_Free(self->tok);
@@ -69,12 +72,12 @@ tokenizeriter_new_impl(PyTypeObject *type, PyObject *readline)
     self->tok->decoding_state = STATE_NORMAL;
     self->tok->read_coding_spec = 1;
     self->tok->enc = NULL;
-    self->tok->encoding = (char *)PyMem_Malloc(6);
+    self->tok->encoding = (char *)PyMem_Malloc(strlen(encoding)+1);
     if (!self->tok->encoding) {
         PyTokenizer_Free(self->tok);
         return NULL;
     }
-    strcpy(self->tok->encoding, "utf-8");
+    strcpy(self->tok->encoding, encoding);
 
     Py_INCREF(readline);
     self->tok->decoding_readline = readline;

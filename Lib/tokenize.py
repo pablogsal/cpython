@@ -430,9 +430,18 @@ def tokenize(readline):
 
 import _tokenize as __tokenize
 def _tokenize(readline, encoding):
-    tok = __tokenize.TokenizerIter(readline)
+    if encoding is not None:
+        if encoding == "utf-8-sig":
+            # BOM will already have been stripped.
+            encoding = "utf-8"
+        yield TokenInfo(ENCODING, encoding, (0, 0), (0, 0), '')
+    else:
+        encoding = "utf-8"
+    tok = __tokenize.TokenizerIter(readline, encoding)
     for t in tok:
         str, type,  lineno, end_lineno, col_offset, end_col_offset, line = t
+        if str in EXACT_TOKEN_TYPES:
+            type = OP
         yield TokenInfo(type, str, (lineno, col_offset), (end_lineno, end_col_offset), line)
 
 def generate_tokens(readline):
