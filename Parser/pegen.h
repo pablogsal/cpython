@@ -146,6 +146,9 @@ void *_PyPegen_raise_error_known_location(Parser *p, PyObject *errtype,
                                           const char *errmsg, va_list va);
 void *_PyPegen_dummy_name(Parser *p, ...);
 
+void * _PyPegen_seq_first_item(asdl_seq *seq);
+#define PyPegen_first_item(seq, type) ((type) asdl_seq_GET_UNTYPED(seq, 0))
+
 void * _PyPegen_seq_last_item(asdl_seq *seq);
 #define PyPegen_last_item(seq, type) ((type)_PyPegen_seq_last_item((asdl_seq*)seq))
 

@@ -860,6 +860,9 @@ expression_without_invalid[expr_ty]:
 invalid_expression:
     # !(NAME STRING) is not matched so we don't show this error with some invalid string prefixes like: kf"dsfsdf"
     # Soft keywords need to also be ignored because they can be parsed as NAME NAME
+    |  STRING a=(!STRING expression_without_invalid)+ STRING {
+        RAISE_SYNTAX_ERROR_KNOWN_RANGE( PyPegen_first_item(a, expr_ty), PyPegen_last_item(a, expr_ty),
+        "invalid syntax. Is this supposed to be part of the string?") }
     | !(NAME STRING | SOFT_KEYWORD) a=disjunction b=expression_without_invalid {
         RAISE_SYNTAX_ERROR_KNOWN_RANGE(a, b, "invalid syntax. Perhaps you forgot a comma?") }
 
