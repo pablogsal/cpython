@@ -36,13 +36,11 @@ static Py_hash_t
 union_hash(PyObject *self)
 {
     unionobject *alias = (unionobject *)self;
-    PyObject *args = PyFrozenSet_New(alias->args);
-    if (args == NULL) {
-        return (Py_hash_t)-1;
+    Py_hash_t h1 = PyObject_Hash(alias->args);
+    if (h1 == -1) {
+        return -1;
     }
-    Py_hash_t hash = PyObject_Hash(args);
-    Py_DECREF(args);
-    return hash;
+    return h1;
 }
 
 static int
@@ -187,9 +185,9 @@ union_richcompare(PyObject *a, PyObject *b, int op)
             }
         }
     } else {
-        Py_DECREF(a_set);
-        Py_DECREF(b_set);
-        Py_RETURN_NOTIMPLEMENTED;
+        if (PySet_Add(b_set, b) == -1) {
+            goto exit;
+        }
     }
     result = PyObject_RichCompare(a_set, b_set, op);
 exit:
@@ -260,8 +258,8 @@ dedup_and_flatten_args(PyObject* args)
     for (Py_ssize_t i = 0; i < arg_length; i++) {
         int is_duplicate = 0;
         PyObject* i_element = PyTuple_GET_ITEM(args, i);
-        for (Py_ssize_t j = 0; j < added_items; j++) {
-            PyObject* j_element = PyTuple_GET_ITEM(new_args, j);
+        for (Py_ssize_t j = i + 1; j < arg_length; j++) {
+            PyObject* j_element = PyTuple_GET_ITEM(args, j);
             int is_ga = PyObject_TypeCheck(i_element, &Py_GenericAliasType) &&
                         PyObject_TypeCheck(j_element, &Py_GenericAliasType);
             // RichCompare to also deduplicate GenericAlias types (slower)
@@ -551,25 +549,17 @@ _Py_Union(PyObject *args)
         }
     }
 
-    args = dedup_and_flatten_args(args);
-    if (args == NULL) {
-        return NULL;
-    }
-    if (PyTuple_GET_SIZE(args) == 1) {
-        PyObject *result1 = PyTuple_GET_ITEM(args, 0);
-        Py_INCREF(result1);
-        Py_DECREF(args);
-        return result1;
-    }
-
     result = PyObject_GC_New(unionobject, &_Py_UnionType);
     if (result == NULL) {
-        Py_DECREF(args);
         return NULL;
     }
 
     result->parameters = NULL;
-    result->args = args;
+    result->args = dedup_and_flatten_args(args);
     _PyObject_GC_TRACK(result);
+    if (result->args == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
     return (PyObject*)result;
 }

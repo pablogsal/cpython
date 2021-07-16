@@ -1494,9 +1494,9 @@ pysqlite_collation_callback(
         goto finally; /* failed to allocate strings */
     }
 
-    PyObject *args[] = { string1, string2 };  // Borrowed refs.
-    retval = PyObject_Vectorcall(callback, args, 2, NULL);
-    if (retval == NULL) {
+    retval = PyObject_CallFunctionObjArgs(callback, string1, string2, NULL);
+
+    if (!retval) {
         /* execution failed */
         goto finally;
     }
