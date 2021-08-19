@@ -783,6 +783,7 @@ atom[expr_ty]:
     | 'True' { _PyAST_Constant(Py_True, NULL, EXTRA) }
     | 'False' { _PyAST_Constant(Py_False, NULL, EXTRA) }
     | 'None' { _PyAST_Constant(Py_None, NULL, EXTRA) }
+    | gstring
     | &STRING strings
     | NUMBER
     | &'(' (tuple | group | genexp)
@@ -850,6 +851,12 @@ lambda_param[arg_ty]: a=NAME { _PyAST_arg(a->v.Name.id, NULL, NULL, EXTRA) }
 
 # LITERALS
 # ========
+
+gstring_middle[FStringMiddle*]:
+    | FSTRING_MIDDLE '{' b=expression '}' { _PyPegen_fstring_middle(p, a, b) }
+
+gstring[expr_ty]:
+    | a=FSTRING_START b=gstring_middle* c=FSTRING_END { deal_with_gstring2(p, a, b, c) }
 
 strings[expr_ty] (memo): a=STRING+ { _PyPegen_concatenate_strings(p, a) }
 

@@ -87,6 +87,8 @@ tok_new(void)
     tok->async_def_nl = 0;
     tok->interactive_underflow = IUNDERFLOW_NORMAL;
 
+    tok->tok_mode_stack[0] = (tokenizer_mode){.kind =TOK_REGULAR_MODE, .f_string_quote='\0', .f_string_quote_size = 0};
+    tok->tok_mode_stack_index = 0;
     return tok;
 }
 
@@ -1489,6 +1491,29 @@ tok_get(struct tok_state *tok, const char **p_start, const char **p_end)
     /* Set start of current token */
     tok->start = tok->cur - 1;
 
+    tokenizer_mode *current_tok = &(tok->tok_mode_stack[tok->tok_mode_stack_index]);
+    if (current_tok->kind == TOK_FSTRING_MODE) {
+        while (c != '{' && c != current_tok->f_string_quote) {
+            c = tok_nextc(tok);
+        }
+        if (c == '{') {
+            tok_backup(tok, c);
+            *p_start = tok->start;
+            *p_end = tok->cur;
+            tok->tok_mode_stack[++tok->tok_mode_stack_index].kind = TOK_REGULAR_MODE;
+            printf ("fstring middle: '%.*s'\n", (int)(*p_end-*p_start), tok->start);
+            return FSTRING_MIDDLE;
+        } else {
+            *p_start = tok->start;
+            *p_end = tok->cur;
+            tok->tok_mode_stack_index--;
+            printf ("fstring middle: '%.*s'\n", (int)(*p_end-*p_start), tok->start);
+            return FSTRING_END;
+        }
+        // TODO: Remove this or fix
+        __asm__("int3");
+    }
+
     /* Skip comment, unless it's a type comment */
     if (c == '#') {
         const char *prefix, *p, *type_start;
@@ -1564,7 +1589,7 @@ tok_get(struct tok_state *tok, const char **p_start, const char **p_end)
     nonascii = 0;
     if (is_potential_identifier_start(c)) {
         /* Process the various legal combinations of b"", r"", u"", and f"". */
-        int saw_b = 0, saw_r = 0, saw_u = 0, saw_f = 0;
+        int saw_b = 0, saw_r = 0, saw_u = 0, saw_f = 0, saw_g = 0;
         while (1) {
             if (!(saw_b || saw_u || saw_f) && (c == 'b' || c == 'B'))
                 saw_b = 1;
@@ -1581,11 +1606,17 @@ tok_get(struct tok_state *tok, const char **p_start, const char **p_end)
             else if (!(saw_f || saw_b || saw_u) && (c == 'f' || c == 'F')) {
                 saw_f = 1;
             }
+            else if (!(saw_g || saw_b || saw_u) && (c == 'g' || c == 'G')) {
+                saw_g = 1;
+            }
             else {
                 break;
             }
             c = tok_nextc(tok);
             if (c == '"' || c == '\'') {
+                if (saw_g) {
+                    goto f_string_quote;
+                }
                 goto letter_quote;
             }
         }
@@ -1890,6 +1921,39 @@ tok_get(struct tok_state *tok, const char **p_start, const char **p_end)
         return NUMBER;
     }
 
+  f_string_quote:
+    if (*tok->start == 'g' && (c == '\'' || c == '"')) {
+        int quote = c;
+        int quote_size = 1;             /* 1 or 3 */
+        int end_quote_size = 0;
+
+        /* Find the quote size and start of string */
+        c = tok_nextc(tok);
+        if (c == quote) {
+            c = tok_nextc(tok);
+            if (c == quote) {
+                quote_size = 3;
+            }
+            else {
+                // TODO: What should we do here?
+                end_quote_size = 1;     /* empty string found */
+            }
+        }
+        if (c != quote) {
+            tok_backup(tok, c);
+        }
+
+
+        *p_start = tok->start;
+        *p_end = tok->cur;
+        tokenizer_mode *current_tok = &(tok->tok_mode_stack[++tok->tok_mode_stack_index]);
+        current_tok->kind = TOK_FSTRING_MODE;
+        current_tok->f_string_quote = quote;
+        current_tok->f_string_quote_size = quote_size;
+        printf ("fstring start: '%.*s'\n", (int)(*p_end-*p_start), tok->start);
+        return FSTRING_START;
+    }
+
   letter_quote:
     /* String */
     if (c == '\'' || c == '"') {
@@ -2037,6 +2101,11 @@ tok_get(struct tok_state *tok, const char **p_start, const char **p_end)
                         "opening parenthesis '%c'",
                         c, opening);
             }
+        }
+
+        if (tok->tok_mode_stack_index > 0) {
+            tok->tok_mode_stack_index--;
+            printf("Decreasing stack mode to %d\n", tok->tok_mode_stack[tok->tok_mode_stack_index].kind);
         }
         break;
     }

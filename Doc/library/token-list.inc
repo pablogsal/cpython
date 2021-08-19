@@ -213,6 +213,12 @@
 
 .. data:: SOFT_KEYWORD
 
+.. data:: FSTRING_START
+
+.. data:: FSTRING_MIDDLE
+
+.. data:: FSTRING_END
+
 .. data:: ERRORTOKEN
 
 .. data:: N_TOKENS

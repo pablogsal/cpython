@@ -70,8 +70,11 @@ extern "C" {
 #define TYPE_IGNORE     57
 #define TYPE_COMMENT    58
 #define SOFT_KEYWORD    59
-#define ERRORTOKEN      60
-#define N_TOKENS        64
+#define FSTRING_START   60
+#define FSTRING_MIDDLE  61
+#define FSTRING_END     62
+#define ERRORTOKEN      63
+#define N_TOKENS        67
 #define NT_OFFSET       256
 
 /* Special definitions for cooperation with parser */

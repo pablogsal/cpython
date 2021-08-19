@@ -27,6 +27,17 @@ enum interactive_underflow_t {
     IUNDERFLOW_STOP,
 };
 
+enum tokenizer_mode_kind_t {
+    TOK_REGULAR_MODE,
+    TOK_FSTRING_MODE,
+};
+
+typedef struct _tokenizer_mode {
+    enum tokenizer_mode_kind_t kind;
+    char f_string_quote;
+    int f_string_quote_size;
+} tokenizer_mode;
+
 /* Tokenizer state */
 struct tok_state {
     /* Input state; buf <= cur <= inp <= end */
@@ -84,6 +95,10 @@ struct tok_state {
                              NEWLINE token after it. */
     /* How to proceed when asked for a new token in interactive mode */
     enum interactive_underflow_t interactive_underflow;
+
+    // TODO: Factor this into its own thing
+    tokenizer_mode tok_mode_stack[MAXLEVEL];
+    int tok_mode_stack_index;
 };
 
 extern struct tok_state *PyTokenizer_FromString(const char *, int);

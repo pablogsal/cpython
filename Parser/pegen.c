@@ -2276,6 +2276,36 @@ _PyPegen_keyword_or_starred(Parser *p, void *element, int is_keyword)
     return a;
 }
 
+
+/* Construct a fstring middle chunk */
+FStringMiddle *
+_PyPegen_fstring_middle(Parser *p, Token *t, expr_ty expression)
+{
+    FStringMiddle *a = _PyArena_Malloc(p->arena, sizeof(FStringMiddle));
+    if (!a) {
+        return NULL;
+    }
+    expr_ty the_str = _PyAST_Constant(t->bytes, NULL, t->lineno,
+                                      t->col_offset, t->end_lineno,
+                                      t->end_col_offset, p->arena);
+    if (the_str == NULL) {
+        return NULL;
+    }
+    a->string = the_str;
+    // Fix the formatting
+    expr_ty the_expression = _PyAST_FormattedValue(expression, -1,
+                                                   NULL, expression->lineno,
+                                                   expression->col_offset,
+                                                   expression->end_lineno,
+                                                   expression->end_col_offset,
+                                                   p->arena);
+    if (the_expression == NULL) {
+        return NULL;
+    }
+    a->expression = the_expression;
+    return a;
+}
+
 /* Get the number of starred expressions in an asdl_seq* of KeywordOrStarred*s */
 static int
 _seq_number_of_starred_exprs(asdl_seq *seq)
@@ -2605,3 +2635,29 @@ expr_ty _PyPegen_collect_call_seqs(Parser *p, asdl_expr_seq *a, asdl_seq *b,
     return _PyAST_Call(_PyPegen_dummy_name(p), args, keywords, lineno,
                        col_offset, end_lineno, end_col_offset, arena);
 }
+
+expr_ty
+deal_with_gstring2(Parser *p, Token* a, asdl_seq* expr, Token*b) {
+    Py_ssize_t expr_items = asdl_seq_LEN(expr);
+    asdl_expr_seq *seq = _Py_asdl_expr_seq_new(expr_items * 2 + 1, p->arena);
+    if (seq == NULL) {
+        return NULL;
+    }
+    Py_ssize_t i = 0;
+    for (i= 0; i < expr_items; i++) {
+        FStringMiddle* chunk = (FStringMiddle*)asdl_seq_GET_UNTYPED(expr, i);
+        asdl_seq_SET(seq,  2*i, chunk->string);
+        asdl_seq_SET(seq,  2*i + 1, chunk->expression);
+    }
+    expr_ty the_str = _PyAST_Constant(b->bytes, NULL, b->lineno,
+                              b->col_offset, b->end_lineno,
+                              b->end_col_offset, p->arena);
+    if (the_str == NULL) {
+        return NULL;
+    }
+    asdl_seq_SET(seq, expr_items*2, the_str);
+    return _PyAST_JoinedStr(seq, a->lineno, a->col_offset,
+                            b->end_lineno, b->end_col_offset,
+                            p->arena);
+}
+
