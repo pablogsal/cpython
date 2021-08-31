@@ -47,6 +47,20 @@
 #  error "ceval.c must be build with Py_BUILD_CORE define for best performance"
 #endif
 
+// TODO(inlined-eval): Tidy the forward defs;
+
+static PyObject *
+make_coro(PyThreadState *tstate, PyFrameConstructor *con,
+          PyObject *locals,
+          PyObject* const* args, size_t argcount,
+          PyObject *kwnames);
+
+static InterpreterFrame *
+_PyEvalFramePushAndInit(PyThreadState *tstate, PyFrameConstructor *con,
+                        PyObject *locals, PyObject* const* args,
+                        size_t argcount, PyObject *kwnames, int steal_args);
+
+
 _Py_IDENTIFIER(__name__);
 
 /* Forward declarations */
@@ -1516,6 +1530,9 @@ trace_function_entry(PyThreadState *tstate, InterpreterFrame *frame)
     return 0;
 }
 
+static int
+_PyEvalFrameClearAndPop(PyThreadState *tstate, InterpreterFrame * frame);
+
 PyObject* _Py_HOT_FUNCTION
 _PyEval_EvalFrameDefault(PyThreadState *tstate, InterpreterFrame *frame, int throwflag)
 {
@@ -1547,8 +1564,10 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, InterpreterFrame *frame, int thr
     CFrame *prev_cframe = tstate->cframe;
     cframe.use_tracing = prev_cframe->use_tracing;
     cframe.previous = prev_cframe;
+    cframe.depth = 0;
     tstate->cframe = &cframe;
 
+start:
     /* push frame */
     tstate->frame = frame;
 
@@ -1573,6 +1592,8 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, InterpreterFrame *frame, int thr
         }
     }
 
+enter_frame:
+    tstate->frame = frame;
 
     PyObject *names = co->co_names;
     PyObject *consts = co->co_consts;
@@ -2547,8 +2568,32 @@ check_eval_breaker:
         TARGET(RETURN_VALUE): {
             retval = POP();
             assert(EMPTY());
-            frame->f_state = FRAME_RETURNED;
-            _PyFrame_SetStackPointer(frame, stack_pointer);
+
+            if (cframe.depth > 0) {
+                // Clean the old frame here.
+                cframe.depth--;
+                frame->f_state = FRAME_RETURNED;
+                InterpreterFrame* old_frame = frame;
+                frame = frame->previous;
+                assert(frame->stacktop != -1);
+                _PyFrame_StackPush(frame, retval);
+                // TODO(ceval-inline): Remove co as a local
+                co = frame->f_code;
+
+                // TODO(ceval-inline): For some reason, the stacktop can be set to -1 :(
+                _PyFrame_SetStackPointer(old_frame, stack_pointer);
+
+                assert(_PyFrame_GetStackPointer(old_frame) == _PyFrame_Stackbase(old_frame));
+                if (_PyEvalFrameClearAndPop(tstate, old_frame)) {
+                    retval = NULL;
+                }
+                retval = NULL;
+                goto enter_frame;
+            } else {
+                frame->f_state = FRAME_RETURNED;
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+            }
+
             goto exiting;
         }
 
@@ -4605,19 +4650,91 @@ check_eval_breaker:
             CHECK_EVAL_BREAKER();
             DISPATCH();
         }
-
         TARGET(CALL_FUNCTION): {
             PREDICTED(CALL_FUNCTION);
             PyObject **sp, *res;
-            sp = stack_pointer;
-            res = call_function(tstate, &sp, oparg, NULL, cframe.use_tracing);
-            stack_pointer = sp;
-            PUSH(res);
-            if (res == NULL) {
-                goto error;
+
+            PyObject *func = *(stack_pointer - oparg - 1);
+
+            // ------------ Check if call cal be optimized
+            int optimize_call = 0;
+            if (Py_TYPE(func) == &PyFunction_Type) {
+                PyCodeObject *co = (PyCodeObject*)((PyFunctionObject*)(func))->func_code;
+                int is_coro = co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
+                if (!is_coro && co->co_flags == 3) {
+                    optimize_call = strstr(PyUnicode_AsUTF8(((PyCodeObject*)((PyFunctionObject*)(func))->func_code)->co_name), "blech") != NULL;
+                }
             }
-            CHECK_EVAL_BREAKER();
-            DISPATCH();
+            // ------------ 
+
+
+            if (Py_TYPE(func) != &PyFunction_Type || optimize_call == 0) {
+                sp = stack_pointer;
+                res = call_function(tstate, &sp, oparg, NULL, cframe.use_tracing);
+                stack_pointer = sp;
+                PUSH(res);
+                if (res == NULL) {
+                    goto error;
+                }
+                CHECK_EVAL_BREAKER();
+                DISPATCH();
+            }
+
+            // OPTIMIZED PATH --------------------------------------------------
+            sp = stack_pointer;
+            PyObject *kwnames = NULL;
+            /* int use_tracing = cframe.use_tracing; */
+            PyObject ***pp_stack = &sp;
+            // res = call_function(tstate, &sp, oparg, NULL, cframe.use_tracing);
+
+// Begin inlined call
+            Py_ssize_t nkwargs = (kwnames == NULL) ? 0 : PyTuple_GET_SIZE(kwnames);
+            Py_ssize_t nargs = oparg - nkwargs;
+            PyObject **stack = (*pp_stack) - nargs - nkwargs;
+
+            // What about tracing?
+
+
+            // PyObject_Vectorcall
+            PyObject *callable = func;
+            PyObject *const *args = stack;
+            size_t nargsf = nargs | PY_VECTORCALL_ARGUMENTS_OFFSET;
+
+// _PyObject_VectorcallTstate (here we use directly the call to _PyFunction_Vectorcall
+            // res = _PyFunction_Vectorcall(callable, args, nargsf, kwnames);
+
+// _PyFunction_Vectorcall
+
+            PyFrameConstructor *con = PyFunction_AS_FRAME_CONSTRUCTOR(callable);
+            Py_ssize_t vector_nargs = PyVectorcall_NARGS(nargsf);
+            assert(vector_nargs >= 0);
+            PyThreadState *tstate = _PyThreadState_GET();
+            assert(vector_nargs == 0 || stack != NULL);
+
+// _PyEval_Vector
+
+            PyObject *vec_locals = NULL;
+            PyCodeObject *code = (PyCodeObject *)con->fc_code;
+            int is_coro = code->co_flags &
+                (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
+            if (is_coro) {
+                return make_coro(tstate, con, vec_locals, args, vector_nargs, kwnames);
+            }
+            InterpreterFrame *nframe = _PyEvalFramePushAndInit(
+                tstate, con, vec_locals, args, vector_nargs, kwnames, 1);
+            if (nframe == NULL) {
+                return NULL;
+            }
+            assert (tstate->interp->eval_frame != NULL);
+
+
+            _PyFrame_SetStackPointer(frame, stack_pointer - oparg - 1);
+            stack_pointer = _PyFrame_GetStackPointer(frame); // Remove
+            frame = nframe;
+            cframe.depth++;
+            goto start;
+
+            // END OF OPTIMIZED PATH --------------------------------------------------
         }
 
         TARGET(CALL_FUNCTION_KW): {
@@ -4890,7 +5007,6 @@ unbound_local_error:
             );
             goto error;
         }
-
 error:
         /* Double-check exception status. */
 #ifdef NDEBUG
@@ -4935,6 +5051,16 @@ exception_unwind:
             assert(STACK_LEVEL() == 0);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             frame->f_state = FRAME_RAISED;
+            // Check depth, if is non 0, I discard the frame and jump back to exception_unwind.
+            if (cframe.depth != 0) {
+                InterpreterFrame* old_frame = frame;
+                frame = frame->previous;
+                co = frame->f_code;
+                stack_pointer = _PyFrame_GetStackPointer(frame);
+                cframe.depth--;
+                _PyEvalFrameClearAndPop(tstate, old_frame);
+                goto error;
+            }
             goto exiting;
         }
 
@@ -5314,7 +5440,7 @@ get_exception_handler(PyCodeObject *code, int index, int *level, int *handler, i
 static int
 initialize_locals(PyThreadState *tstate, PyFrameConstructor *con,
     PyObject **localsplus, PyObject *const *args,
-    Py_ssize_t argcount, PyObject *kwnames)
+    Py_ssize_t argcount, PyObject *kwnames, int steal_args)
 {
     PyCodeObject *co = (PyCodeObject*)con->fc_code;
     const Py_ssize_t total_args = co->co_argcount + co->co_kwonlyargcount;
@@ -5347,7 +5473,9 @@ initialize_locals(PyThreadState *tstate, PyFrameConstructor *con,
     }
     for (j = 0; j < n; j++) {
         PyObject *x = args[j];
-        Py_INCREF(x);
+        if (!steal_args) {
+            Py_INCREF(x);
+        }
         assert(localsplus[j] == NULL);
         localsplus[j] = x;
     }
@@ -5357,6 +5485,11 @@ initialize_locals(PyThreadState *tstate, PyFrameConstructor *con,
         PyObject *u = _PyTuple_FromArray(args + n, argcount - n);
         if (u == NULL) {
             goto fail;
+        }
+        if (steal_args) {
+            for (PyObject *const *o = args + n; o < args + argcount - n; o++) {
+                Py_DECREF(o);
+            }
         }
         assert(localsplus[total_args] == NULL);
         localsplus[total_args] = u;
@@ -5420,6 +5553,9 @@ initialize_locals(PyThreadState *tstate, PyFrameConstructor *con,
             if (PyDict_SetItem(kwdict, keyword, value) == -1) {
                 goto fail;
             }
+            if (steal_args) {
+                Py_DECREF(value);
+            }
             continue;
 
         kw_found:
@@ -5429,7 +5565,9 @@ initialize_locals(PyThreadState *tstate, PyFrameConstructor *con,
                           con->fc_qualname, keyword);
                 goto fail;
             }
-            Py_INCREF(value);
+            if (!steal_args) {
+                Py_INCREF(value);
+            }
             localsplus[j] = value;
         }
     }
@@ -5533,7 +5671,7 @@ make_coro_frame(PyThreadState *tstate,
     }
     _PyFrame_InitializeSpecials(frame, con, locals, code->co_nlocalsplus);
     assert(frame->frame_obj == NULL);
-    if (initialize_locals(tstate, con, frame->localsplus, args, argcount, kwnames)) {
+    if (initialize_locals(tstate, con, frame->localsplus, args, argcount, kwnames, 0)) {
         _PyFrame_Clear(frame, 1);
         return NULL;
     }
@@ -5562,14 +5700,14 @@ make_coro(PyThreadState *tstate, PyFrameConstructor *con,
 static InterpreterFrame *
 _PyEvalFramePushAndInit(PyThreadState *tstate, PyFrameConstructor *con,
                         PyObject *locals, PyObject* const* args,
-                        size_t argcount, PyObject *kwnames)
+                        size_t argcount, PyObject *kwnames, int steal_args)
 {
     InterpreterFrame * frame = _PyThreadState_PushFrame(tstate, con, locals);
     if (frame == NULL) {
         return NULL;
     }
     PyObject **localsarray = _PyFrame_GetLocalsArray(frame);
-    if (initialize_locals(tstate, con, localsarray, args, argcount, kwnames)) {
+    if (initialize_locals(tstate, con, localsarray, args, argcount, kwnames, steal_args)) {
         _PyFrame_Clear(frame, 0);
         return NULL;
     }
@@ -5606,7 +5744,7 @@ _PyEval_Vector(PyThreadState *tstate, PyFrameConstructor *con,
         return make_coro(tstate, con, locals, args, argcount, kwnames);
     }
     InterpreterFrame *frame = _PyEvalFramePushAndInit(
-        tstate, con, locals, args, argcount, kwnames);
+        tstate, con, locals, args, argcount, kwnames, 0);
     if (frame == NULL) {
         return NULL;
     }

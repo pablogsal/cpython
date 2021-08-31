@@ -2077,7 +2077,7 @@ _PyThreadState_PopFrame(PyThreadState *tstate, InterpreterFrame * frame)
         tstate->datastack_limit = (PyObject **)(((char *)previous) + previous->size);
     }
     else {
-        assert(tstate->datastack_top >= base);
+        // assert(tstate->datastack_top >= base);
         tstate->datastack_top = base;
     }
 }

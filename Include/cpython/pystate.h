@@ -3,6 +3,7 @@
 #endif
 
 #include "cpython/initconfig.h"
+#include "internal/pycore_frame.h"
 
 PyAPI_FUNC(int) _PyInterpreterState_RequiresIDRef(PyInterpreterState *);
 PyAPI_FUNC(void) _PyInterpreterState_RequireIDRef(PyInterpreterState *, int);
@@ -47,6 +48,7 @@ typedef struct _cframe {
      */
     int use_tracing;
     struct _cframe *previous;
+    int depth;
 } CFrame;
 
 typedef struct _err_stackitem {
@@ -171,7 +173,6 @@ struct _ts {
     PyObject **datastack_top;
     PyObject **datastack_limit;
     /* XXX signal handlers should also be here */
-
 };
 
 // Alias for backward compatibility with Python 3.8

@@ -32,6 +32,7 @@ typedef struct _interpreter_frame {
     int stacktop;     /* Offset of TOS from localsplus  */
     PyFrameState f_state;  /* What state the frame is in */
     PyObject *localsplus[1];
+    PyObject **stack_pointer;
 } InterpreterFrame;
 
 static inline int _PyFrame_IsRunnable(InterpreterFrame *f) {
