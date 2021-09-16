@@ -1597,6 +1597,7 @@ enter_frame:
 
     PyObject *names = co->co_names;
     PyObject *consts = co->co_consts;
+
     _Py_CODEUNIT *first_instr = co->co_firstinstr;
     /*
        frame->f_lasti refers to the index of the last instruction,
@@ -1624,6 +1625,13 @@ enter_frame:
      */
     frame->stacktop = -1;
     frame->f_state = FRAME_EXECUTING;
+
+    assert(frame == tstate->frame);
+    assert(co == frame->f_code);
+    assert(names == co->co_names);
+    assert(consts == co->co_consts);
+    assert(stack_pointer >= frame->localsplus + frame->f_code->co_nlocalsplus);
+    assert(stack_pointer <= frame->localsplus + frame->f_code->co_nlocalsplus + frame->f_code->co_stacksize);
 
 #ifdef LLTRACE
     _Py_IDENTIFIER(__ltrace__);
@@ -4663,6 +4671,7 @@ check_eval_breaker:
                 int is_coro = co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
                 if (!is_coro && co->co_flags == 3) {
                     optimize_call = strstr(PyUnicode_AsUTF8(((PyCodeObject*)((PyFunctionObject*)(func))->func_code)->co_name), "blech") != NULL;
+                    optimize_call = 1;
                 }
             }
             // ------------ 
@@ -5008,6 +5017,13 @@ unbound_local_error:
             goto error;
         }
 error:
+        assert(frame == tstate->frame);
+        assert(co == frame->f_code);
+        assert(names == co->co_names);
+        assert(consts == co->co_consts);
+        assert(stack_pointer >= frame->localsplus + frame->f_code->co_nlocalsplus);
+        assert(stack_pointer <= frame->localsplus + frame->f_code->co_nlocalsplus + frame->f_code->co_stacksize);
+
         /* Double-check exception status. */
 #ifdef NDEBUG
         if (!_PyErr_Occurred(tstate)) {
@@ -5056,6 +5072,8 @@ exception_unwind:
                 InterpreterFrame* old_frame = frame;
                 frame = frame->previous;
                 co = frame->f_code;
+                names = co->co_names;
+                consts = co->co_consts;
                 stack_pointer = _PyFrame_GetStackPointer(frame);
                 cframe.depth--;
                 _PyEvalFrameClearAndPop(tstate, old_frame);
