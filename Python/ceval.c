@@ -1718,6 +1718,8 @@ check_eval_breaker:
             err = maybe_call_line_trace(tstate->c_tracefunc,
                                         tstate->c_traceobj,
                                         tstate, frame, instr_prev);
+            stack_pointer = _PyFrame_GetStackPointer(frame);
+            frame->stacktop = -1;
             if (err) {
                 /* trace function raised an exception */
                 goto error;
@@ -1725,8 +1727,6 @@ check_eval_breaker:
             /* Reload possibly changed frame fields */
             JUMPTO(frame->f_lasti);
 
-            stack_pointer = _PyFrame_GetStackPointer(frame);
-            frame->stacktop = -1;
             TRACING_NEXTOPARG();
         }
         PRE_DISPATCH_GOTO();
@@ -4674,7 +4674,7 @@ check_eval_breaker:
                     optimize_call = 1;
                 }
             }
-            // ------------ 
+            // ------------
 
 
             if (Py_TYPE(func) != &PyFunction_Type || optimize_call == 0) {
@@ -4683,6 +4683,7 @@ check_eval_breaker:
                 stack_pointer = sp;
                 PUSH(res);
                 if (res == NULL) {
+                    assert(_PyErr_Occurred(tstate));
                     goto error;
                 }
                 CHECK_EVAL_BREAKER();
@@ -4724,21 +4725,16 @@ check_eval_breaker:
 
             PyObject *vec_locals = NULL;
             PyCodeObject *code = (PyCodeObject *)con->fc_code;
-            int is_coro = code->co_flags &
-                (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
-            if (is_coro) {
-                return make_coro(tstate, con, vec_locals, args, vector_nargs, kwnames);
-            }
+            assert((code->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) == 0);
             InterpreterFrame *nframe = _PyEvalFramePushAndInit(
                 tstate, con, vec_locals, args, vector_nargs, kwnames, 1);
+            STACK_SHRINK(oparg+1);
             if (nframe == NULL) {
-                return NULL;
+                assert(_PyErr_Occurred(tstate));
+                goto error;
             }
             assert (tstate->interp->eval_frame != NULL);
-
-
-            _PyFrame_SetStackPointer(frame, stack_pointer - oparg - 1);
-            stack_pointer = _PyFrame_GetStackPointer(frame); // Remove
+            _PyFrame_SetStackPointer(frame, stack_pointer);
             frame = nframe;
             cframe.depth++;
             goto start;
@@ -5023,6 +5019,7 @@ error:
         assert(consts == co->co_consts);
         assert(stack_pointer >= frame->localsplus + frame->f_code->co_nlocalsplus);
         assert(stack_pointer <= frame->localsplus + frame->f_code->co_nlocalsplus + frame->f_code->co_stacksize);
+        assert(frame->stacktop == -1);
 
         /* Double-check exception status. */
 #ifdef NDEBUG
@@ -5031,6 +5028,10 @@ error:
                              "error return without exception set");
         }
 #else
+        if (!_PyErr_Occurred(tstate)) {
+            printf("Opcode %d\n", opcode);
+        }
+
         assert(_PyErr_Occurred(tstate));
 #endif
 
@@ -5075,8 +5076,13 @@ exception_unwind:
                 names = co->co_names;
                 consts = co->co_consts;
                 stack_pointer = _PyFrame_GetStackPointer(frame);
+                frame->stacktop = -1;
+                first_instr = co->co_firstinstr;
+                next_instr = first_instr + frame->f_lasti+1;
                 cframe.depth--;
                 _PyEvalFrameClearAndPop(tstate, old_frame);
+                assert(_PyErr_Occurred(tstate));
+                opcode = -1;
                 goto error;
             }
             goto exiting;
@@ -5742,7 +5748,6 @@ _PyEvalFrameClearAndPop(PyThreadState *tstate, InterpreterFrame * frame)
     if (_PyFrame_Clear(frame, 0)) {
         return -1;
     }
-    assert(frame->frame_obj == NULL);
     --tstate->recursion_depth;
     tstate->frame = frame->previous;
     _PyThreadState_PopFrame(tstate, frame);

@@ -32,7 +32,6 @@ typedef struct _interpreter_frame {
     int stacktop;     /* Offset of TOS from localsplus  */
     PyFrameState f_state;  /* What state the frame is in */
     PyObject *localsplus[1];
-    PyObject **stack_pointer;
 } InterpreterFrame;
 
 static inline int _PyFrame_IsRunnable(InterpreterFrame *f) {
@@ -65,6 +64,10 @@ static inline PyObject *_PyFrame_StackPop(InterpreterFrame *f) {
 static inline void _PyFrame_StackPush(InterpreterFrame *f, PyObject *value) {
     f->localsplus[f->stacktop] = value;
     f->stacktop++;
+}
+
+static inline int _PyFrame_ValidIP(InterpreterFrame *f, _Py_CODEUNIT *ip) {
+    return (ip >= f->f_code->co_firstinstr && ip < f->f_code->co_firstinstr + PyBytes_GET_SIZE(f->f_code->co_code)/2);
 }
 
 #define FRAME_SPECIALS_SIZE ((sizeof(InterpreterFrame)-1)/sizeof(PyObject *))
