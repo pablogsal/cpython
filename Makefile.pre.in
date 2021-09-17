@@ -476,7 +476,7 @@ DTRACE_DEPS = \
 # Default target
 all:		@DEF_MAKE_ALL_RULE@
 build_all:	check-clean-src $(BUILDPYTHON) oldsharedmods sharedmods gdbhooks \
-		Programs/_testembed python-config
+		Programs/_testembed python-config Programs/_freeze_module
 
 # Check that the source is clean when building out of source.
 check-clean-src:
