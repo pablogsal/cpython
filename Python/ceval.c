@@ -1540,10 +1540,6 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, InterpreterFrame *frame, int thr
     PyObject *retval = NULL;            /* Return value */
     _Py_atomic_int * const eval_breaker = &tstate->interp->ceval.eval_breaker;
 
-    if (_Py_EnterRecursiveCall(tstate, "")) {
-        return NULL;
-    }
-
     CFrame cframe;
 
     /* WARNING: Because the CFrame lives on the C stack,
@@ -1553,10 +1549,19 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, InterpreterFrame *frame, int thr
     CFrame *prev_cframe = tstate->cframe;
     cframe.use_tracing = prev_cframe->use_tracing;
     cframe.previous = prev_cframe;
+    cframe.depth = 0;
     tstate->cframe = &cframe;
 
     /* push frame */
     tstate->frame = frame;
+
+start_frame:
+    if (_Py_EnterRecursiveCall(tstate, "")) {
+        tstate->recursion_depth++;
+        goto exit_eval_frame;
+    }
+
+    assert(frame == tstate->frame);
 
     if (cframe.use_tracing) {
         if (trace_function_entry(tstate, frame)) {
@@ -1579,7 +1584,8 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, InterpreterFrame *frame, int thr
         }
     }
 
-
+resume_frame:
+    co = frame->f_code;
     PyObject *names = co->co_names;
     PyObject *consts = co->co_consts;
     _Py_CODEUNIT *first_instr = co->co_firstinstr;
@@ -1622,6 +1628,7 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, InterpreterFrame *frame, int thr
 #endif
 
     if (throwflag) { /* support for generator.throw() */
+        throwflag = 0;
         goto error;
     }
 
@@ -4614,7 +4621,7 @@ check_eval_breaker:
 
         TARGET(CALL_FUNCTION): {
             PREDICTED(CALL_FUNCTION);
-            PyObject **sp, *res;
+            PyObject *res;
 
             // ------------ Check if call cal be optimized -------------- //
             PyObject *function = *(stack_pointer - oparg - 1);
@@ -4628,7 +4635,7 @@ check_eval_breaker:
             // ----------------------------------------------------------- //
 
             if (!optimize_call) {
-                sp = stack_pointer;
+                PyObject **sp = stack_pointer;
                 res = call_function(tstate, &sp, oparg, NULL, cframe.use_tracing);
                 stack_pointer = sp;
                 PUSH(res);
@@ -4638,11 +4645,10 @@ check_eval_breaker:
                 CHECK_EVAL_BREAKER();
                 DISPATCH();
             }
-            sp = stack_pointer;
 
             assert(PyFunction_Check(function));
             size_t nargsf = oparg | PY_VECTORCALL_ARGUMENTS_OFFSET;
-            PyObject *const *args = sp - oparg;
+            PyObject *const *args = stack_pointer - oparg;
             assert(args != NULL || PyVectorcall_NARGS(nargsf) == 0);
             assert(PyVectorcall_Function(function) == _PyFunction_Vectorcall);
             PyFrameConstructor *con = PyFunction_AS_FRAME_CONSTRUCTOR(function);
@@ -4658,43 +4664,32 @@ check_eval_breaker:
             if (new_frame == NULL) {
                 // When we exit here, we own all variables in the stack (the frame creation has not stolen
                 // any variable) so we need to clean the whole stack (done in the "error" label).
-                res = NULL;
                 goto error;
             }
             assert(tstate->interp->eval_frame != NULL);
 
-            // TODO: Transform the following into a goto
-            res = _PyEval_EvalFrame(tstate, new_frame, 0);
-            assert(_PyFrame_GetStackPointer(new_frame) == _PyFrame_Stackbase(new_frame));
-            if (_PyEvalFrameClearAndPop(tstate, new_frame)) {
-                Py_XDECREF(res);
-                stack_pointer = sp - oparg - 1;
-                Py_DECREF(function);
-                goto error;
-            }
-
-            res = _Py_CheckFunctionResult(tstate, function, res, NULL);
-            assert((res != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
-
-            /* Clear the function object and reset the stack pointer to the point before the function. As
-                we are stealing the arguments we don't need to clean the locals. */
-            // PyObject ***pp_stack = &sp;
-            // PyObject **pfunc = (*pp_stack) - oparg - 1;
-            // while ((*pp_stack) > pfunc) {
-            //     PyObject *w = EXT_POP(*pp_stack);
-            //     Py_DECREF(w);
-            // }
-
-            sp = sp - oparg - 1;
             Py_DECREF(function);
-
-            stack_pointer = sp;
-            PUSH(res);
-            if (res == NULL) {
-                goto error;
-            }
-            CHECK_EVAL_BREAKER();
-            DISPATCH();
+            STACK_SHRINK(oparg + 1);
+            // TODO: Transform the following into a goto
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            tstate->frame = frame = new_frame;
+            cframe.depth++;
+            goto start_frame;
+//             res = _PyEval_EvalFrame(tstate, new_frame, 0);
+//             assert(_PyFrame_GetStackPointer(new_frame) == _PyFrame_Stackbase(new_frame));
+//             if (_PyEvalFrameClearAndPop(tstate, new_frame)) {
+//                 Py_XDECREF(res);
+//                 goto error;
+//             }
+//
+//             assert((res != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
+//
+//             PUSH(res);
+//             if (res == NULL) {
+//                 goto error;
+//             }
+//             CHECK_EVAL_BREAKER();
+//             DISPATCH();
         }
 
         TARGET(CALL_FUNCTION_KW): {
@@ -5073,14 +5068,29 @@ exiting:
 
     /* pop frame */
 exit_eval_frame:
-    /* Restore previous cframe */
-    tstate->cframe = cframe.previous;
-    tstate->cframe->use_tracing = cframe.use_tracing;
-
     if (PyDTrace_FUNCTION_RETURN_ENABLED())
         dtrace_function_return(frame);
     _Py_LeaveRecursiveCall(tstate);
+
+    if (cframe.depth) {
+        _PyFrame_StackPush(frame->previous, retval);
+        if (_PyEvalFrameClearAndPop(tstate, frame)) {
+            retval = NULL;
+        }
+        frame = tstate->frame;
+        cframe.depth--;
+        if (retval == NULL) {
+            assert(_PyErr_Occurred(tstate));
+            throwflag = 1;
+        }
+        retval = NULL;
+        goto resume_frame;
+    }
     tstate->frame = frame->previous;
+
+    /* Restore previous cframe */
+    tstate->cframe = cframe.previous;
+    tstate->cframe->use_tracing = cframe.use_tracing;
     return _Py_CheckFunctionResult(tstate, NULL, retval, __func__);
 }
 
@@ -5679,9 +5689,9 @@ _PyEvalFrameClearAndPop(PyThreadState *tstate, InterpreterFrame * frame)
     ++tstate->recursion_depth;
     assert(frame->frame_obj == NULL || frame->frame_obj->f_own_locals_memory == 0);
     if (_PyFrame_Clear(frame, 0)) {
+        --tstate->recursion_depth;
         return -1;
     }
-    assert(frame->frame_obj == NULL);
     --tstate->recursion_depth;
     tstate->frame = frame->previous;
     _PyThreadState_PopFrame(tstate, frame);
