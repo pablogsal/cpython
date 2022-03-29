@@ -756,9 +756,13 @@ factor[expr_ty] (memo):
     | '~' a=factor { _PyAST_UnaryOp(Invert, a, EXTRA) }
     | power
 
-power[expr_ty]:
-    | a=await_primary '**' b=factor { _PyAST_BinOp(a, Pow, b, EXTRA) }
+coalesce[expr_ty]:
+    | a=await_primary "??" b=factor { _PyAST_CoalesceOp(a, Coalesce, b, EXTRA) }
     | await_primary
+
+power[expr_ty]:
+    | a=coalesce '**' b=factor { _PyAST_BinOp(a, Pow, b, EXTRA) }
+    | coalesce
 
 # Primary elements
 # ----------------

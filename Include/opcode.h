@@ -114,6 +114,7 @@ extern "C" {
 #define PRECALL                                166
 #define CALL                                   171
 #define KW_NAMES                               172
+#define JUMP_IF_NOT_NONE_OR_POP                178
 #define BINARY_OP_ADAPTIVE                       3
 #define BINARY_OP_ADD_FLOAT                      4
 #define BINARY_OP_ADD_INT                        5
@@ -206,7 +207,7 @@ static const uint32_t _PyOpcode_Jump[8] = {
     536870912U,
     2316288000U,
     67U,
-    0U,
+    262144U,
     0U,
     0U,
 };
@@ -294,6 +295,7 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [JUMP_IF_FALSE_OR_POP] = JUMP_IF_FALSE_OR_POP,
     [JUMP_IF_NOT_EG_MATCH] = JUMP_IF_NOT_EG_MATCH,
     [JUMP_IF_NOT_EXC_MATCH] = JUMP_IF_NOT_EXC_MATCH,
+    [JUMP_IF_NOT_NONE_OR_POP] = JUMP_IF_NOT_NONE_OR_POP,
     [JUMP_IF_TRUE_OR_POP] = JUMP_IF_TRUE_OR_POP,
     [JUMP_NO_INTERRUPT] = JUMP_NO_INTERRUPT,
     [KW_NAMES] = KW_NAMES,

@@ -240,6 +240,10 @@ validate_expr(struct validator *state, expr_ty exp, expr_context_ty ctx)
         }
         ret = validate_exprs(state, exp->v.BoolOp.values, Load, 0);
         break;
+    case CoalesceOp_kind: {
+        ret = 1;
+        break;
+    }
     case BinOp_kind:
         ret = validate_expr(state, exp->v.BinOp.left, Load) &&
             validate_expr(state, exp->v.BinOp.right, Load);

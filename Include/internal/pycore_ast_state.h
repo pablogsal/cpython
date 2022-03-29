@@ -37,6 +37,9 @@ struct ast_state {
     PyObject *Break_type;
     PyObject *Call_type;
     PyObject *ClassDef_type;
+    PyObject *CoalesceOp_type;
+    PyObject *Coalesce_singleton;
+    PyObject *Coalesce_type;
     PyObject *Compare_type;
     PyObject *Constant_type;
     PyObject *Continue_type;
@@ -168,6 +171,7 @@ struct ast_state {
     PyObject *cause;
     PyObject *cls;
     PyObject *cmpop_type;
+    PyObject *coalesceop_type;
     PyObject *col_offset;
     PyObject *comparators;
     PyObject *comprehension_type;

@@ -991,6 +991,7 @@ stack_effect(int opcode, int oparg, int jump)
 
         case JUMP_IF_TRUE_OR_POP:
         case JUMP_IF_FALSE_OR_POP:
+        case JUMP_IF_NOT_NONE_OR_POP:
             return jump ? 0 : -1;
 
         case POP_JUMP_IF_FALSE:
@@ -2815,6 +2816,11 @@ compiler_jump_if(struct compiler *c, expr_ty e, basicblock *next, int cond)
             return 0;
         if (next2 != next)
             compiler_use_next_block(c, next2);
+        return 1;
+    }
+    case CoalesceOp_kind: {
+        VISIT(c, expr, e);
+        ADDOP_JUMP_NOLINE(c, JUMP_IF_NOT_NONE_OR_POP, next);
         return 1;
     }
     case IfExp_kind: {
@@ -5643,6 +5649,22 @@ compiler_with(struct compiler *c, stmt_ty s, int pos)
 }
 
 static int
+compiler_coalesceop(struct compiler *c, expr_ty e)
+{
+    basicblock *end;
+
+    assert(e->kind == CoalesceOp_kind);
+    end = compiler_new_block(c);
+    if (end == NULL)
+        return 0;
+    VISIT(c, expr, e->v.CoalesceOp.left);
+    ADDOP_JUMP(c, JUMP_IF_NOT_NONE_OR_POP, end);
+    VISIT(c, expr, e->v.CoalesceOp.right);
+    compiler_use_next_block(c, end);
+    return 1;
+}
+
+static int
 compiler_visit_expr1(struct compiler *c, expr_ty e)
 {
     switch (e->kind) {
@@ -5653,6 +5675,8 @@ compiler_visit_expr1(struct compiler *c, expr_ty e)
         break;
     case BoolOp_kind:
         return compiler_boolop(c, e);
+    case CoalesceOp_kind:
+        return compiler_coalesceop(c,e);
     case BinOp_kind:
         VISIT(c, expr, e->v.BinOp.left);
         VISIT(c, expr, e->v.BinOp.right);

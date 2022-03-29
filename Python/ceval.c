@@ -4049,6 +4049,18 @@ handle_eval_breaker:
             DISPATCH();
         }
 
+        TARGET(JUMP_IF_NOT_NONE_OR_POP) {
+            PyObject *cond = TOP();
+            int err;
+            if (cond == Py_None) {
+                STACK_SHRINK(1);
+                Py_DECREF(cond);
+                DISPATCH();
+            }
+            JUMPTO(oparg);
+            DISPATCH();
+        }
+
         TARGET(JUMP_ABSOLUTE) {
             PREDICTED(JUMP_ABSOLUTE);
             _PyCode_Warmup(frame->f_code);

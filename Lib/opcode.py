@@ -197,6 +197,7 @@ def_op('CALL', 171, 4)
 def_op('KW_NAMES', 172)
 hasconst.append(172)
 
+jabs_op('JUMP_IF_NOT_NONE_OR_POP', 178) # ""
 
 del def_op, name_op, jrel_op, jabs_op
 

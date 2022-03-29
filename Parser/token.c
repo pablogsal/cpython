@@ -60,6 +60,7 @@ const char * const _PyParser_TokenNames[] = {
     "RARROW",
     "ELLIPSIS",
     "COLONEQUAL",
+    "MAYBEMAYBE",
     "OP",
     "AWAIT",
     "ASYNC",
@@ -169,6 +170,11 @@ PyToken_TwoChars(int c1, int c2)
         switch (c2) {
         case '=': return GREATEREQUAL;
         case '>': return RIGHTSHIFT;
+        }
+        break;
+    case '?':
+        switch (c2) {
+        case '?': return MAYBEMAYBE;
         }
         break;
     case '@':

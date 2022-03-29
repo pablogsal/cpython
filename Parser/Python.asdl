@@ -58,6 +58,7 @@ module Python
     expr = BoolOp(boolop op, expr* values)
          | NamedExpr(expr target, expr value)
          | BinOp(expr left, operator op, expr right)
+         | CoalesceOp(expr left, coalesceop op, expr right)
          | UnaryOp(unaryop op, expr operand)
          | Lambda(arguments args, expr body)
          | IfExp(expr test, expr body, expr orelse)
@@ -94,6 +95,8 @@ module Python
           attributes (int lineno, int col_offset, int? end_lineno, int? end_col_offset)
 
     expr_context = Load | Store | Del
+
+    coalesceop = Coalesce
 
     boolop = And | Or
 

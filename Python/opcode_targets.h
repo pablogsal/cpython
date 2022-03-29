@@ -177,7 +177,7 @@ static void *opcode_targets[256] = {
     &&_unknown_opcode,
     &&_unknown_opcode,
     &&_unknown_opcode,
-    &&_unknown_opcode,
+    &&TARGET_JUMP_IF_NOT_NONE_OR_POP,
     &&_unknown_opcode,
     &&_unknown_opcode,
     &&_unknown_opcode,
