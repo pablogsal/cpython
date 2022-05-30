@@ -33,6 +33,31 @@ struct token {
     const char *start, *end;
 };
 
+enum tokenizer_mode_kind_t {
+    TOK_REGULAR_MODE,
+    TOK_FSTRING_MODE,
+};
+
+#define MAX_EXPR_NEXTING 2
+
+typedef struct _tokenizer_mode {
+    enum tokenizer_mode_kind_t kind;
+
+    int bracket_stack;
+    int bracket_mark[MAX_EXPR_NEXTING];
+    int bracket_mark_index;
+
+    char f_string_quote;
+    int f_string_quote_size;
+    int f_string_raw;
+    const char* f_string_start; 
+    const char* f_string_multi_line_start; 
+
+    int last_expr_size;
+    int last_expr_end;
+    char* last_expr_buffer;
+} tokenizer_mode;
+
 /* Tokenizer state */
 struct tok_state {
     /* Input state; buf <= cur <= inp <= end */
@@ -92,6 +117,10 @@ struct tok_state {
                              NEWLINE token after it. */
     /* How to proceed when asked for a new token in interactive mode */
     enum interactive_underflow_t interactive_underflow;
+    // TODO: Factor this into its own thing
+    tokenizer_mode tok_mode_stack[MAXLEVEL];
+    int tok_mode_stack_index;
+    int blech;
 #ifdef Py_DEBUG
     int debug;
 #endif

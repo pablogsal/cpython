@@ -465,7 +465,7 @@ class Random(_random.Random):
                     raise
                 k = weights
                 raise TypeError(
-                    f'The number of choices must be a keyword argument: {k=}'
+                    f'The number of choices must be a keyword argument: {k}'
                 ) from None
         elif weights is not None:
             raise TypeError('Cannot specify both weights and cumulative weights')
