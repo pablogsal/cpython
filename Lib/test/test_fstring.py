@@ -329,13 +329,13 @@ non-important content
         self.assertEqual(t.body[1].lineno, 3)
         self.assertEqual(t.body[1].value.lineno, 3)
         self.assertEqual(t.body[1].value.values[0].lineno, 3)
-        self.assertEqual(t.body[1].value.values[1].lineno, 3)
-        self.assertEqual(t.body[1].value.values[2].lineno, 3)
+        self.assertEqual(t.body[1].value.values[1].lineno, 4)
+        self.assertEqual(t.body[1].value.values[2].lineno, 6)
         self.assertEqual(t.body[1].col_offset, 0)
         self.assertEqual(t.body[1].value.col_offset, 0)
-        self.assertEqual(t.body[1].value.values[0].col_offset, 0)
-        self.assertEqual(t.body[1].value.values[1].col_offset, 0)
-        self.assertEqual(t.body[1].value.values[2].col_offset, 0)
+        self.assertEqual(t.body[1].value.values[0].col_offset, 4)
+        self.assertEqual(t.body[1].value.values[1].col_offset, 2)
+        self.assertEqual(t.body[1].value.values[2].col_offset, 11)
         # NOTE: the following lineno information and col_offset is correct for
         # expressions within FormattedValues.
         binop = t.body[1].value.values[1].value
@@ -366,13 +366,13 @@ a = f'''
         self.assertEqual(t.body[0].lineno, 2)
         self.assertEqual(t.body[0].value.lineno, 2)
         self.assertEqual(t.body[0].value.values[0].lineno, 2)
-        self.assertEqual(t.body[0].value.values[1].lineno, 2)
-        self.assertEqual(t.body[0].value.values[2].lineno, 2)
+        self.assertEqual(t.body[0].value.values[1].lineno, 3)
+        self.assertEqual(t.body[0].value.values[2].lineno, 3)
         self.assertEqual(t.body[0].col_offset, 0)
         self.assertEqual(t.body[0].value.col_offset, 4)
-        self.assertEqual(t.body[0].value.values[0].col_offset, 4)
-        self.assertEqual(t.body[0].value.values[1].col_offset, 4)
-        self.assertEqual(t.body[0].value.values[2].col_offset, 4)
+        self.assertEqual(t.body[0].value.values[0].col_offset, 8)
+        self.assertEqual(t.body[0].value.values[1].col_offset, 10)
+        self.assertEqual(t.body[0].value.values[2].col_offset, 17)
         # Check {blech}
         self.assertEqual(t.body[0].value.values[1].value.lineno, 3)
         self.assertEqual(t.body[0].value.values[1].value.end_lineno, 3)
@@ -387,6 +387,20 @@ x = (
         t = ast.parse(expr)
         self.assertEqual(type(t), ast.Module)
         self.assertEqual(len(t.body), 1)
+        # check the joinedstr location
+        joinedstr = t.body[0].value
+        self.assertEqual(type(joinedstr), ast.JoinedStr)
+        self.assertEqual(joinedstr.lineno, 3)
+        self.assertEqual(joinedstr.end_lineno, 3)
+        self.assertEqual(joinedstr.col_offset, 4)
+        self.assertEqual(joinedstr.end_col_offset, 17)
+        # check the formatted value location
+        fv = t.body[0].value.values[1]
+        self.assertEqual(type(fv), ast.FormattedValue)
+        self.assertEqual(fv.lineno, 3)
+        self.assertEqual(fv.end_lineno, 3)
+        self.assertEqual(fv.col_offset, 7)
+        self.assertEqual(fv.end_col_offset, 16)
         # check the test(t) location
         call = t.body[0].value.values[1].value
         self.assertEqual(type(call), ast.Call)
@@ -415,9 +429,9 @@ x = (
         # check the first wat
         self.assertEqual(type(wat1), ast.Constant)
         self.assertEqual(wat1.lineno, 4)
-        self.assertEqual(wat1.end_lineno, 6)
-        self.assertEqual(wat1.col_offset, 12)
-        self.assertEqual(wat1.end_col_offset, 18)
+        self.assertEqual(wat1.end_lineno, 5)
+        self.assertEqual(wat1.col_offset, 14)
+        self.assertEqual(wat1.end_col_offset, 26)
         # check the call
         call = middle.value
         self.assertEqual(type(call), ast.Call)
@@ -427,9 +441,9 @@ x = (
         self.assertEqual(call.end_col_offset, 31)
         # check the second wat
         self.assertEqual(type(wat2), ast.Constant)
-        self.assertEqual(wat2.lineno, 4)
+        self.assertEqual(wat2.lineno, 5)
         self.assertEqual(wat2.end_lineno, 6)
-        self.assertEqual(wat2.col_offset, 12)
+        self.assertEqual(wat2.col_offset, 32)
         self.assertEqual(wat2.end_col_offset, 18)
 
     def test_docstring(self):
@@ -618,6 +632,7 @@ x = (
         self.assertEqual(f'{-10:-{"#"}1{0}x}', '      -0xa')
         self.assertEqual(f'{-10:{"-"}#{1}0{"x"}}', '      -0xa')
         self.assertEqual(f'{10:#{3 != {4:5} and width}x}', '       0xa')
+        self.assertEqual(f'result: {value:{width:{0}}.{precision:1}}', 'result:      12.35')
 
         self.assertAllRaise(SyntaxError,
                             """f-string: invalid conversion character 'r{"': """
@@ -630,11 +645,6 @@ x = (
         self.assertAllRaise(SyntaxError, "f-string: invalid syntax",
                             [# Invalid syntax inside a nested spec.
                              "f'{4:{/5}}'",
-                             ])
-
-        self.assertAllRaise(SyntaxError, "f-string: expressions nested too deeply",
-                            [# Can't nest format specifiers.
-                             "f'result: {value:{width:{0}}.{precision:1}}'",
                              ])
 
         self.assertAllRaise(SyntaxError, 'f-string: invalid conversion character',
@@ -847,6 +857,50 @@ x = (
         self.assertAllRaise(SyntaxError, 'f-string: invalid syntax',
                             ["f'{lambda x:x}'",
                              ])
+
+    def test_valid_prefixes(self):
+        self.assertEqual(F'{1}', "1")
+        self.assertEqual(FR'{2}', "2")
+        self.assertEqual(fR'{3}', "3")
+
+    def test_roundtrip_raw_quotes(self):
+        self.assertEqual(fr"\'", "\\'")
+        self.assertEqual(fr'\"', '\\"')
+        self.assertEqual(fr'\"\'', '\\"\\\'')
+        self.assertEqual(fr'\'\"', '\\\'\\"')
+        self.assertEqual(fr'\"\'\"', '\\"\\\'\\"')
+        self.assertEqual(fr'\'\"\'', '\\\'\\"\\\'')
+        self.assertEqual(fr'\"\'\"\'', '\\"\\\'\\"\\\'')
+
+    def test_fstring_backslash_before_double_bracket(self):
+        self.assertEqual(f'\{{\}}', '\\{\\}')
+        self.assertEqual(f'\{{', '\\{')
+        self.assertEqual(f'\{{{1+1}', '\\{2')
+        self.assertEqual(f'\}}{1+1}', '\\}2')
+        self.assertEqual(f'{1+1}\}}', '2\\}')
+        self.assertEqual(fr'\{{\}}', '\\{\\}')
+        self.assertEqual(fr'\{{', '\\{')
+        self.assertEqual(fr'\{{{1+1}', '\\{2')
+        self.assertEqual(fr'\}}{1+1}', '\\}2')
+        self.assertEqual(fr'{1+1}\}}', '2\\}')
+
+    def test_fstring_backslash_prefix_raw(self):
+        self.assertEqual(f'\\', '\\')
+        self.assertEqual(f'\\\\', '\\\\')
+        self.assertEqual(fr'\\', r'\\')
+        self.assertEqual(fr'\\\\', r'\\\\')
+        self.assertEqual(rf'\\', r'\\')
+        self.assertEqual(rf'\\\\', r'\\\\')
+        self.assertEqual(Rf'\\', R'\\')
+        self.assertEqual(Rf'\\\\', R'\\\\')
+        self.assertEqual(fR'\\', R'\\')
+        self.assertEqual(fR'\\\\', R'\\\\')
+        self.assertEqual(FR'\\', R'\\')
+        self.assertEqual(FR'\\\\', R'\\\\')
+
+    def test_fstring_format_spec_greedy_matching(self):
+        self.assertEqual(f"{1:}}}", "1}")
+        self.assertEqual(f"{1:>3{5}}}}", "                                  1}")
 
     def test_yield(self):
         # Not terribly useful, but make sure the yield turns
@@ -1314,6 +1368,7 @@ x = (
         self.assertEqual(f'X{x  =}Y', 'Xx  ='+repr(x)+'Y')
         self.assertEqual(f'X{x=  }Y', 'Xx=  '+repr(x)+'Y')
         self.assertEqual(f'X{x  =  }Y', 'Xx  =  '+repr(x)+'Y')
+        self.assertEqual(f"sadsd {1 + 1 =  :{1 + 1:1d}f}", "sadsd 1 + 1 =  2.000000")
 
         # These next lines contains tabs.  Backslash escapes don't
         # work in f-strings.
@@ -1323,6 +1378,7 @@ x = (
         # the tabs to spaces just to shut up patchcheck.
         #self.assertEqual(f'X{x =}Y', 'Xx\t='+repr(x)+'Y')
         #self.assertEqual(f'X{x =       }Y', 'Xx\t=\t'+repr(x)+'Y')
+
 
     def test_walrus(self):
         x = 20

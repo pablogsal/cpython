@@ -135,7 +135,9 @@ decode_unicode_with_escapes(Parser *parser, const char *s, size_t len, Token *t)
     const char *first_invalid_escape;
     v = _PyUnicode_DecodeUnicodeEscapeInternal(s, len, NULL, NULL, &first_invalid_escape);
 
-    if (v != NULL && first_invalid_escape != NULL) {
+    // HACK: later we can simply pass the line no, since we don't preserve the tokens
+    // when we are decoding the string but we preserve the line numbers.
+    if (v != NULL && first_invalid_escape != NULL && t != NULL) {
         if (warn_invalid_escape_sequence(parser, first_invalid_escape, t) < 0) {
             /* We have not decref u before because first_invalid_escape points
                inside u. */
@@ -164,6 +166,19 @@ decode_bytes_with_escapes(Parser *p, const char *s, Py_ssize_t len, Token *t)
         }
     }
     return result;
+}
+
+// Hack: remove! (and move to the pegen.c when removing this file)
+PyObject *
+_PyPegen_DecodeFstring(Parser *p, int raw, const char *s, size_t len, Token *t)
+{
+    raw = raw || strchr(s, '\\') == NULL;
+    if (raw) {
+        return PyUnicode_DecodeUTF8Stateful(s, len, NULL, NULL);
+    }
+    else {
+        return decode_unicode_with_escapes(p, s, len, t);
+    }
 }
 
 /* s must include the bracketing quote characters, and r, b, u,
