@@ -883,13 +883,13 @@ gstring_middle[expr_ty]:
 # TODO: (Ideally we need a way similar to 'memo' so the parser can set the tokenize mode on fstring/normal)
 gstring_replacement_field[expr_ty]:
     | expr_start='{' a=(yield_expr | star_expressions) debug_expr="="? conversion=[
-        "!" conv=NAME {conv}
+        conv_token="!" conv=NAME { _PyPegen_check_fstring_conversion(p, conv_token, conv) ? NULL : conv }
     ] format=[
         ':' spec=gstring_format_spec* { spec ? _PyAST_JoinedStr((asdl_expr_seq*)spec, EXTRA) : NULL }
     ] &&'}' {
         _PyPegen_formatted_value(p, a, debug_expr, conversion, format, EXTRA)
     }
-gstring_format_spec[expr_ty]: 
+gstring_format_spec[expr_ty]:
     | t=FSTRING_MIDDLE { _PyPegen_constant_from_token2(p, t) }
     | gstring_replacement_field
 gstring[expr_ty]:

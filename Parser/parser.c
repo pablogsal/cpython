@@ -30905,16 +30905,16 @@ _tmp_111_rule(Parser *p)
             return NULL;
         }
         D(fprintf(stderr, "%*c> _tmp_111[%d-%d]: %s\n", p->level, ' ', _mark, p->mark, "\"!\" NAME"));
-        Token * _literal;
         expr_ty conv;
+        Token * conv_token;
         if (
-            (_literal = _PyPegen_expect_token(p, 54))  // token='!'
+            (conv_token = _PyPegen_expect_token(p, 54))  // token='!'
             &&
             (conv = _PyPegen_name_token(p))  // NAME
         )
         {
             D(fprintf(stderr, "%*c+ _tmp_111[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "\"!\" NAME"));
-            _res = conv;
+            _res = _PyPegen_check_fstring_conversion ( p , conv_token , conv ) ? NULL : conv;
             if (_res == NULL && PyErr_Occurred()) {
                 p->error_indicator = 1;
                 p->level--;

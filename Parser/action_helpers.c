@@ -1071,6 +1071,19 @@ _PyPegen_check_legacy_stmt(Parser *p, expr_ty name) {
     return 0;
 }
 
+int
+_PyPegen_check_fstring_conversion(Parser *p, Token* symbol, expr_ty conv) {
+    if (symbol->lineno != conv->lineno || symbol->end_col_offset != conv->col_offset) {
+        RAISE_SYNTAX_ERROR_KNOWN_RANGE(
+            symbol, conv,
+            "conversion type must come right after the exclamanation mark"
+        );
+        return 1;
+    }
+    return 0;
+}
+
+
 const char *
 _PyPegen_get_expr_name(expr_ty e)
 {
