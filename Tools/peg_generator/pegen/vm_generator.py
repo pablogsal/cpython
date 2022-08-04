@@ -111,21 +111,21 @@ class VMCallMakerVisitor(GrammarVisitor):
     def visit_Repeat0(self, node: Repeat0) -> str:
         if node in self.cache:
             return self.cache[node]
-        name = self.gen.name_loop(node.node, False)
+        name = self.gen.artificial_rule_from_repeat(node.node, False)
         self.cache[node] = name
         return name
 
     def visit_Repeat1(self, node: Repeat1) -> str:
         if node in self.cache:
             return self.cache[node]
-        name = self.gen.name_loop(node.node, True)
+        name = self.gen.artificial_rule_from_repeat(node.node, True)
         self.cache[node] = name
         return name
 
     def visit_Gather(self, node: Gather) -> str:
         if node in self.cache:
             return self.cache[node]
-        name = self.gen.name_gather(node)
+        name = self.gen.artifical_rule_from_gather(node)
         self.cache[node] = name
         return name
 
@@ -137,7 +137,7 @@ class VMCallMakerVisitor(GrammarVisitor):
             return self.cache[node]
         if can_we_inline(node):
             return None
-        name = self.gen.name_node(node)
+        name = self.gen.artifical_rule_from_rhs(node)
         self.cache[node] = name
         return name
 
@@ -161,7 +161,6 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         file: Optional[IO[Text]],
     ):
         super().__init__(grammar, tokens, file)
-
         self.opcode_buffer: Optional[List[Opcode]] = None
         self.callmakervisitor: VMCallMakerVisitor = VMCallMakerVisitor(
             self, exact_tokens, non_exact_tokens,
@@ -179,24 +178,15 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
 
         self.opcode_buffer.append(Opcode(opcode, oparg))
 
-    def name_gather(self, node: Gather) -> str:
-        self.counter += 1
-        name = f"_gather_{self.counter}"
-        alt0 = Alt([NamedItem(None, node.node), NamedItem(None, node.separator)])
-        alt1 = Alt([NamedItem(None, node.node)])
-        self.todo[name] = Rule(name, None, Rhs([alt0, alt1]))
-        return name
-
     def generate(self, filename: str) -> None:
-        self.add_root_rules()
-        self.collect_todo()
+        self.collect_rules()
         self.gather_actions()
         self._setup_keywords()
         self._setup_soft_keywords()
 
         self.print("enum {")
         with self.indent():
-            for rulename in self.todo:
+            for rulename, rule in self.all_rules.items():
                 self.print(f"R_{rulename.upper()},")
         self.print("};")
         self.print()
@@ -209,11 +199,10 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         self.print()
 
         self.print("static Rule all_rules[] = {")
-        while self.todo:
-            for rulename, rule in list(self.todo.items()):
-                del self.todo[rulename]
-                with self.indent():
-                    self.visit(rule)
+
+        for rulename, rule in list(self.all_rules.items()):
+            self.visit(rule)
+     
         self.print("};")
 
         self.printblock(CALL_ACTION_HEAD)
@@ -281,7 +270,7 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
 
     def gather_actions(self) -> None:
         self.actions: Dict[str, str] = {}
-        for rulename, rule in self.todo.items():
+        for rulename, rule in list(self.all_rules.items()):
             if not rule.is_loop():
                 for index, alt in enumerate(rule.rhs.alts):
                     actionname = f"A_{rulename.upper()}_{index}"
@@ -339,13 +328,6 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         if isinstance(item, StringLeaf):
             return "Token *"
         return None
-
-    def add_root_rules(self) -> None:
-        assert "root" not in self.todo
-        assert "root" not in self.rules
-        root = RootRule("root", "file")  # TODO: determine start rules dynamically
-        self.todo["root"] = root
-        self.rules["root"] = root
 
     def visit_RootRule(self, node: RootRule) -> None:
         self.print(f'{{"{node.name}",')
@@ -444,9 +426,6 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         for index, alt in enumerate(node.alts):
             with self.set_opcode_buffer(opcodes_by_alt[alt]):
                 self.visit(alt, is_loop=False, is_loop1=False, is_gather=False)
-                assert not (
-                    alt.action and (is_loop or is_gather)
-                )  # A loop rule can't have actions
                 if is_loop or is_gather:
                     if index == 0:
                         self.add_opcode("OP_LOOP_ITERATE")

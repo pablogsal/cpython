@@ -292,7 +292,6 @@ void *_PyPegen_run_parser(Parser *);
 void *_PyPegen_vmparser(Parser *);
 mod_ty _PyPegen_run_parser_from_file(const char *, int, PyObject *, PyCompilerFlags *, PyArena *);
 mod_ty _PyPegen_run_parser_from_string(const char *, int, PyObject *, PyCompilerFlags *, PyArena *);
-void *_PyPegen_interactive_exit(Parser *);
 asdl_seq *_PyPegen_singleton_seq(Parser *, void *);
 asdl_seq *_PyPegen_seq_insert_in_front(Parser *, void *, asdl_seq *);
 asdl_seq *_PyPegen_seq_append_to_end(Parser *, asdl_seq *, void *);

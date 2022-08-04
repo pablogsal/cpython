@@ -77,8 +77,9 @@ class RuleCheckingVisitor(GrammarVisitor):
         self.tokens = tokens
 
     def visit_NameLeaf(self, node: NameLeaf) -> None:
-        if node.value not in self.rules and node.value not in self.tokens:
-            raise GrammarError(f"Dangling reference to rule {node.value!r}")
+        ...
+        # if node.value not in self.rules and node.value not in self.tokens:
+        #     raise GrammarError(f"Dangling reference to rule {node.value!r}")
 
     def visit_NamedItem(self, node: NamedItem) -> None:
         if node.name and node.name.startswith("_"):

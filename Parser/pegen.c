@@ -706,9 +706,9 @@ compute_parser_flags(PyCompilerFlags *flags)
     if (flags->cf_flags & PyCF_TYPE_COMMENTS) {
         parser_flags |= PyPARSE_TYPE_COMMENTS;
     }
-    if (flags->cf_flags & PyCF_VMPARSER) {
+    /* if (flags->cf_flags & PyCF_VMPARSER) { */
         parser_flags |= PyPARSE_VMPARSER;
-    }
+    /* } */
     if ((flags->cf_flags & PyCF_ONLY_AST) && flags->cf_feature_version < 7) {
         parser_flags |= PyPARSE_ASYNC_HACKS;
     }
