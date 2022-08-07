@@ -25,7 +25,10 @@ struct _ceval_runtime_state;
 
 #include "pycore_interp.h"        // PyInterpreterState.eval_frame
 #include "pycore_pystate.h"       // _PyThreadState_GET()
+#include "pycore_frame.h"       // _PyThreadState_GET()
 
+typedef PyObject* (*py_evaluator)(PyThreadState *, _PyInterpreterFrame *, int throwflag);
+typedef PyObject* (*py_trampoline)(py_evaluator, PyThreadState *, _PyInterpreterFrame *, int throwflag);
 
 extern void _Py_FinishPendingCalls(PyThreadState *tstate);
 extern void _PyEval_InitRuntimeState(struct _ceval_runtime_state *);
@@ -71,6 +74,11 @@ _PyEval_EvalFrame(PyThreadState *tstate, struct _PyInterpreterFrame *frame, int 
 {
     EVAL_CALL_STAT_INC(EVAL_CALL_TOTAL);
     if (tstate->interp->eval_frame == NULL) {
+        PyCodeObject *co = frame->f_code;
+        py_trampoline f = (py_trampoline)(co->co_trampoline);
+        if (f) {
+            return f(_PyEval_EvalFrameDefault, tstate, frame, throwflag);
+        }
         return _PyEval_EvalFrameDefault(tstate, frame, throwflag);
     }
     return tstate->interp->eval_frame(tstate, frame, throwflag);

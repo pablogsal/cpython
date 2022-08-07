@@ -9,7 +9,21 @@
 #include "pycore_opcode.h"        // _PyOpcode_Deopt
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
 #include "pycore_tuple.h"         // _PyTuple_ITEMS()
+#include "pycore_ceval.h"         // _PyTuple_ITEMS()
 #include "clinic/codeobject.c.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <stdio.h>
+#include <unistd.h>
+
+#include <sys/types.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+
+
 
 
 /******************
@@ -286,6 +300,101 @@ _PyCode_Validate(struct _PyCodeConstructor *con)
     return 0;
 }
 
+py_trampoline compile_blech(void) {
+  char *memory = mmap(NULL,             // address
+                      4096,             // size
+                      PROT_READ | PROT_WRITE | PROT_EXEC,
+                      MAP_PRIVATE | MAP_ANONYMOUS,
+                      -1,               // fd (not used here)
+                      0);               // offset (not used here)
+  if (!memory) {
+    perror("failed to allocate memory");
+    exit(1);
+  }
+
+  int i = 0;
+
+  memory[i++] = 0x55;
+  memory[i++] = 0x48;
+  memory[i++] = 0x89;
+  memory[i++] = 0xe5;
+  memory[i++] = 0x48;
+  memory[i++] = 0x83;
+  memory[i++] = 0xec;
+  memory[i++] = 0x20;
+  memory[i++] = 0x48;
+  memory[i++] = 0x89;
+  memory[i++] = 0x7d;
+  memory[i++] = 0xf8;
+  memory[i++] = 0x48;
+  memory[i++] = 0x89;
+  memory[i++] = 0x75;
+  memory[i++] = 0xf0;
+  memory[i++] = 0x48;
+  memory[i++] = 0x89;
+  memory[i++] = 0x55;
+  memory[i++] = 0xe8;
+  memory[i++] = 0x89;
+  memory[i++] = 0x4d;
+  memory[i++] = 0xe4;
+  memory[i++] = 0x8b;
+  memory[i++] = 0x55;
+  memory[i++] = 0xe4;
+  memory[i++] = 0x48;
+  memory[i++] = 0x8b;
+  memory[i++] = 0x4d;
+  memory[i++] = 0xe8;
+  memory[i++] = 0x48;
+  memory[i++] = 0x8b;
+  memory[i++] = 0x45;
+  memory[i++] = 0xf0;
+  memory[i++] = 0x4c;
+  memory[i++] = 0x8b;
+  memory[i++] = 0x45;
+  memory[i++] = 0xf8;
+  memory[i++] = 0x48;
+  memory[i++] = 0x89;
+  memory[i++] = 0xce;
+  memory[i++] = 0x48;
+  memory[i++] = 0x89;
+  memory[i++] = 0xc7;
+  memory[i++] = 0x41;
+  memory[i++] = 0xff;
+  memory[i++] = 0xd0;
+  memory[i++] = 0xc9;
+  memory[i++] = 0xc3;
+
+  return (py_trampoline) memory;
+}
+
+FILE *perf_map_open(pid_t pid) {
+    char filename[500];
+    snprintf(filename, sizeof(filename), "/tmp/perf-%d.map", pid);
+    FILE * res = fopen(filename, "a");
+    if (!res) {
+        fprintf(stderr, "Couldn't open %s: errno(%d)", filename, errno);
+        exit(0);
+    }
+    return res;
+}
+
+int perf_map_close(FILE *fp) {
+    if (fp)
+        return fclose(fp);
+    else
+        return 0;
+}
+
+void perf_map_write_entry(FILE *method_file, const void* code_addr, unsigned int code_size, const char* entry) {
+    fprintf(method_file, "%lx %x %s\n", (unsigned long) code_addr, code_size, entry);
+}
+
+typedef PyObject* (*py_evaluator)(PyThreadState *, _PyInterpreterFrame *, int throwflag);
+
+PyObject* the_trampoline(py_evaluator eval, PyThreadState* t, _PyInterpreterFrame* f, int p) {
+    return eval(t, f,p);
+}
+
 static void
 init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
 {
@@ -300,6 +409,13 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
     co->co_name = con->name;
     Py_INCREF(con->qualname);
     co->co_qualname = con->qualname;
+
+    py_trampoline f = compile_blech();
+    FILE* pfile = perf_map_open(getpid());
+    perf_map_write_entry(pfile, f, 4096, PyUnicode_AsUTF8(con->qualname));
+    perf_map_close(pfile);
+
+    co->co_trampoline = f;
     co->co_flags = con->flags;
 
     co->co_firstlineno = con->firstlineno;

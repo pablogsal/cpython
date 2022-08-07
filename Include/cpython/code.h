@@ -32,6 +32,7 @@ typedef uint16_t _Py_CODEUNIT;
 #define _Py_SET_OPCODE(word, opcode) \
     do { ((unsigned char *)&(word))[0] = (opcode); } while (0)
 
+
 // To avoid repeating ourselves in deepfreeze.py, all PyCodeObject members are
 // defined in this macro:
 #define _PyCode_DEF(SIZE) {                                                    \
@@ -88,6 +89,7 @@ typedef uint16_t _Py_CODEUNIT;
     PyObject *co_filename;        /* unicode (where it was loaded from) */     \
     PyObject *co_name;            /* unicode (name, for reference) */          \
     PyObject *co_qualname;        /* unicode (qualname, for reference) */      \
+    void* co_trampoline;                                               \
     PyObject *co_linetable;       /* bytes object that holds location info */  \
     PyObject *co_weakreflist;     /* to support weakrefs to code objects */    \
     PyObject *_co_code;           /* cached co_code object/attribute */        \
