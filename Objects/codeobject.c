@@ -300,7 +300,10 @@ _PyCode_Validate(struct _PyCodeConstructor *con)
     return 0;
 }
 
-py_trampoline compile_blech(void) {
+extern void* _Py_trampoline_func_start;
+extern void* _Py_trampoline_func_end;
+
+py_trampoline compile_trampoline(void) {
   char *memory = mmap(NULL,             // address
                       4096,             // size
                       PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -312,57 +315,10 @@ py_trampoline compile_blech(void) {
     exit(1);
   }
 
-  int i = 0;
-
-  memory[i++] = 0x55;
-  memory[i++] = 0x48;
-  memory[i++] = 0x89;
-  memory[i++] = 0xe5;
-  memory[i++] = 0x48;
-  memory[i++] = 0x83;
-  memory[i++] = 0xec;
-  memory[i++] = 0x20;
-  memory[i++] = 0x48;
-  memory[i++] = 0x89;
-  memory[i++] = 0x7d;
-  memory[i++] = 0xf8;
-  memory[i++] = 0x48;
-  memory[i++] = 0x89;
-  memory[i++] = 0x75;
-  memory[i++] = 0xf0;
-  memory[i++] = 0x48;
-  memory[i++] = 0x89;
-  memory[i++] = 0x55;
-  memory[i++] = 0xe8;
-  memory[i++] = 0x89;
-  memory[i++] = 0x4d;
-  memory[i++] = 0xe4;
-  memory[i++] = 0x8b;
-  memory[i++] = 0x55;
-  memory[i++] = 0xe4;
-  memory[i++] = 0x48;
-  memory[i++] = 0x8b;
-  memory[i++] = 0x4d;
-  memory[i++] = 0xe8;
-  memory[i++] = 0x48;
-  memory[i++] = 0x8b;
-  memory[i++] = 0x45;
-  memory[i++] = 0xf0;
-  memory[i++] = 0x4c;
-  memory[i++] = 0x8b;
-  memory[i++] = 0x45;
-  memory[i++] = 0xf8;
-  memory[i++] = 0x48;
-  memory[i++] = 0x89;
-  memory[i++] = 0xce;
-  memory[i++] = 0x48;
-  memory[i++] = 0x89;
-  memory[i++] = 0xc7;
-  memory[i++] = 0x41;
-  memory[i++] = 0xff;
-  memory[i++] = 0xd0;
-  memory[i++] = 0xc9;
-  memory[i++] = 0xc3;
+  void* start = &_Py_trampoline_func_start;
+  void* end = &_Py_trampoline_func_end;
+  size_t ss = end-start;
+  memcpy(memory, start, ss*sizeof(char));
 
   return (py_trampoline) memory;
 }
@@ -385,15 +341,12 @@ int perf_map_close(FILE *fp) {
         return 0;
 }
 
-void perf_map_write_entry(FILE *method_file, const void* code_addr, unsigned int code_size, const char* entry) {
-    fprintf(method_file, "%lx %x %s\n", (unsigned long) code_addr, code_size, entry);
+void perf_map_write_entry(FILE *method_file, const void* code_addr, unsigned int code_size,
+                          const char* entry, const char* file) {
+    fprintf(method_file, "%lx %x py::%s:%s\n", (unsigned long) code_addr, code_size, entry, file);
 }
 
 typedef PyObject* (*py_evaluator)(PyThreadState *, _PyInterpreterFrame *, int throwflag);
-
-PyObject* the_trampoline(py_evaluator eval, PyThreadState* t, _PyInterpreterFrame* f, int p) {
-    return eval(t, f,p);
-}
 
 static void
 init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
@@ -410,9 +363,11 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
     Py_INCREF(con->qualname);
     co->co_qualname = con->qualname;
 
-    py_trampoline f = compile_blech();
+    py_trampoline f = compile_trampoline();
     FILE* pfile = perf_map_open(getpid());
-    perf_map_write_entry(pfile, f, 4096, PyUnicode_AsUTF8(con->qualname));
+    perf_map_write_entry(pfile, f, 4096,
+                         PyUnicode_AsUTF8(con->qualname),
+                         PyUnicode_AsUTF8(con->filename));
     perf_map_close(pfile);
 
     co->co_trampoline = f;

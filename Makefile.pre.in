@@ -444,6 +444,7 @@ OBJECT_OBJS=	\
 		Objects/cellobject.o \
 		Objects/classobject.o \
 		Objects/codeobject.o \
+		Objects/asm_trampoline.o \
 		Objects/complexobject.o \
 		Objects/descrobject.o \
 		Objects/enumobject.o \
