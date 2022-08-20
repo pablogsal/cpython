@@ -300,12 +300,13 @@ _PyCode_Validate(struct _PyCodeConstructor *con)
     return 0;
 }
 
+#ifdef HAVE_PERF_TRAMPOLINE
 extern void* _Py_trampoline_func_start;
 extern void* _Py_trampoline_func_end;
 
 py_trampoline compile_trampoline(void) {
   char *memory = mmap(NULL,             // address
-                      4096,             // size
+                      PAGESIZE,         // size
                       PROT_READ | PROT_WRITE | PROT_EXEC,
                       MAP_PRIVATE | MAP_ANONYMOUS,
                       -1,               // fd (not used here)
@@ -347,6 +348,7 @@ void perf_map_write_entry(FILE *method_file, const void* code_addr, unsigned int
 }
 
 typedef PyObject* (*py_evaluator)(PyThreadState *, _PyInterpreterFrame *, int throwflag);
+#endif
 
 static void
 init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
@@ -363,6 +365,7 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
     Py_INCREF(con->qualname);
     co->co_qualname = con->qualname;
 
+#ifdef HAVE_PERF_TRAMPOLINE
     py_trampoline f = compile_trampoline();
     FILE* pfile = perf_map_open(getpid());
     perf_map_write_entry(pfile, f, 4096,
@@ -371,6 +374,7 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
     perf_map_close(pfile);
 
     co->co_trampoline = f;
+#endif
     co->co_flags = con->flags;
 
     co->co_firstlineno = con->firstlineno;
