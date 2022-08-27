@@ -1,6 +1,3 @@
-#include "pegen.h"
-#include "vm.h"
-
 static const int n_keyword_lists = 9;
 static KeywordToken *reserved_keywords[] = {
     NULL,
@@ -8699,7 +8696,7 @@ static Rule all_rules[] = {
     OP_RETURN, A__TMP_147_0,
 
     // SOFT_KEYWORD
-    OP_RULE, OP_SOFT_KEYWORD,
+    OP_RULE, R_SOFT_KEYWORD,
     OP_RETURN, A__TMP_147_1,
 
  },
@@ -10744,7 +10741,7 @@ call_action(Parser *p, Frame *_f, int _iaction)
     case A_AS_PATTERN_0:
         return _PyAST_MatchAs ( ((pattern_ty)_f->vals[0]) , ((expr_ty)_f->vals[2]) -> v . Name . id , EXTRA );
     case A_OR_PATTERN_0:
-        return asdl_seq_LEN ( (asdl_stmt_seq*)(_f->vals[0]) ) == 1   ? asdl_seq_GET ( _f->vals[0] , 0 ) : _PyAST_MatchOr ( _f->vals[0] , EXTRA );
+        return asdl_seq_LEN ( _f->vals[0] ) == 1   ? asdl_seq_GET ( _f->vals[0] , 0 ) : _PyAST_MatchOr ( _f->vals[0] , EXTRA );
     case A_LITERAL_PATTERN_0:
     case A_LITERAL_PATTERN_1:
     case A_LITERAL_PATTERN_2:

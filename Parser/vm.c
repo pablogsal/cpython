@@ -65,12 +65,12 @@ pop_frame(Stack *stack, void *v)
 static inline asdl_seq *
 make_asdl_seq(Parser *p, void *collection[], int ncollected)
 {
-    asdl_seq *seq = _Py_asdl_seq_new(ncollected, p->arena);
+    asdl_seq *seq = (asdl_seq*)_Py_asdl_generic_seq_new(ncollected, p->arena);
     if (!seq) {
         return NULL;
     }
     for (int i = 0; i < ncollected; i++) {
-        asdl_seq_SET(seq, i, collection[i]);
+        asdl_seq_SET_UNTYPED(seq, i, collection[i]);
     }
     return seq;
 }
@@ -182,6 +182,7 @@ run_vm(Parser *p, Rule rules[], int root)
         v = f->vals[0];
         return v;
     case OP_FAILURE:
+        printf("Op failure\n");
         return RAISE_SYNTAX_ERROR("A syntax error");
 
     case OP_TOKEN:
@@ -190,7 +191,7 @@ run_vm(Parser *p, Rule rules[], int root)
         break;
     case OP_SOFT_KEYWORD:
         oparg = f->rule->opcodes[f->iop++];
-        v = _PyPegen_expect_soft_keyword(p, soft_keywords[oparg]);
+        v = _PyPegen_expect_soft_keyword(p, p->soft_keywords[oparg]);
         break;
     case OP_RULE:
         oparg = f->rule->opcodes[f->iop++];
@@ -260,6 +261,7 @@ run_vm(Parser *p, Rule rules[], int root)
     }
     if (PyErr_Occurred()) {
         D(printf("            PyErr\n"));
+        PyErr_Print();
         p->error_indicator = 1;
         return NULL;
     }
@@ -313,6 +315,7 @@ void *
 _PyPegen_vmparser(Parser *p)
 {
     p->keywords = reserved_keywords;
+    p->soft_keywords = soft_keywords;
     p->n_keyword_lists = n_keyword_lists;
 
     return run_vm(p, all_rules, R_ROOT);

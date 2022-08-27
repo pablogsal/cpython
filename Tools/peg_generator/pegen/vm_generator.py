@@ -179,6 +179,7 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         self.opcode_buffer.append(Opcode(opcode, oparg))
 
     def generate(self, filename: str) -> None:
+        self.add_root_rules()
         self.collect_rules()
         self.gather_actions()
         self._setup_keywords()
@@ -286,7 +287,7 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         if not alt.action:
             # TODO: Restore the assert, but expect index == 2 in Gather
             ##assert index == 1, "Alternative with >1 item must have an action"
-            return self.make_typed_var(alt, 0)
+            return self.make_typed_var(alt, 0, 0)
         # Sadly, the action is given as a string, so tokenize it back.
         # We must not substitute item names when preceded by '.' or '->'.
         res = []
@@ -294,9 +295,10 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         for stuff in tokenize.generate_tokens(iter([alt.action]).__next__):
             _, s, _, _, _ = stuff
             if prevs not in (".", "->"):
-                i = name_to_index.get(s)
-                if i is not None:
-                    s = self.make_typed_var(alt, i)
+                idxs = name_to_index.get(s)
+                if idxs is not None:
+                    i, action_idx = idxs
+                    s = self.make_typed_var(alt, i, action_idx)
             res.append(s)
             prevs = s
         return " ".join(res).strip()
@@ -304,21 +306,23 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
     def map_alt_names_to_vals_index(self, alt: Alt) -> Tuple[Dict[str, int], int]:
         index = 0
         map: Dict[str, int] = {}
-        for nameditem in alt.items:
+        for action_idx, nameditem in enumerate(alt.items):
             if nameditem.name:
-                map[nameditem.name] = index
+                map[nameditem.name] = index, action_idx
             if isinstance(nameditem.item, (Leaf, Group, Opt, Repeat)):
                 index += 1
         return map, index
 
-    def make_typed_var(self, alt: Alt, index: int) -> str:
+    def make_typed_var(self, alt: Alt, index: int, action_idx: int) -> str:
         var = f"_f->vals[{index}]"
-        type = self.get_type_of_indexed_item(alt, index)
+        type = self.get_type_of_indexed_item(alt, action_idx)
         if type:
             var = f"(({type}){var})"
         return var
 
     def get_type_of_indexed_item(self, alt: Alt, index: int) -> Optional[str]:
+        if alt.items[index].type:
+            return alt.items[index].type
         item = alt.items[index].item
         if isinstance(item, NameLeaf):
             if item.value in self.rules:
@@ -328,6 +332,11 @@ class VMParserGenerator(ParserGenerator, GrammarVisitor):
         if isinstance(item, StringLeaf):
             return "Token *"
         return None
+
+    def add_root_rules(self) -> None:
+        assert "root" not in self.all_rules
+        root = RootRule("root", "file")  # TODO: determine start rules dynamically
+        self.all_rules["root"] = root
 
     def visit_RootRule(self, node: RootRule) -> None:
         self.print(f'{{"{node.name}",')

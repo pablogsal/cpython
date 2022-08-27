@@ -811,7 +811,7 @@ _is_end_of_source(Parser *p) {
 void *
 _PyPegen_run_parser(Parser *p)
 {
-    void *res = _PyPegen_parse(p);
+    void *res = _PyPegen_vmparser(p);
     assert(p->level == 0);
     if (res == NULL) {
         if ((p->flags & PyPARSE_ALLOW_INCOMPLETE_INPUT) &&  _is_end_of_source(p)) {
@@ -826,7 +826,7 @@ _PyPegen_run_parser(Parser *p)
         // rules will be active during parsing.
         Token *last_token = p->tokens[p->fill - 1];
         reset_parser_state_for_error_pass(p);
-        _PyPegen_parse(p);
+        _PyPegen_vmparser(p);
 
         // Set SyntaxErrors accordingly depending on the parser/tokenizer status at the failure
         // point.
