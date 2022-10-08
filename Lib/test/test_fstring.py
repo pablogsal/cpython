@@ -329,13 +329,13 @@ non-important content
         self.assertEqual(t.body[1].lineno, 3)
         self.assertEqual(t.body[1].value.lineno, 3)
         self.assertEqual(t.body[1].value.values[0].lineno, 3)
-        self.assertEqual(t.body[1].value.values[1].lineno, 3)
-        self.assertEqual(t.body[1].value.values[2].lineno, 3)
+        self.assertEqual(t.body[1].value.values[1].lineno, 4)
+        self.assertEqual(t.body[1].value.values[2].lineno, 6)
         self.assertEqual(t.body[1].col_offset, 0)
         self.assertEqual(t.body[1].value.col_offset, 0)
-        self.assertEqual(t.body[1].value.values[0].col_offset, 0)
-        self.assertEqual(t.body[1].value.values[1].col_offset, 0)
-        self.assertEqual(t.body[1].value.values[2].col_offset, 0)
+        self.assertEqual(t.body[1].value.values[0].col_offset, 4)
+        self.assertEqual(t.body[1].value.values[1].col_offset, 2)
+        self.assertEqual(t.body[1].value.values[2].col_offset, 11)
         # NOTE: the following lineno information and col_offset is correct for
         # expressions within FormattedValues.
         binop = t.body[1].value.values[1].value
@@ -366,13 +366,13 @@ a = f'''
         self.assertEqual(t.body[0].lineno, 2)
         self.assertEqual(t.body[0].value.lineno, 2)
         self.assertEqual(t.body[0].value.values[0].lineno, 2)
-        self.assertEqual(t.body[0].value.values[1].lineno, 2)
-        self.assertEqual(t.body[0].value.values[2].lineno, 2)
+        self.assertEqual(t.body[0].value.values[1].lineno, 3)
+        self.assertEqual(t.body[0].value.values[2].lineno, 3)
         self.assertEqual(t.body[0].col_offset, 0)
         self.assertEqual(t.body[0].value.col_offset, 4)
-        self.assertEqual(t.body[0].value.values[0].col_offset, 4)
-        self.assertEqual(t.body[0].value.values[1].col_offset, 4)
-        self.assertEqual(t.body[0].value.values[2].col_offset, 4)
+        self.assertEqual(t.body[0].value.values[0].col_offset, 8)
+        self.assertEqual(t.body[0].value.values[1].col_offset, 10)
+        self.assertEqual(t.body[0].value.values[2].col_offset, 17)
         # Check {blech}
         self.assertEqual(t.body[0].value.values[1].value.lineno, 3)
         self.assertEqual(t.body[0].value.values[1].value.end_lineno, 3)
@@ -387,6 +387,20 @@ x = (
         t = ast.parse(expr)
         self.assertEqual(type(t), ast.Module)
         self.assertEqual(len(t.body), 1)
+        # check the joinedstr location
+        joinedstr = t.body[0].value
+        self.assertEqual(type(joinedstr), ast.JoinedStr)
+        self.assertEqual(joinedstr.lineno, 3)
+        self.assertEqual(joinedstr.end_lineno, 3)
+        self.assertEqual(joinedstr.col_offset, 4)
+        self.assertEqual(joinedstr.end_col_offset, 17)
+        # check the formatted value location
+        fv = t.body[0].value.values[1]
+        self.assertEqual(type(fv), ast.FormattedValue)
+        self.assertEqual(fv.lineno, 3)
+        self.assertEqual(fv.end_lineno, 3)
+        self.assertEqual(fv.col_offset, 7)
+        self.assertEqual(fv.end_col_offset, 16)
         # check the test(t) location
         call = t.body[0].value.values[1].value
         self.assertEqual(type(call), ast.Call)
@@ -415,9 +429,9 @@ x = (
         # check the first wat
         self.assertEqual(type(wat1), ast.Constant)
         self.assertEqual(wat1.lineno, 4)
-        self.assertEqual(wat1.end_lineno, 6)
-        self.assertEqual(wat1.col_offset, 12)
-        self.assertEqual(wat1.end_col_offset, 18)
+        self.assertEqual(wat1.end_lineno, 5)
+        self.assertEqual(wat1.col_offset, 14)
+        self.assertEqual(wat1.end_col_offset, 26)
         # check the call
         call = middle.value
         self.assertEqual(type(call), ast.Call)
@@ -427,9 +441,9 @@ x = (
         self.assertEqual(call.end_col_offset, 31)
         # check the second wat
         self.assertEqual(type(wat2), ast.Constant)
-        self.assertEqual(wat2.lineno, 4)
+        self.assertEqual(wat2.lineno, 5)
         self.assertEqual(wat2.end_lineno, 6)
-        self.assertEqual(wat2.col_offset, 12)
+        self.assertEqual(wat2.col_offset, 32)
         self.assertEqual(wat2.end_col_offset, 18)
 
     def test_docstring(self):

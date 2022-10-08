@@ -50,8 +50,8 @@ typedef struct _tokenizer_mode {
     char f_string_quote;
     int f_string_quote_size;
     int f_string_raw;
-    const char* f_string_start; 
-    const char* f_string_multi_line_start; 
+    const char* f_string_start;
+    const char* f_string_multi_line_start;
 
     int last_expr_size;
     int last_expr_end;
@@ -82,6 +82,8 @@ struct tok_state {
     int lineno;         /* Current line number */
     int first_lineno;   /* First line of a single line or multi line string
                            expression (cf. issue 16806) */
+    int fstring_first_constant_lineno; /* First line number of a single line or multiline
+                                            constant part of an f-string*/
     int starting_col_offset; /* The column offset at the beginning of a token */
     int col_offset;     /* Current col offset */
     int level;          /* () [] {} Parentheses nesting level */

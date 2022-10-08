@@ -1549,7 +1549,7 @@ token_setup(struct tok_state *tok, struct token *token, int type, const char *st
 {
     assert((start == NULL && end == NULL) || (start != NULL && end != NULL));
     token->level = tok->level;
-    token->lineno = type == STRING ? tok->first_lineno : tok->lineno;
+    token->lineno = type == STRING ? tok->first_lineno : (type == FSTRING_MIDDLE || type == FSTRING_END ? tok->fstring_first_constant_lineno : tok->lineno);
     token->end_lineno = tok->lineno;
     token->col_offset = token->end_col_offset = -1;
     token->start = start;
@@ -1726,7 +1726,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
     if (c == '#') {
 
         if (tok->tok_mode_stack_index > 0) {
-            return syntaxerror(tok, "f-string expression part cannot include '#'");
+            return MAKE_TOKEN(syntaxerror(tok, "f-string expression part cannot include '#'"));
         }
 
         const char *prefix, *p, *type_start;
@@ -2191,7 +2191,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         current_tok->bracket_stack = 0;
         current_tok->bracket_mark[0] = 0;
         current_tok->bracket_mark_index = -1;
-        return FSTRING_START;
+        return MAKE_TOKEN(FSTRING_START);
     }
 
   letter_quote:
@@ -2248,7 +2248,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
                     tokenizer_mode *current_tok = &(tok->tok_mode_stack[tok->tok_mode_stack_index]);
                     if (current_tok->f_string_quote == quote &&
                         current_tok->f_string_quote_size == quote_size) {
-                        return syntaxerror(tok, "f-string: expecting '}'", start);
+                        return MAKE_TOKEN(syntaxerror(tok, "f-string: expecting '}'", start));
                     }
                 }
 
@@ -2304,14 +2304,14 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         int cursor = current_tok->bracket_stack - (c != '{');
 
         if (cursor == 0 && !update_fstring_expr(tok, c)) {
-            return 0;
+            return MAKE_TOKEN(ENDMARKER);
         }
 
         if (c == ':' && cursor == mark) {
             current_tok->kind = TOK_FSTRING_MODE;
             p_start = tok->start;
             p_end = tok->cur;
-            return _PyToken_OneChar(c);
+            return MAKE_TOKEN(_PyToken_OneChar(c));
         }
     }
 
@@ -2407,9 +2407,11 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     const char *p_start = NULL;
     const char *p_end = NULL;
     tok->start = tok->cur;
+    tok->fstring_first_constant_lineno = tok->lineno;
+    tok->starting_col_offset = tok->col_offset;
 
     // If we start with a bracket, we defer to the normal mode as there is nothing for us to tokenize
-    // befor it. 
+    // before it.
     char start_char = tok_nextc(tok);
     char peek = tok_nextc(tok);
     tok_backup(tok, peek);
@@ -2517,7 +2519,7 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     }
 
     p_start = tok->start;
-    p_end = tok->cur-current_tok->f_string_quote_size;
+    p_end = tok->cur - current_tok->f_string_quote_size;
     tok->tok_mode_stack_index--;
     return MAKE_TOKEN(FSTRING_END);
 }

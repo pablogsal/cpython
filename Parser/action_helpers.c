@@ -1665,13 +1665,13 @@ _PyPegen_concatenate_strings2(Parser *p, asdl_expr_seq *strings,
             _PyUnicodeWriter_Init(&writer);
             expr_ty last_elem = elem;
             for (j = i; j < n_flattened_elements; j++) {
-                elem = asdl_seq_GET(flattened, j);
-                if (elem->kind == Constant_kind) {
-                    if (_PyUnicodeWriter_WriteStr(&writer, elem->v.Constant.value)) {
+                expr_ty current_elem = asdl_seq_GET(flattened, j);
+                if (current_elem->kind == Constant_kind) {
+                    if (_PyUnicodeWriter_WriteStr(&writer, current_elem->v.Constant.value)) {
                         _PyUnicodeWriter_Dealloc(&writer);
                         return NULL;
                     }
-                    last_elem = elem;
+                    last_elem = current_elem;
                 } else {
                     break;
                 }
