@@ -2136,7 +2136,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
     }
 
   f_string_quote:
-    if (((*tok->start == 'f' || *tok->start == 'r') && (c == '\'' || c == '"'))) {
+    if (((tolower(*tok->start) == 'f' || tolower(*tok->start) == 'r') && (c == '\'' || c == '"'))) {
         int quote = c;
         int quote_size = 1;             /* 1 or 3 */
 
@@ -2176,11 +2176,14 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         current_tok->last_expr_buffer = NULL;
         current_tok->last_expr_size = 0;
         current_tok->last_expr_end = -1;
+        current_tok->format_spec = 0;
 
         switch (*tok->start) {
+            case 'F':
             case 'f':
-                current_tok->f_string_raw = *(tok->start + 1) == 'r';
+                current_tok->f_string_raw = tolower(*(tok->start + 1)) == 'r';
                 break;
+            case 'R':
             case 'r':
                 current_tok->f_string_raw = 1;
                 break;
@@ -2309,6 +2312,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
 
         if (c == ':' && cursor == mark) {
             current_tok->kind = TOK_FSTRING_MODE;
+            current_tok->format_spec = 1;
             p_start = tok->start;
             p_end = tok->cur;
             return MAKE_TOKEN(_PyToken_OneChar(c));
@@ -2382,6 +2386,12 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         if (tok->tok_mode_stack_index > 0) {
             current_tok->bracket_stack--;
             if (c == '}' && current_tok->bracket_stack == current_tok->bracket_mark[current_tok->bracket_mark_index]) {
+                // When the expression is complete, we can exit the format
+                // spec mode (no matter if we were in it or not).
+                if (current_tok->bracket_mark_index <= 0) {
+                    current_tok->format_spec = 0;
+                }
+
                 current_tok->bracket_mark_index--;
                 current_tok->kind = TOK_FSTRING_MODE;
             }
@@ -2480,21 +2490,35 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
                 return MAKE_TOKEN(FSTRING_MIDDLE);
             }
             char peek = tok_nextc(tok);
-            if (!(peek == '}' && current_tok->bracket_mark_index <= 0)) {
+            if (peek == '}' && current_tok->bracket_mark_index <= 0
+                // We can not have }} inside the format spec, so we are going to assume
+                // this that the first closing brace belongs to the f-string expression
+                // and the second one needs to deal with later (e.g. f"{1:<3}}}").
+                && !current_tok->format_spec) {
+                p_start = tok->start;
+                p_end = tok->cur - 1;
+            } else {
                 tok_backup(tok, peek);
                 tok_backup(tok, c);
                 tok->tok_mode_stack[tok->tok_mode_stack_index].kind = TOK_REGULAR_MODE;
                 p_start = tok->start;
                 p_end = tok->cur;
-            } else {
-                p_start = tok->start;
-                p_end = tok->cur - 1;
             }
             return MAKE_TOKEN(FSTRING_MIDDLE);
-        }
-        else if (!current_tok->f_string_raw) {
-            if (c == '\\') {
-                char peek = tok_nextc(tok);
+        } else if (c == '\\') {
+            char peek = tok_nextc(tok);
+            // Special case when the backslash is right before a curly
+            // brace. We have to restore and return the control back
+            // to the loop for the next iteration.
+            if (peek == '{' || peek == '}') {
+                if (!current_tok->f_string_raw) {
+                    warn_invalid_escape_sequence(tok, peek);
+                }
+                tok_backup(tok, peek);
+                continue;
+            }
+
+            if (!current_tok->f_string_raw) {
                 if (peek == 'N') {
                     /* Handle named unicode escapes (\N{BULLET}) */
                     peek = tok_nextc(tok);
@@ -2503,11 +2527,10 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
                     } else {
                         tok_backup(tok, peek);
                     }
-                } else if (peek == '{') {
-                    warn_invalid_escape_sequence(tok, peek);
-                    tok_backup(tok, peek);
                 }
-            }
+            } /* else {
+                skip the escaped character
+            }*/
         }
     }
 

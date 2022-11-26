@@ -858,6 +858,36 @@ x = (
                             ["f'{lambda x:x}'",
                              ])
 
+    def test_valid_prefixes(self):
+        self.assertEqual(F'{1}', "1")
+        self.assertEqual(FR'{2}', "2")
+        self.assertEqual(fR'{3}', "3")
+
+    def test_roundtrip_raw_quotes(self):
+        self.assertEqual(fr"\'", "\\'")
+        self.assertEqual(fr'\"', '\\"')
+        self.assertEqual(fr'\"\'', '\\"\\\'')
+        self.assertEqual(fr'\'\"', '\\\'\\"')
+        self.assertEqual(fr'\"\'\"', '\\"\\\'\\"')
+        self.assertEqual(fr'\'\"\'', '\\\'\\"\\\'')
+        self.assertEqual(fr'\"\'\"\'', '\\"\\\'\\"\\\'')
+
+    def test_fstring_backslash_before_double_bracket(self):
+        self.assertEqual(f'\{{\}}', '\\{\\}')
+        self.assertEqual(f'\{{', '\\{')
+        self.assertEqual(f'\{{{1+1}', '\\{2')
+        self.assertEqual(f'\}}{1+1}', '\\}2')
+        self.assertEqual(f'{1+1}\}}', '2\\}')
+        self.assertEqual(fr'\{{\}}', '\\{\\}')
+        self.assertEqual(fr'\{{', '\\{')
+        self.assertEqual(fr'\{{{1+1}', '\\{2')
+        self.assertEqual(fr'\}}{1+1}', '\\}2')
+        self.assertEqual(fr'{1+1}\}}', '2\\}')
+
+    def test_fstring_format_spec_greedy_matching(self):
+        self.assertEqual(f"{1:}}}", "1}")
+        self.assertEqual(f"{1:>3{5}}}}", "                                  1}")
+
     def test_yield(self):
         # Not terribly useful, but make sure the yield turns
         #  a function into a generator
