@@ -884,6 +884,20 @@ x = (
         self.assertEqual(fr'\}}{1+1}', '\\}2')
         self.assertEqual(fr'{1+1}\}}', '2\\}')
 
+    def test_fstring_backslash_prefix_raw(self):
+        self.assertEqual(f'\\', '\\')
+        self.assertEqual(f'\\\\', '\\\\')
+        self.assertEqual(fr'\\', r'\\')
+        self.assertEqual(fr'\\\\', r'\\\\')
+        self.assertEqual(rf'\\', r'\\')
+        self.assertEqual(rf'\\\\', r'\\\\')
+        self.assertEqual(Rf'\\', R'\\')
+        self.assertEqual(Rf'\\\\', R'\\\\')
+        self.assertEqual(fR'\\', R'\\')
+        self.assertEqual(fR'\\\\', R'\\\\')
+        self.assertEqual(FR'\\', R'\\')
+        self.assertEqual(FR'\\\\', R'\\\\')
+
     def test_fstring_format_spec_greedy_matching(self):
         self.assertEqual(f"{1:}}}", "1}")
         self.assertEqual(f"{1:>3{5}}}}", "                                  1}")

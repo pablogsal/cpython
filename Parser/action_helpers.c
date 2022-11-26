@@ -1405,7 +1405,7 @@ deal_with_gstring2(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b)
         return NULL;
     }
 
-    int is_raw = strchr(quote_str, 'r') != NULL;
+    int is_raw = strpbrk(quote_str, "rR") != NULL;
     const char* _str = PyBytes_AsString(b->bytes);
     if (_str == NULL) {
         return NULL;
