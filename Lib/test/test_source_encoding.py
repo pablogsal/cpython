@@ -160,6 +160,19 @@ class MiscSourceEncodingTest(unittest.TestCase):
         finally:
             os.unlink(TESTFN)
 
+    def test_tokenizer_fstring_warning_in_first_line(self):
+        source = "f'\{'"
+        with open(TESTFN, "w") as fd:
+            fd.write("{}".format(source))
+        try:
+            retcode, stdout, stderr = script_helper.assert_python_failure(TESTFN, "-Werror")
+            self.assertGreater(retcode, 0)
+            self.assertIn(b"invalid escape sequence", stderr)
+            self.assertEqual(stderr.count(source.encode()), 2)
+        finally:
+            os.unlink(TESTFN)
+
+
 class AbstractSourceEncodingTest:
 
     def test_default_coding(self):

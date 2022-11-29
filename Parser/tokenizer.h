@@ -126,7 +126,7 @@ struct tok_state {
     // TODO: Factor this into its own thing
     tokenizer_mode tok_mode_stack[MAXLEVEL];
     int tok_mode_stack_index;
-    int blech;
+    int tok_report_warnings;
 #ifdef Py_DEBUG
     int debug;
 #endif

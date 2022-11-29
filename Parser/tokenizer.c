@@ -99,8 +99,7 @@ tok_new(void)
     tok->str = NULL;
     tok->tok_mode_stack[0] = (tokenizer_mode){.kind =TOK_REGULAR_MODE, .f_string_quote='\0', .f_string_quote_size = 0};
     tok->tok_mode_stack_index = 0;
-
-    tok->blech = 0;
+    tok->tok_report_warnings = 1;
 #ifdef Py_DEBUG
     tok->debug = _Py_GetConfig()->parser_debug;
 #endif
@@ -1171,7 +1170,7 @@ tok_nextc(struct tok_state *tok)
         if (tok->done != E_OK) {
             return EOF;
         }
-        if (tok->fp == NULL && !tok->blech) {
+        if (tok->fp == NULL) {
             rc = tok_underflow_string(tok);
         }
         else if (tok->prompt != NULL) {
@@ -1330,6 +1329,11 @@ error:
 static int
 warn_invalid_escape_sequence(struct tok_state *tok, const char first_invalid_escape_char)
 {
+
+    if (!tok->tok_report_warnings) {
+        return 0;
+    }
+
     PyObject *msg = PyUnicode_FromFormat(
         "invalid escape sequence '\\%c'",
         first_invalid_escape_char
@@ -2512,7 +2516,9 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
             // to the loop for the next iteration.
             if (peek == '{' || peek == '}') {
                 if (!current_tok->f_string_raw) {
-                    warn_invalid_escape_sequence(tok, peek);
+                    if (warn_invalid_escape_sequence(tok, peek)) {
+                        return MAKE_TOKEN(ERRORTOKEN);
+                    }
                 }
                 tok_backup(tok, peek);
                 continue;
@@ -2642,6 +2648,7 @@ _PyTokenizer_FindEncodingFilename(int fd, PyObject *filename)
         }
     }
     struct token token;
+    tok->tok_report_warnings = 0;
     while (tok->lineno < 2 && tok->done == E_OK) {
         _PyTokenizer_Get(tok, &token);
     }
