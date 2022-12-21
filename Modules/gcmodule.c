@@ -139,7 +139,7 @@ void
 _PyGC_InitState(GCState *gcstate)
 {
     gcstate->enabled = 1; /* automatic collection enabled? */
-    gcstate->gc_threshold = 7000;
+    gcstate->gc_threshold = 700;
     gcstate->gc_scale = 100;
     gc_list_init(&gcstate->head);
 }
@@ -1129,17 +1129,6 @@ handle_resurrected_objects(PyGC_Head *unreachable, PyGC_Head* still_unreachable,
     gc_list_merge(resurrected, old_generation);
 }
 
-static void
-update_gc_threshold(GCState *gcstate)
-{
-    Py_ssize_t live = gcstate->gc_live;
-    Py_ssize_t threshold = live + (live * gcstate->gc_scale) / 100;
-    if (threshold < 7000) {
-        threshold = 7000;
-    }
-    gcstate->gc_threshold = threshold;
-}
-
 /* This is the main function.  Read this to understand how the
  * collection process works. */
 static Py_ssize_t
@@ -1273,8 +1262,6 @@ gc_collect_main(PyThreadState *tstate, int generation,
     stats->collections++;
     stats->collected += m;
     stats->uncollectable += n;
-
-    update_gc_threshold(gcstate);
 
     if (PyDTrace_GC_DONE_ENABLED()) {
         PyDTrace_GC_DONE(n + m);

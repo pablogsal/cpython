@@ -203,8 +203,7 @@ extern void _PyGC_InitState(struct _gc_runtime_state *);
 static inline int
 _PyGC_ShouldCollect(struct _gc_runtime_state *gcstate)
 {
-    Py_ssize_t live = gcstate->gc_live;
-    return !gcstate->collecting && gcstate->enabled && live >= gcstate->gc_threshold;
+    return !gcstate->collecting && gcstate->enabled && (gcstate->long_lived_pending >= gcstate->long_lived_total / 4);
 }
 
 extern Py_ssize_t _PyGC_CollectNoFail(PyThreadState *tstate);
