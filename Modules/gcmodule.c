@@ -1391,6 +1391,18 @@ invoke_gc_callback(PyThreadState *tstate, const char *phase,
     assert(!_PyErr_Occurred(tstate));
 }
 
+static void
+automatic_adjustment_threshold()
+{
+    GCState *gcstate = get_gc_state();
+    Py_ssize_t lived = gcstate->long_lived_pending;
+    if (lived != (int) lived) {
+        return;
+    }
+    int limit = (int) sqrt((int) lived) * 11;
+    gcstate->generations[0].threshold = limit;
+}
+
 /* Perform garbage collection of a generation and invoke
  * progress callbacks.
  */
@@ -1401,6 +1413,9 @@ gc_collect_with_callback(PyThreadState *tstate, int generation)
     Py_ssize_t result, collected, uncollectable;
     invoke_gc_callback(tstate, "start", generation, 0, 0);
     result = gc_collect_main(tstate, generation, &collected, &uncollectable, 0);
+    if (generation == 1) {
+        automatic_adjustment_threshold();
+    }
     invoke_gc_callback(tstate, "stop", generation, collected, uncollectable);
     assert(!_PyErr_Occurred(tstate));
     return result;
