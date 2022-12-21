@@ -118,7 +118,7 @@ extern "C" {
             .recursion_limit = Py_DEFAULT_RECURSION_LIMIT, \
         }, \
         .gc = { \
-            .enabled = 1, \
+            .enabled = 0, \
             .generations = { \
                 /* .head is set in _PyGC_InitState(). */ \
                 { .threshold = 700, }, \
