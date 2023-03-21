@@ -43,10 +43,6 @@ enum tokenizer_mode_kind_t {
 typedef struct _tokenizer_mode {
     enum tokenizer_mode_kind_t kind;
 
-    // TODO: we probably can infer this without storing it
-    // from the other information available here.
-    int format_spec;
-
     int bracket_stack;
     int bracket_mark[MAX_EXPR_NEXTING];
     int bracket_mark_index;
