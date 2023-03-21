@@ -2437,16 +2437,43 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     // If we start with a bracket, we defer to the normal mode as there is nothing for us to tokenize
     // before it.
     char start_char = tok_nextc(tok);
-    char peek = tok_nextc(tok);
-    tok_backup(tok, peek);
+    char peek1 = tok_nextc(tok);
+    char peek2 = tok_nextc(tok);
+    tok_backup(tok, peek2);
+    tok_backup(tok, peek1);
     tok_backup(tok, start_char);
 
-    if ((start_char == '{' && peek != '{') || (start_char == '}' && peek != '}')) {
+    if ((start_char == '{' && peek1 != '{') || (start_char == '}' && peek1 != '}')) {
         if (start_char == '{') {
             current_tok->bracket_mark[++current_tok->bracket_mark_index] = current_tok->bracket_stack;
         }
         tok->tok_mode_stack[tok->tok_mode_stack_index].kind = TOK_REGULAR_MODE;
         return tok_get_normal_mode(tok, current_tok, token);
+    }
+
+    // Emit FSTRING_END in case we've reached the end of the string
+    if ((current_tok->f_string_quote_size == 1 && start_char == current_tok->f_string_quote)
+            || (current_tok->f_string_quote_size == 3 && start_char == current_tok->f_string_quote
+                && peek1 == current_tok->f_string_quote && peek2 == current_tok->f_string_quote)) {
+
+        // Advance the tokenizer state again to create a token out of the end quotes
+        tok_nextc(tok);
+        if (current_tok->f_string_quote_size == 3) {
+            tok_nextc(tok);
+            tok_nextc(tok);
+        }
+
+        if (current_tok->last_expr_buffer != NULL) {
+            PyMem_Free(current_tok->last_expr_buffer);
+            current_tok->last_expr_buffer = NULL;
+            current_tok->last_expr_size = 0;
+            current_tok->last_expr_end = -1;
+        }
+
+        p_start = tok->start;
+        p_end = tok->cur;
+        tok->tok_mode_stack_index--;
+        return MAKE_TOKEN(FSTRING_END);
     }
 
     int end_quote_size = 0;
@@ -2550,17 +2577,16 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
         }
     }
 
-    if (current_tok->last_expr_buffer != NULL) {
-        PyMem_Free(current_tok->last_expr_buffer);
-        current_tok->last_expr_buffer = NULL;
-        current_tok->last_expr_size = 0;
-        current_tok->last_expr_end = -1;
+    // Backup the f-string quotes to emit a final FSTRING_MIDDLE and
+    // add the quotes to the FSTRING_END in the next tokenizer iteration.
+    tok_backup(tok, current_tok->f_string_quote);
+    if (current_tok->f_string_quote_size == 3) {
+        tok_backup(tok, current_tok->f_string_quote);
+        tok_backup(tok, current_tok->f_string_quote);
     }
-
     p_start = tok->start;
-    p_end = tok->cur - current_tok->f_string_quote_size;
-    tok->tok_mode_stack_index--;
-    return MAKE_TOKEN(FSTRING_END);
+    p_end = tok->cur;
+    return MAKE_TOKEN(FSTRING_MIDDLE);
 }
 
 
