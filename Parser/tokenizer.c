@@ -1563,7 +1563,12 @@ token_setup(struct tok_state *tok, struct token *token, int type, const char *st
 {
     assert((start == NULL && end == NULL) || (start != NULL && end != NULL));
     token->level = tok->level;
-    token->lineno = type == STRING ? tok->first_lineno : (type == FSTRING_MIDDLE || type == FSTRING_END ? tok->fstring_first_constant_lineno : tok->lineno);
+    if (type == STRING || type == FSTRING_MIDDLE || type == FSTRING_END) {
+        token->lineno = tok->first_lineno;
+    }
+    else {
+        token->lineno = tok->lineno;
+    }
     token->end_lineno = tok->lineno;
     token->col_offset = token->end_col_offset = -1;
     token->start = start;
@@ -2423,7 +2428,7 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     const char *p_start = NULL;
     const char *p_end = NULL;
     tok->start = tok->cur;
-    tok->fstring_first_constant_lineno = tok->lineno;
+    tok->first_lineno = tok->lineno;
     tok->starting_col_offset = tok->col_offset;
 
     // If we start with a bracket, we defer to the normal mode as there is nothing for us to tokenize
