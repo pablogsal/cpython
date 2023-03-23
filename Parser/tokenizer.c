@@ -1563,7 +1563,7 @@ token_setup(struct tok_state *tok, struct token *token, int type, const char *st
 {
     assert((start == NULL && end == NULL) || (start != NULL && end != NULL));
     token->level = tok->level;
-    if (type == STRING || type == FSTRING_MIDDLE || type == FSTRING_END) {
+    if (ISSTRINGLIT(type)) {
         token->lineno = tok->first_lineno;
     }
     else {

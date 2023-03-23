@@ -90,6 +90,9 @@ extern "C" {
                                  (x) == NEWLINE   || \
                                  (x) == INDENT    || \
                                  (x) == DEDENT)
+#define ISSTRINGLIT(x)          ((x) == STRING           || \
+                                 (x) == FSTRING_MIDDLE   || \
+                                 (x) == FSTRING_END)
 
 
 // Symbols exported for test_peg_generator
