@@ -43,10 +43,6 @@ enum tokenizer_mode_kind_t {
 typedef struct _tokenizer_mode {
     enum tokenizer_mode_kind_t kind;
 
-    // TODO: we probably can infer this without storing it
-    // from the other information available here.
-    int format_spec;
-
     int bracket_stack;
     int bracket_mark[MAX_EXPR_NEXTING];
     int bracket_mark_index;
@@ -57,8 +53,8 @@ typedef struct _tokenizer_mode {
     const char* f_string_start;
     const char* f_string_multi_line_start;
 
-    int last_expr_size;
-    int last_expr_end;
+    Py_ssize_t last_expr_size;
+    Py_ssize_t last_expr_end;
     char* last_expr_buffer;
 } tokenizer_mode;
 
@@ -86,8 +82,6 @@ struct tok_state {
     int lineno;         /* Current line number */
     int first_lineno;   /* First line of a single line or multi line string
                            expression (cf. issue 16806) */
-    int fstring_first_constant_lineno; /* First line number of a single line or multiline
-                                            constant part of an f-string*/
     int starting_col_offset; /* The column offset at the beginning of a token */
     int col_offset;     /* Current col offset */
     int level;          /* () [] {} Parentheses nesting level */
