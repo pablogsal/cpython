@@ -638,7 +638,7 @@ class CmdLineTest(unittest.TestCase):
                 [
                     b'    foo = f"""{}',
                     b'               ^',
-                    b'SyntaxError: invalid syntax',
+                    b'SyntaxError: f-string: empty expression not allowed',
                 ],
             )
 
