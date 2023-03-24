@@ -636,8 +636,8 @@ class CmdLineTest(unittest.TestCase):
             self.assertEqual(
                 stderr.splitlines()[-3:],
                 [
-                    b'    foo"""',
-                    b'          ^',
+                    b'    foo = f"""{}',
+                    b'               ^',
                     b'SyntaxError: f-string: empty expression not allowed',
                 ],
             )
