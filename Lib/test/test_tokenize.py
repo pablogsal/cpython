@@ -1958,13 +1958,13 @@ c"""', """\
         self.check_tokenize(r'f"abc\
 def"', """\
     FSTRING_START \'f"\'          (1, 0) (1, 2)
-    FSTRING_END 'abc\\\\\\ndef'  (2, -1) (2, 3)
+    FSTRING_END 'abc\\\\\\ndef'  (1, 2) (2, 3)
     """)
 
         self.check_tokenize(r'Rf"abc\
 def"', """\
     FSTRING_START 'Rf"'         (1, 0) (1, 3)
-    FSTRING_END 'abc\\\\\\ndef'  (2, -1) (2, 3)
+    FSTRING_END 'abc\\\\\\ndef'  (1, 3) (2, 3)
     """)
 
     def test_function(self):
