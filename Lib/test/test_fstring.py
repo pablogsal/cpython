@@ -1091,6 +1091,11 @@ x = (
         self.assertEqual(f'{"a"!r}', "'a'")
         self.assertEqual(f'{"a"!a}', "'a'")
 
+        # Conversions can has trailing whitespace after them since it
+        # does not provide any significance
+        self.assertEqual(f"{3!s  }", "3")
+        self.assertEqual(f'{3.14!s  :10.10}', '3.14      ')
+
         # Not a conversion.
         self.assertEqual(f'{"a!r"}', "a!r")
 
@@ -1109,10 +1114,16 @@ x = (
                              "f'{3!:}'",
                              ])
 
-        for conv in 'g', 'A', '3', 'G', '!', ' s', 's ', ' s ', 'ä', 'ɐ', 'ª':
+        for conv in 'g', 'A', '3', 'G', '!', 'ä', 'ɐ', 'ª':
             self.assertAllRaise(SyntaxError,
                                 "f-string: invalid conversion character %r: "
                                 "expected 's', 'r', or 'a'" % conv,
+                                ["f'{3!" + conv + "}'"])
+
+        for conv in ' s', ' s ':
+            self.assertAllRaise(SyntaxError,
+                                "f-string: conversion type must come right after the"
+                                " exclamanation mark",
                                 ["f'{3!" + conv + "}'"])
 
         self.assertAllRaise(SyntaxError,
