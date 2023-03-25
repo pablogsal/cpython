@@ -1368,7 +1368,8 @@ expr_ty _PyPegen_formatted_value(Parser *p, expr_ty expression, Token *debug, ex
         if (PyUnicode_GET_LENGTH(conversion->v.Name.id) > 1 ||
             !(first == 's' || first == 'r' || first == 'a')) {
             RAISE_SYNTAX_ERROR_KNOWN_LOCATION(conversion,
-                                              "f-string: invalid conversion character: expected 's', 'r', or 'a'");
+                                              "f-string: invalid conversion character %R: expected 's', 'r', or 'a'",
+                                              conversion->v.Name.id);
             return NULL;
         }
 
