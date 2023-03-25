@@ -855,96 +855,6 @@ _PyPegen_seq_delete_starred_exprs(Parser *p, asdl_seq *kwargs)
 }
 
 expr_ty
-_PyPegen_concatenate_strings(Parser *p, asdl_seq *strings)
-{
-    Py_ssize_t len = asdl_seq_LEN(strings);
-    assert(len > 0);
-
-    Token *first = asdl_seq_GET_UNTYPED(strings, 0);
-    Token *last = asdl_seq_GET_UNTYPED(strings, len - 1);
-
-    int bytesmode = 0;
-    PyObject *bytes_str = NULL;
-
-    FstringParser state;
-    _PyPegen_FstringParser_Init(&state);
-
-    for (Py_ssize_t i = 0; i < len; i++) {
-        Token *t = asdl_seq_GET_UNTYPED(strings, i);
-
-        int this_bytesmode;
-        int this_rawmode;
-        PyObject *s;
-        const char *fstr;
-        Py_ssize_t fstrlen = -1;
-
-        if (_PyPegen_parsestr(p, &this_bytesmode, &this_rawmode, &s, &fstr, &fstrlen, t) != 0) {
-            goto error;
-        }
-
-        /* Check that we are not mixing bytes with unicode. */
-        if (i != 0 && bytesmode != this_bytesmode) {
-            RAISE_SYNTAX_ERROR("cannot mix bytes and nonbytes literals");
-            Py_XDECREF(s);
-            goto error;
-        }
-        bytesmode = this_bytesmode;
-
-        if (fstr != NULL) {
-            assert(s == NULL && !bytesmode);
-
-            int result = _PyPegen_FstringParser_ConcatFstring(p, &state, &fstr, fstr + fstrlen,
-                                                     this_rawmode, 0, first, t, last);
-            if (result < 0) {
-                goto error;
-            }
-        }
-        else {
-            /* String or byte string. */
-            assert(s != NULL && fstr == NULL);
-            assert(bytesmode ? PyBytes_CheckExact(s) : PyUnicode_CheckExact(s));
-
-            if (bytesmode) {
-                if (i == 0) {
-                    bytes_str = s;
-                }
-                else {
-                    PyBytes_ConcatAndDel(&bytes_str, s);
-                    if (!bytes_str) {
-                        goto error;
-                    }
-                }
-            }
-            else {
-                /* This is a regular string. Concatenate it. */
-                if (_PyPegen_FstringParser_ConcatAndDel(&state, s) < 0) {
-                    goto error;
-                }
-            }
-        }
-    }
-
-    if (bytesmode) {
-        if (_PyArena_AddPyObject(p->arena, bytes_str) < 0) {
-            goto error;
-        }
-        return _PyAST_Constant(bytes_str, NULL, first->lineno,
-                               first->col_offset, last->end_lineno,
-                               last->end_col_offset, p->arena);
-    }
-
-    return _PyPegen_FstringParser_Finish(p, &state, first, last);
-
-error:
-    Py_XDECREF(bytes_str);
-    _PyPegen_FstringParser_Dealloc(&state);
-    if (PyErr_Occurred()) {
-        _Pypegen_raise_decode_error(p);
-    }
-    return NULL;
-}
-
-expr_ty
 _PyPegen_ensure_imaginary(Parser *p, expr_ty exp)
 {
     if (exp->kind != Constant_kind || !PyComplex_CheckExact(exp->v.Constant.value)) {
@@ -1325,7 +1235,8 @@ _PyPegen_decode_fstring_part(Parser* p, int is_raw, expr_ty constant) {
         len = strlen(bstr);
     }
 
-    PyObject *str = _PyPegen_DecodeFstring(p, is_raw, bstr, len, NULL);
+    is_raw = is_raw || strchr(bstr, '\\') == NULL;
+    PyObject *str = _PyPegen_decode_string(p, is_raw, bstr, len, NULL);
     if (str == NULL) {
         _Pypegen_raise_decode_error(p);
         return NULL;
@@ -1380,7 +1291,7 @@ unpack_top_level_joined_strs(Parser *p, asdl_expr_seq *raw_expressions)
 }
 
 expr_ty
-deal_with_gstring2(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b) {
+_PyPegen_joined_str(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b) {
     asdl_expr_seq *expr = unpack_top_level_joined_strs(p, raw_expressions);
     Py_ssize_t n_items = asdl_seq_LEN(expr);
 
@@ -1443,8 +1354,7 @@ deal_with_gstring2(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b)
                             p->arena);
 }
 
-// Hack: remove!
-expr_ty _PyPegen_constant_from_token2(Parser* p, Token* tok) {
+expr_ty _PyPegen_constant_from_token(Parser* p, Token* tok) {
     char* bstr = PyBytes_AsString(tok->bytes);
     if (bstr == NULL) {
         return NULL;
@@ -1462,18 +1372,13 @@ expr_ty _PyPegen_constant_from_token2(Parser* p, Token* tok) {
                            p->arena);
 }
 
-// Hack: remove!
-expr_ty _PyPegen_constant_from_token(Parser* p, Token* tok) {
+expr_ty _PyPegen_constant_from_string(Parser* p, Token* tok) {
     char* the_str = PyBytes_AsString(tok->bytes);
     if (the_str == NULL) {
         return NULL;
     }
-    int this_bytesmode;
-    int this_rawmode;
-    PyObject *s;
-    const char *fstr;
-    Py_ssize_t fstrlen = -1;
-    if (_PyPegen_parsestr(p, &this_bytesmode, &this_rawmode, &s, &fstr, &fstrlen, tok) != 0) {
+    PyObject *s = _PyPegen_parse_string(p, tok);
+    if (s == NULL) {
         _Pypegen_raise_decode_error(p);
         return NULL;
     }
@@ -1546,7 +1451,7 @@ expr_ty _PyPegen_formatted_value(Parser *p, expr_ty expression, Token *debug, ex
 }
 
 expr_ty
-_PyPegen_concatenate_strings2(Parser *p, asdl_expr_seq *strings,
+_PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
                              int lineno, int col_offset, int end_lineno,
                              int end_col_offset, PyArena *arena)
 {
