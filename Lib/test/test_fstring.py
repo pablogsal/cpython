@@ -481,7 +481,7 @@ x = (
         self.assertEqual(f' ', ' ')
 
     def test_unterminated_string(self):
-        self.assertAllRaise(SyntaxError, 'f-string: unterminated string',
+        self.assertAllRaise(SyntaxError, 'unterminated string',
                             [r"""f'{"x'""",
                              r"""f'{"x}'""",
                              r"""f'{("x'""",
@@ -489,23 +489,23 @@ x = (
                              ])
 
     def test_mismatched_parens(self):
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\}' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\}' "
                             r"does not match opening parenthesis '\('",
                             ["f'{((}'",
                              ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\)' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\)' "
                             r"does not match opening parenthesis '\['",
                             ["f'{a[4)}'",
                             ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\]' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\]' "
                             r"does not match opening parenthesis '\('",
                             ["f'{a(4]}'",
                             ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\}' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\}' "
                             r"does not match opening parenthesis '\['",
                             ["f'{a[4}'",
                             ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\}' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\}' "
                             r"does not match opening parenthesis '\('",
                             ["f'{a(4}'",
                             ])
@@ -573,7 +573,7 @@ x = (
         self.assertEqual(f'' '' f'', '')
         self.assertEqual(f'' '' f'' '', '')
 
-        self.assertAllRaise(SyntaxError, "f-string: expecting '}'",
+        self.assertAllRaise(SyntaxError, "expecting '}'",
                             ["f'{3' f'}'",  # can't concat to get a valid f-string
                              ])
 
@@ -729,7 +729,7 @@ x = (
         #  are added around it. But we shouldn't go from an invalid
         #  expression to a valid one. The added parens are just
         #  supposed to allow whitespace (including newlines).
-        self.assertAllRaise(SyntaxError, 'f-string: invalid syntax',
+        self.assertAllRaise(SyntaxError, 'invalid syntax',
                             ["f'{,}'",
                              "f'{,}'",  # this is (,), which is an error
                              ])
