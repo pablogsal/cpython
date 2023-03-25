@@ -1937,25 +1937,34 @@ c"""', """\
     """)
 
         self.check_tokenize('f"abc"', """\
-    STRING     'f"abc"'      (1, 0) (1, 6)
+    FSTRING_START 'f"'          (1, 0) (1, 2)
+    FSTRING_END 'abc'         (1, 2) (1, 5)
     """)
 
         self.check_tokenize('fR"a{b}c"', """\
-    STRING     'fR"a{b}c"'   (1, 0) (1, 9)
+    FSTRING_START 'fR"'         (1, 0) (1, 3)
+    FSTRING_MIDDLE 'a'           (1, 3) (1, 4)
+    LBRACE     '{'           (1, 4) (1, 5)
+    NAME       'b'           (1, 5) (1, 6)
+    RBRACE     '}'           (1, 6) (1, 7)
+    FSTRING_END 'c'           (1, 7) (1, 8)
     """)
 
         self.check_tokenize('f"""abc"""', """\
-    STRING     'f\"\"\"abc\"\"\"'  (1, 0) (1, 10)
+    FSTRING_START 'f\"""'        (1, 0) (1, 4)
+    FSTRING_END 'abc'         (1, 4) (1, 7)
     """)
 
         self.check_tokenize(r'f"abc\
 def"', """\
-    STRING     'f"abc\\\\\\ndef"' (1, 0) (2, 4)
+    FSTRING_START \'f"\'          (1, 0) (1, 2)
+    FSTRING_END 'abc\\\\\\ndef'  (1, 2) (2, 3)
     """)
 
         self.check_tokenize(r'Rf"abc\
 def"', """\
-    STRING     'Rf"abc\\\\\\ndef"' (1, 0) (2, 4)
+    FSTRING_START 'Rf"'         (1, 0) (1, 3)
+    FSTRING_END 'abc\\\\\\ndef'  (1, 3) (2, 3)
     """)
 
     def test_function(self):

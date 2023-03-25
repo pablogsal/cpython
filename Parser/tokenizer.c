@@ -1563,7 +1563,12 @@ token_setup(struct tok_state *tok, struct token *token, int type, const char *st
 {
     assert((start == NULL && end == NULL) || (start != NULL && end != NULL));
     token->level = tok->level;
-    token->lineno = type == STRING ? tok->first_lineno : (type == FSTRING_MIDDLE || type == FSTRING_END ? tok->fstring_first_constant_lineno : tok->lineno);
+    if (ISSTRINGLIT(type)) {
+        token->lineno = tok->first_lineno;
+    }
+    else {
+        token->lineno = tok->lineno;
+    }
     token->end_lineno = tok->lineno;
     token->col_offset = token->end_col_offset = -1;
     token->start = start;
@@ -2190,7 +2195,6 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         current_tok->last_expr_buffer = NULL;
         current_tok->last_expr_size = 0;
         current_tok->last_expr_end = -1;
-        current_tok->format_spec = 0;
 
         switch (*tok->start) {
             case 'F':
@@ -2326,7 +2330,6 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
 
         if (c == ':' && cursor == mark) {
             current_tok->kind = TOK_FSTRING_MODE;
-            current_tok->format_spec = 1;
             p_start = tok->start;
             p_end = tok->cur;
             return MAKE_TOKEN(_PyToken_OneChar(c));
@@ -2400,12 +2403,6 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         if (tok->tok_mode_stack_index > 0) {
             current_tok->bracket_stack--;
             if (c == '}' && current_tok->bracket_stack == current_tok->bracket_mark[current_tok->bracket_mark_index]) {
-                // When the expression is complete, we can exit the format
-                // spec mode (no matter if we were in it or not).
-                if (current_tok->bracket_mark_index <= 0) {
-                    current_tok->format_spec = 0;
-                }
-
                 current_tok->bracket_mark_index--;
                 current_tok->kind = TOK_FSTRING_MODE;
             }
@@ -2431,7 +2428,7 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     const char *p_start = NULL;
     const char *p_end = NULL;
     tok->start = tok->cur;
-    tok->fstring_first_constant_lineno = tok->lineno;
+    tok->first_lineno = tok->lineno;
     tok->starting_col_offset = tok->col_offset;
 
     // If we start with a bracket, we defer to the normal mode as there is nothing for us to tokenize
@@ -2527,11 +2524,13 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
                 return MAKE_TOKEN(FSTRING_MIDDLE);
             }
             char peek = tok_nextc(tok);
-            if (peek == '}' && current_tok->bracket_mark_index <= 0
-                // We can not have }} inside the format spec, so we are going to assume
-                // this that the first closing brace belongs to the f-string expression
-                // and the second one needs to deal with later (e.g. f"{1:<3}}}").
-                && !current_tok->format_spec) {
+
+            // The tokenizer can only be in the format spec if we have already completed the expression
+            // scanning (indicated by the end of the expression being set) and we are not at the top level
+            // of the bracket stack (-1 is the top level). Since format specifiers can't legally use double
+            // brackets, we can bypass it here.
+            int in_format_spec = current_tok->last_expr_end != -1 && current_tok->bracket_mark_index >= 0;
+            if (peek == '}' && !in_format_spec) {
                 p_start = tok->start;
                 p_end = tok->cur - 1;
             } else {
