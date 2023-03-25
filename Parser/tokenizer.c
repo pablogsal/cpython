@@ -2452,14 +2452,10 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     }
 
     // Emit FSTRING_END in case we've reached the end of the string
-    if ((current_tok->f_string_quote_size == 1 && start_char == current_tok->f_string_quote)
-            || (current_tok->f_string_quote_size == 3 && start_char == current_tok->f_string_quote
-                && peek1 == current_tok->f_string_quote && peek2 == current_tok->f_string_quote)) {
-
+    if (start_char == current_tok->f_string_quote
+        && (current_tok->f_string_quote_size != 3 || (start_char == peek1 && start_char == peek2))) {
         // Advance the tokenizer state again to create a token out of the end quotes
-        tok_nextc(tok);
-        if (current_tok->f_string_quote_size == 3) {
-            tok_nextc(tok);
+        for (int i = 0; i < current_tok->f_string_quote_size; i++) {
             tok_nextc(tok);
         }
 
@@ -2579,9 +2575,7 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
 
     // Backup the f-string quotes to emit a final FSTRING_MIDDLE and
     // add the quotes to the FSTRING_END in the next tokenizer iteration.
-    tok_backup(tok, current_tok->f_string_quote);
-    if (current_tok->f_string_quote_size == 3) {
-        tok_backup(tok, current_tok->f_string_quote);
+    for (int i = 0; i < current_tok->f_string_quote_size; i++) {
         tok_backup(tok, current_tok->f_string_quote);
     }
     p_start = tok->start;
