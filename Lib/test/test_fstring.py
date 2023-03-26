@@ -1091,7 +1091,7 @@ x = (
         self.assertEqual(f'{"a"!r}', "'a'")
         self.assertEqual(f'{"a"!a}', "'a'")
 
-        # Conversions can has trailing whitespace after them since it
+        # Conversions can have trailing whitespace after them since it
         # does not provide any significance
         self.assertEqual(f"{3!s  }", "3")
         self.assertEqual(f'{3.14!s  :10.10}', '3.14      ')
