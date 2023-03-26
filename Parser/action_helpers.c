@@ -1388,15 +1388,9 @@ deal_with_gstring2(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b)
     if (quote_str == NULL) {
         return NULL;
     }
-
     int is_raw = strpbrk(quote_str, "rR") != NULL;
-    const char* _str = PyBytes_AsString(b->bytes);
-    if (_str == NULL) {
-        return NULL;
-    }
-    int is_b_empty = strlen(_str) == 0;
 
-    asdl_expr_seq *seq = _Py_asdl_expr_seq_new(is_b_empty ? n_items : n_items + 1, p->arena);
+    asdl_expr_seq *seq = _Py_asdl_expr_seq_new(n_items, p->arena);
     if (seq == NULL) {
         return NULL;
     }
@@ -1412,32 +1406,6 @@ deal_with_gstring2(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b)
         asdl_seq_SET(seq, i, item);
     }
 
-    if (!is_b_empty) {
-        PyObject* str = PyUnicode_FromString(_str);
-        if (str == NULL) {
-            return NULL;
-        }
-        if (_PyArena_AddPyObject(p->arena, str) < 0) {
-            Py_DECREF(str);
-            return NULL;
-        }
-
-        expr_ty the_str = _PyAST_Constant(str, NULL, b->lineno,
-                                b->col_offset, b->end_lineno,
-                                b->end_col_offset, p->arena);
-        if (the_str == NULL) {
-            return NULL;
-        }
-
-        expr_ty decoded_str = _PyPegen_decode_fstring_part(
-            p, is_raw, the_str
-        );
-        if (decoded_str == NULL) {
-            return NULL;
-        }
-
-        asdl_seq_SET(seq, n_items, decoded_str);
-    }
     return _PyAST_JoinedStr(seq, a->lineno, a->col_offset,
                             b->end_lineno, b->end_col_offset,
                             p->arena);
