@@ -2435,8 +2435,6 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     // before it.
     char start_char = tok_nextc(tok);
     char peek1 = tok_nextc(tok);
-    char peek2 = tok_nextc(tok);
-    tok_backup(tok, peek2);
     tok_backup(tok, peek1);
     tok_backup(tok, start_char);
 
@@ -2448,27 +2446,28 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
         return tok_get_normal_mode(tok, current_tok, token);
     }
 
-    // Emit FSTRING_END in case we've reached the end of the string
-    if (start_char == current_tok->f_string_quote
-        && (current_tok->f_string_quote_size != 3 || (start_char == peek1 && start_char == peek2))) {
-        // Advance the tokenizer state again to create a token out of the end quotes
-        for (int i = 0; i < current_tok->f_string_quote_size; i++) {
-            tok_nextc(tok);
+    // Check if we are at the end of the string
+    for (int i = 0; i < current_tok->f_string_quote_size; i++) {
+        char quote = tok_nextc(tok);
+        if (quote != current_tok->f_string_quote) {
+            tok_backup(tok, quote);
+            goto f_string_middle;
         }
-
-        if (current_tok->last_expr_buffer != NULL) {
-            PyMem_Free(current_tok->last_expr_buffer);
-            current_tok->last_expr_buffer = NULL;
-            current_tok->last_expr_size = 0;
-            current_tok->last_expr_end = -1;
-        }
-
-        p_start = tok->start;
-        p_end = tok->cur;
-        tok->tok_mode_stack_index--;
-        return MAKE_TOKEN(FSTRING_END);
     }
 
+    if (current_tok->last_expr_buffer != NULL) {
+        PyMem_Free(current_tok->last_expr_buffer);
+        current_tok->last_expr_buffer = NULL;
+        current_tok->last_expr_size = 0;
+        current_tok->last_expr_end = -1;
+    }
+
+    p_start = tok->start;
+    p_end = tok->cur;
+    tok->tok_mode_stack_index--;
+    return MAKE_TOKEN(FSTRING_END);
+
+  f_string_middle:
     int end_quote_size = 0;
     int unicode_escape = 0;
     while (end_quote_size != current_tok->f_string_quote_size) {
