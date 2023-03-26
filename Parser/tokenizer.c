@@ -2395,6 +2395,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
                syntactical construct with it; we'll throw an unmatched
                parentheses error. */
             if (tok->tok_mode_stack_index > 0 && opening == '{') {
+                assert(current_tok->bracket_stack >= 0);
                 int previous_bracket = current_tok->bracket_stack - 1;
                 if (previous_bracket == current_tok->bracket_mark[current_tok->bracket_mark_index]) {
                     return MAKE_TOKEN(syntaxerror(tok, "f-string: unmatched '%c'", c));
