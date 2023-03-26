@@ -2427,6 +2427,9 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
 {
     const char *p_start = NULL;
     const char *p_end = NULL;
+    int end_quote_size = 0;
+    int unicode_escape = 0;
+
     tok->start = tok->cur;
     tok->first_lineno = tok->lineno;
     tok->starting_col_offset = tok->col_offset;
@@ -2467,9 +2470,8 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     tok->tok_mode_stack_index--;
     return MAKE_TOKEN(FSTRING_END);
 
-  f_string_middle:
-    int end_quote_size = 0;
-    int unicode_escape = 0;
+f_string_middle:
+
     while (end_quote_size != current_tok->f_string_quote_size) {
         int c = tok_nextc(tok);
         if (c == EOF || (current_tok->f_string_quote_size == 1 && c == '\n')) {
