@@ -1454,14 +1454,20 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
 
     if (bytes_found) {
         PyObject* res = PyBytes_FromString("");
-       for (i = 0; i < len; i++) {
+
+        /* Bytes literals never get a kind, but just for consistency
+           since they are represented as Constant nodes, we'll mirror
+           the same behavior as unicode strings for determining the
+           kind. */
+        PyObject* kind = asdl_seq_GET(strings, 0)->v.Constant.kind;
+        for (i = 0; i < len; i++) {
             expr_ty elem = asdl_seq_GET(strings, i);
             PyBytes_Concat(&res, elem->v.Constant.value);
         }
         if (_PyArena_AddPyObject(arena, res) < 0) {
             return NULL;
         }
-        return _PyAST_Constant(res, NULL, lineno, col_offset, end_lineno, end_col_offset, p->arena);
+        return _PyAST_Constant(res, kind, lineno, col_offset, end_lineno, end_col_offset, p->arena);
     }
 
     if (!f_string_found && len == 1) {
@@ -1519,6 +1525,13 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
             && asdl_seq_GET(flattened, i+1)->kind == Constant_kind) {
             expr_ty first_elem = elem;
 
+            /* When a string is getting concatenated, the kind of the string
+               is determined by the first string in the concatenation sequence.
+
+               u"abc" "def" -> u"abcdef"
+               "abc" u"abc" ->  "abcabc" */
+            PyObject *kind = elem->v.Constant.kind;
+
             _PyUnicodeWriter_Init(&writer);
             expr_ty last_elem = elem;
             for (j = i; j < n_flattened_elements; j++) {
@@ -1541,7 +1554,7 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
                 return NULL;
             }
 
-            elem = _PyAST_Constant(concat_str, NULL, first_elem->lineno, first_elem->col_offset,
+            elem = _PyAST_Constant(concat_str, kind, first_elem->lineno, first_elem->col_offset,
                                    last_elem->end_lineno, last_elem->end_col_offset, p->arena);
             if (elem == NULL) {
                 Py_DECREF(concat_str);
