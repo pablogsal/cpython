@@ -15574,7 +15574,7 @@ fstring_middle_rule(Parser *p)
 }
 
 // fstring_replacement_field:
-//     | '{' (yield_expr | star_expressions) "="? ["!" NAME] [':' fstring_format_spec*] &&'}'
+//     | '{' (yield_expr | star_expressions) "="? ["!" NAME] [':' fstring_format_spec*] '}'
 //     | invalid_replacement_field
 static expr_ty
 fstring_replacement_field_rule(Parser *p)
@@ -15598,20 +15598,20 @@ fstring_replacement_field_rule(Parser *p)
     UNUSED(_start_lineno); // Only used by EXTRA macro
     int _start_col_offset = p->tokens[_mark]->col_offset;
     UNUSED(_start_col_offset); // Only used by EXTRA macro
-    { // '{' (yield_expr | star_expressions) "="? ["!" NAME] [':' fstring_format_spec*] &&'}'
+    { // '{' (yield_expr | star_expressions) "="? ["!" NAME] [':' fstring_format_spec*] '}'
         if (p->error_indicator) {
             p->level--;
             return NULL;
         }
-        D(fprintf(stderr, "%*c> fstring_replacement_field[%d-%d]: %s\n", p->level, ' ', _mark, p->mark, "'{' (yield_expr | star_expressions) \"=\"? [\"!\" NAME] [':' fstring_format_spec*] &&'}'"));
+        D(fprintf(stderr, "%*c> fstring_replacement_field[%d-%d]: %s\n", p->level, ' ', _mark, p->mark, "'{' (yield_expr | star_expressions) \"=\"? [\"!\" NAME] [':' fstring_format_spec*] '}'"));
         Token * _literal;
+        Token * _literal_1;
         void *a;
         void *conversion;
         void *debug_expr;
-        Token * expr_start;
         void *format;
         if (
-            (expr_start = _PyPegen_expect_token(p, 25))  // token='{'
+            (_literal = _PyPegen_expect_token(p, 25))  // token='{'
             &&
             (a = _tmp_111_rule(p))  // yield_expr | star_expressions
             &&
@@ -15621,10 +15621,10 @@ fstring_replacement_field_rule(Parser *p)
             &&
             (format = _tmp_113_rule(p), !p->error_indicator)  // [':' fstring_format_spec*]
             &&
-            (_literal = _PyPegen_expect_forced_token(p, 26, "}"))  // forced_token='}'
+            (_literal_1 = _PyPegen_expect_token(p, 26))  // token='}'
         )
         {
-            D(fprintf(stderr, "%*c+ fstring_replacement_field[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "'{' (yield_expr | star_expressions) \"=\"? [\"!\" NAME] [':' fstring_format_spec*] &&'}'"));
+            D(fprintf(stderr, "%*c+ fstring_replacement_field[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "'{' (yield_expr | star_expressions) \"=\"? [\"!\" NAME] [':' fstring_format_spec*] '}'"));
             Token *_token = _PyPegen_get_last_nonnwhitespace_token(p);
             if (_token == NULL) {
                 p->level--;
@@ -15644,7 +15644,7 @@ fstring_replacement_field_rule(Parser *p)
         }
         p->mark = _mark;
         D(fprintf(stderr, "%*c%s fstring_replacement_field[%d-%d]: %s failed!\n", p->level, ' ',
-                  p->error_indicator ? "ERROR!" : "-", _mark, p->mark, "'{' (yield_expr | star_expressions) \"=\"? [\"!\" NAME] [':' fstring_format_spec*] &&'}'"));
+                  p->error_indicator ? "ERROR!" : "-", _mark, p->mark, "'{' (yield_expr | star_expressions) \"=\"? [\"!\" NAME] [':' fstring_format_spec*] '}'"));
     }
     if (p->call_invalid_rules) { // invalid_replacement_field
         if (p->error_indicator) {
