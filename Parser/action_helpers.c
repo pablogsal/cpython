@@ -1305,19 +1305,42 @@ _PyPegen_joined_str(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b
     if (seq == NULL) {
         return NULL;
     }
-    Py_ssize_t i = 0;
-    for (i= 0; i < asdl_seq_LEN(expr); i++) {
+
+    Py_ssize_t index = 0;
+    for (Py_ssize_t i = 0; i < n_items; i++) {
         expr_ty item = asdl_seq_GET(expr, i);
         if (item->kind == Constant_kind) {
             item = _PyPegen_decode_fstring_part(p, is_raw, item);
             if (item == NULL) {
                 return NULL;
             }
+
+            /* Tokenizer emits string parts even when the underlying string
+            might become an empty value (e.g. FSTRING_MIDDLE with the value \\n)
+            so we need to check for them and simplify it here. */
+            if (PyUnicode_CheckExact(item->v.Constant.value)
+                && PyUnicode_GET_LENGTH(item->v.Constant.value) == 0) {
+                continue;
+            }
         }
-        asdl_seq_SET(seq, i, item);
+        asdl_seq_SET(seq, index++, item);
     }
 
-    return _PyAST_JoinedStr(seq, a->lineno, a->col_offset,
+    asdl_expr_seq *resized_exprs;
+    if (index != n_items) {
+        resized_exprs = _Py_asdl_expr_seq_new(index, p->arena);
+        if (resized_exprs == NULL) {
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < index; i++) {
+            asdl_seq_SET(resized_exprs, i, asdl_seq_GET(seq, i));
+        }
+    }
+    else {
+        resized_exprs = seq;
+    }
+
+    return _PyAST_JoinedStr(resized_exprs, a->lineno, a->col_offset,
                             b->end_lineno, b->end_col_offset,
                             p->arena);
 }
