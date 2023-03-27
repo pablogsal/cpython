@@ -884,11 +884,11 @@ fstring_middle[expr_ty]:
 # or otherwise it will try to parse the first token with the regular tokenizer mode (due to the EXTRA).
 # TODO: (Ideally we need a way similar to 'memo' so the parser can set the tokenize mode on fstring/normal)
 fstring_replacement_field[expr_ty]:
-    | expr_start='{' a=(yield_expr | star_expressions) debug_expr="="? conversion=[
+    | '{' a=(yield_expr | star_expressions) debug_expr="="? conversion=[
         conv_token="!" conv=NAME { _PyPegen_check_fstring_conversion(p, conv_token, conv) ? NULL : conv }
     ] format=[
         ':' spec=fstring_format_spec* { spec ? _PyAST_JoinedStr((asdl_expr_seq*)spec, EXTRA) : NULL }
-    ] &&'}' {
+    ] '}' {
         _PyPegen_formatted_value(p, a, debug_expr, conversion, format, EXTRA)
     }
     | invalid_replacement_field
