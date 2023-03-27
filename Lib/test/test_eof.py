@@ -37,10 +37,9 @@ class EOFTestCase(unittest.TestCase):
         self.assertIn(b'unterminated triple-quoted string literal (detected at line 3)', err)
 
     def test_eof_with_line_continuation(self):
-        expect = "(unicode error) 'unicodeescape' codec can't decode bytes in " \
-                 "position 0-1: truncated \\xXX escape (<string>, line 1)"
+        expect = "unexpected EOF while parsing (<string>, line 1)"
         try:
-            compile('"\\xhh" \\',  '<string>', 'exec', dont_inherit=True)
+            compile('"\\Xhh" \\', '<string>', 'exec')
         except SyntaxError as msg:
             self.assertEqual(str(msg), expect)
         else:
