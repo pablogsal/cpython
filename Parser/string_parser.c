@@ -214,19 +214,19 @@ _PyPegen_parse_string(Parser *p, Token *t)
 
     if (quote != '\'' && quote != '\"') {
         PyErr_BadInternalCall();
-        return -1;
+        return NULL;
     }
     /* Skip the leading quote char. */
     s++;
     len = strlen(s);
     if (len > INT_MAX) {
         PyErr_SetString(PyExc_OverflowError, "string to parse is too long");
-        return -1;
+        return NULL;
     }
     if (s[--len] != quote) {
         /* Last quote char must match the first. */
         PyErr_BadInternalCall();
-        return -1;
+        return NULL;
     }
     if (len >= 4 && s[0] == quote && s[1] == quote) {
         /* A triple quoted string. We've already skipped one quote at
@@ -237,7 +237,7 @@ _PyPegen_parse_string(Parser *p, Token *t)
         /* And check that the last two match. */
         if (s[--len] != quote || s[--len] != quote) {
             PyErr_BadInternalCall();
-            return -1;
+            return NULL;
         }
     }
 
@@ -251,7 +251,7 @@ _PyPegen_parse_string(Parser *p, Token *t)
                 RAISE_SYNTAX_ERROR(
                                    "bytes can only contain ASCII "
                                    "literal characters");
-                return -1;
+                return NULL;
             }
         }
         if (rawmode) {
