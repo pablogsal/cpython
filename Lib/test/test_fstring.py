@@ -511,6 +511,11 @@ x = (
                             ])
         self.assertRaises(SyntaxError, eval, "f'{" + "("*500 + "}'")
 
+    def test_fstring_nested_too_deeply(self):
+        self.assertAllRaise(SyntaxError,
+                            "f-string: expressions nested too deeply",
+                            ['f"{1+2:{1+2:{1+1:{1}}}}"'])
+
     def test_double_braces(self):
         self.assertEqual(f'{{', '{')
         self.assertEqual(f'a{{', 'a{')
@@ -741,6 +746,7 @@ x = (
         self.assertAllRaise(SyntaxError, 'unterminated string literal',
                             ["f'{\n}'",
                              ])
+
     def test_newlines_before_syntax_error(self):
         self.assertAllRaise(SyntaxError, "invalid syntax",
                 ["f'{.}'", "\nf'{.}'", "\n\nf'{.}'"])
@@ -1389,7 +1395,6 @@ x = (
         # the tabs to spaces just to shut up patchcheck.
         #self.assertEqual(f'X{x =}Y', 'Xx\t='+repr(x)+'Y')
         #self.assertEqual(f'X{x =       }Y', 'Xx\t=\t'+repr(x)+'Y')
-
 
     def test_walrus(self):
         x = 20

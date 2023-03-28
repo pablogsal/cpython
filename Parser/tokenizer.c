@@ -2458,6 +2458,10 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
 
     if ((start_char == '{' && peek1 != '{') || (start_char == '}' && peek1 != '}')) {
         if (start_char == '{') {
+            if (current_tok->bracket_mark_index >= MAX_EXPR_NEXTING) {
+                return MAKE_TOKEN(syntaxerror(tok, "f-string: expressions nested too deeply"));
+            }
+
             current_tok->bracket_mark[++current_tok->bracket_mark_index] = current_tok->bracket_stack;
         }
         tok->tok_mode_stack[tok->tok_mode_stack_index].kind = TOK_REGULAR_MODE;
