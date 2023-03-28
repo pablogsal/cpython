@@ -1,10 +1,10 @@
 """test script for a few new invalid token catches"""
 
 import sys
-import warnings
 from test import support
 from test.support import os_helper
 from test.support import script_helper
+from test.support import warnings_helper
 import unittest
 
 class EOFTestCase(unittest.TestCase):
@@ -37,16 +37,15 @@ class EOFTestCase(unittest.TestCase):
             rc, out, err = script_helper.assert_python_failure(file_name)
         self.assertIn(b'unterminated triple-quoted string literal (detected at line 3)', err)
 
+    @warnings_helper.ignore_warnings(category=SyntaxWarning)
     def test_eof_with_line_continuation(self):
         expect = "unexpected EOF while parsing (<string>, line 1)"
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            try:
-                compile('"\\Xhh" \\', '<string>', 'exec')
-            except SyntaxError as msg:
-                self.assertEqual(str(msg), expect)
-            else:
-                raise support.TestFailed
+        try:
+            compile('"\\Xhh" \\', '<string>', 'exec')
+        except SyntaxError as msg:
+            self.assertEqual(str(msg), expect)
+        else:
+            raise support.TestFailed
 
     def test_line_continuation_EOF(self):
         """A continuation at the end of input must be an error; bpo2180."""
