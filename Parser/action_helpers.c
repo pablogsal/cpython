@@ -970,7 +970,7 @@ _PyPegen_check_fstring_conversion(Parser *p, Token* symbol, expr_ty conv) {
     if (symbol->lineno != conv->lineno || symbol->end_col_offset != conv->col_offset) {
         RAISE_SYNTAX_ERROR_KNOWN_RANGE(
             symbol, conv,
-            "conversion type must come right after the exclamanation mark"
+            "f-string: conversion type must come right after the exclamanation mark"
         );
         return 1;
     }
@@ -1391,7 +1391,8 @@ expr_ty _PyPegen_formatted_value(Parser *p, expr_ty expression, Token *debug, ex
         if (PyUnicode_GET_LENGTH(conversion->v.Name.id) > 1 ||
             !(first == 's' || first == 'r' || first == 'a')) {
             RAISE_SYNTAX_ERROR_KNOWN_LOCATION(conversion,
-                                              "f-string: invalid conversion character: expected 's', 'r', or 'a'");
+                                              "f-string: invalid conversion character %R: expected 's', 'r', or 'a'",
+                                              conversion->v.Name.id);
             return NULL;
         }
 

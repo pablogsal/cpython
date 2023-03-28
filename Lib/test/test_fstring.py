@@ -481,7 +481,7 @@ x = (
         self.assertEqual(f' ', ' ')
 
     def test_unterminated_string(self):
-        self.assertAllRaise(SyntaxError, 'f-string: unterminated string',
+        self.assertAllRaise(SyntaxError, 'unterminated string',
                             [r"""f'{"x'""",
                              r"""f'{"x}'""",
                              r"""f'{("x'""",
@@ -489,23 +489,23 @@ x = (
                              ])
 
     def test_mismatched_parens(self):
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\}' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\}' "
                             r"does not match opening parenthesis '\('",
                             ["f'{((}'",
                              ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\)' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\)' "
                             r"does not match opening parenthesis '\['",
                             ["f'{a[4)}'",
                             ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\]' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\]' "
                             r"does not match opening parenthesis '\('",
                             ["f'{a(4]}'",
                             ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\}' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\}' "
                             r"does not match opening parenthesis '\['",
                             ["f'{a[4}'",
                             ])
-        self.assertAllRaise(SyntaxError, r"f-string: closing parenthesis '\}' "
+        self.assertAllRaise(SyntaxError, r"closing parenthesis '\}' "
                             r"does not match opening parenthesis '\('",
                             ["f'{a(4}'",
                             ])
@@ -573,7 +573,7 @@ x = (
         self.assertEqual(f'' '' f'', '')
         self.assertEqual(f'' '' f'' '', '')
 
-        self.assertAllRaise(SyntaxError, "f-string: expecting '}'",
+        self.assertAllRaise(SyntaxError, "expecting '}'",
                             ["f'{3' f'}'",  # can't concat to get a valid f-string
                              ])
 
@@ -729,7 +729,7 @@ x = (
         #  are added around it. But we shouldn't go from an invalid
         #  expression to a valid one. The added parens are just
         #  supposed to allow whitespace (including newlines).
-        self.assertAllRaise(SyntaxError, 'f-string: invalid syntax',
+        self.assertAllRaise(SyntaxError, 'invalid syntax',
                             ["f'{,}'",
                              "f'{,}'",  # this is (,), which is an error
                              ])
@@ -786,7 +786,7 @@ x = (
         self.assertEqual(f'2\x203', '2 3')
         self.assertEqual(f'\x203', ' 3')
 
-        with self.assertWarns(SyntaxWarning):  # invalid escape sequence
+        with self.assertWarns(DeprecationWarning):  # invalid escape sequence
             value = eval(r"f'\{6*7}'")
         self.assertEqual(value, '\\42')
         self.assertEqual(f'\\{6*7}', '\\42')
@@ -1091,6 +1091,11 @@ x = (
         self.assertEqual(f'{"a"!r}', "'a'")
         self.assertEqual(f'{"a"!a}', "'a'")
 
+        # Conversions can have trailing whitespace after them since it
+        # does not provide any significance
+        self.assertEqual(f"{3!s  }", "3")
+        self.assertEqual(f'{3.14!s  :10.10}', '3.14      ')
+
         # Not a conversion.
         self.assertEqual(f'{"a!r"}', "a!r")
 
@@ -1109,10 +1114,16 @@ x = (
                              "f'{3!:}'",
                              ])
 
-        for conv in 'g', 'A', '3', 'G', '!', ' s', 's ', ' s ', 'ä', 'ɐ', 'ª':
+        for conv in 'g', 'A', '3', 'G', '!', 'ä', 'ɐ', 'ª':
             self.assertAllRaise(SyntaxError,
                                 "f-string: invalid conversion character %r: "
                                 "expected 's', 'r', or 'a'" % conv,
+                                ["f'{3!" + conv + "}'"])
+
+        for conv in ' s', ' s ':
+            self.assertAllRaise(SyntaxError,
+                                "f-string: conversion type must come right after the"
+                                " exclamanation mark",
                                 ["f'{3!" + conv + "}'"])
 
         self.assertAllRaise(SyntaxError,

@@ -2378,6 +2378,9 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
     case ']':
     case '}':
         if (!tok->level) {
+            if (tok->tok_mode_stack_index > 0 && !current_tok->bracket_stack && c == '}') {
+                return MAKE_TOKEN(syntaxerror(tok, "f-string: single '}' is not allowed"));
+            }
             return MAKE_TOKEN(syntaxerror(tok, "unmatched '%c'", c));
         }
         tok->level--;
@@ -2386,6 +2389,18 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
               (opening == '[' && c == ']') ||
               (opening == '{' && c == '}')))
         {
+            /* If the opening bracket belongs to an f-string's expression
+               part (e.g. f"{)}") and the closing bracket is an arbitrary
+               nested expression, then instead of matching a different
+               syntactical construct with it; we'll throw an unmatched
+               parentheses error. */
+            if (tok->tok_mode_stack_index > 0 && opening == '{') {
+                assert(current_tok->bracket_stack >= 0);
+                int previous_bracket = current_tok->bracket_stack - 1;
+                if (previous_bracket == current_tok->bracket_mark[current_tok->bracket_mark_index]) {
+                    return MAKE_TOKEN(syntaxerror(tok, "f-string: unmatched '%c'", c));
+                }
+            }
             if (tok->parenlinenostack[tok->level] != tok->lineno) {
                 return MAKE_TOKEN(syntaxerror(tok,
                         "closing parenthesis '%c' does not match "
@@ -2427,6 +2442,9 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
 {
     const char *p_start = NULL;
     const char *p_end = NULL;
+    int end_quote_size = 0;
+    int unicode_escape = 0;
+
     tok->start = tok->cur;
     tok->first_lineno = tok->lineno;
     tok->starting_col_offset = tok->col_offset;
@@ -2467,9 +2485,8 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
     tok->tok_mode_stack_index--;
     return MAKE_TOKEN(FSTRING_END);
 
-  f_string_middle:
-    int end_quote_size = 0;
-    int unicode_escape = 0;
+f_string_middle:
+
     while (end_quote_size != current_tok->f_string_quote_size) {
         int c = tok_nextc(tok);
         if (c == EOF || (current_tok->f_string_quote_size == 1 && c == '\n')) {
