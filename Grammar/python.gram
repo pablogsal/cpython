@@ -194,7 +194,7 @@ yield_stmt[stmt_ty]: y=yield_expr { _PyAST_Expr(y, EXTRA) }
 
 assert_stmt[stmt_ty]: 'assert' a=expression b=[',' z=expression { z }] { _PyAST_Assert(a, b, EXTRA) }
 
-import_stmt[stmt_ty]:
+import_stmt[stmt_ty]: 
     | invalid_import
     | import_name
     | import_from
@@ -415,8 +415,8 @@ try_stmt[stmt_ty]:
     | invalid_try_stmt
     | 'try' &&':' b=block f=finally_block { _PyAST_Try(b, NULL, NULL, f, EXTRA) }
     | 'try' &&':' b=block ex[asdl_excepthandler_seq*]=except_block+ el=[else_block] f=[finally_block] { _PyAST_Try(b, ex, el, f, EXTRA) }
-    | 'try' &&':' b=block ex[asdl_excepthandler_seq*]=except_star_block+ el=[else_block] f=[finally_block] {
-        CHECK_VERSION(stmt_ty, 11, "Exception groups are",
+    | 'try' &&':' b=block ex[asdl_excepthandler_seq*]=except_star_block+ el=[else_block] f=[finally_block] { 
+        CHECK_VERSION(stmt_ty, 11, "Exception groups are", 
                       _PyAST_TryStar(b, ex, el, f, EXTRA)) }
 
 
@@ -1263,7 +1263,7 @@ invalid_group:
 invalid_import:
     | a='import' dotted_name 'from' dotted_name {
         RAISE_SYNTAX_ERROR_STARTING_FROM(a, "Did you mean to use 'from ... import ...' instead?") }
-
+ 
 invalid_import_from_targets:
     | import_from_as_names ',' NEWLINE {
         RAISE_SYNTAX_ERROR("trailing comma not allowed without surrounding parentheses") }
@@ -1362,7 +1362,3 @@ invalid_replacement_field:
     | '{' a=':' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: expression required before ':'") }
     | '{' a='!' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: expression required before '!'") }
     | '{' a='}' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: empty expression not allowed") }
-    | '{' (yield_expr | star_expressions) "="? invalid_conversion_character
-invalid_conversion_character:
-    | a="!" &(':'|'}') { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: missed conversion character") }
-    | a="!" !NAME { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: invalid conversion character") }
