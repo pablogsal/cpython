@@ -743,10 +743,6 @@ x = (
                             ["f'{3)+(4}'",
                              ])
 
-        self.assertAllRaise(SyntaxError, 'unterminated string literal',
-                            ["f'{\n}'",
-                             ])
-
     def test_newlines_before_syntax_error(self):
         self.assertAllRaise(SyntaxError, "invalid syntax",
                 ["f'{.}'", "\nf'{.}'", "\n\nf'{.}'"])
@@ -825,7 +821,16 @@ x = (
                              r"'\N{GREEK CAPITAL LETTER DELTA'",
                              ])
 
-    def test_no_backslashes_in_expression_part(self):
+    def test_backslashes_in_expression_part(self):
+        self.assertEqual(f"{(
+                        1 +
+                        2
+        )}", "3")
+
+        self.assertAllRaise(SyntaxError, 'empty expression not allowed',
+                            ["f'{\n}'",
+                             ])
+
         self.assertAllRaise(SyntaxError, 'f-string expression part cannot include a backslash',
                             [r"f'{\'a\'}'",
                              r"f'{\t3}'",
@@ -834,7 +839,6 @@ x = (
                              r"rf'{\t3}'",
                              r"rf'{\}'",
                              r"""rf'{"\N{LEFT CURLY BRACKET}"}'""",
-                             r"f'{\n}'",
                              ])
 
     def test_no_escapes_for_braces(self):
