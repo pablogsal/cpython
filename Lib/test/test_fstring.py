@@ -411,6 +411,50 @@ x = (
 
         expr = """
 x = (
+    u'wat',
+    u"wat",
+    b'wat',
+    b"wat",
+    f'wat',
+    f"wat",
+)
+
+y = (
+    u'''wat''',
+    u\"\"\"wat\"\"\",
+    b'''wat''',
+    b\"\"\"wat\"\"\",
+    f'''wat''',
+    f\"\"\"wat\"\"\",
+)
+        """
+        t = ast.parse(expr)
+        self.assertEqual(type(t), ast.Module)
+        self.assertEqual(len(t.body), 2)
+        x, y = t.body
+
+        # Check the single quoted string offsets first.
+        offsets = [
+            (elt.col_offset, elt.end_col_offset)
+            for elt in x.value.elts
+        ]
+        self.assertTrue(all(
+            offset == (4, 10)
+            for offset in offsets
+        ))
+
+        # Check the triple quoted string offsets.
+        offsets = [
+            (elt.col_offset, elt.end_col_offset)
+            for elt in y.value.elts
+        ]
+        self.assertTrue(all(
+            offset == (4, 14)
+            for offset in offsets
+        ))
+
+        expr = """
+x = (
         'PERL_MM_OPT', (
             f'wat'
             f'some_string={f(x)} '
@@ -444,7 +488,11 @@ x = (
         self.assertEqual(wat2.lineno, 5)
         self.assertEqual(wat2.end_lineno, 6)
         self.assertEqual(wat2.col_offset, 32)
-        self.assertEqual(wat2.end_col_offset, 18)
+        # wat ends at the offset 17, but the whole f-string
+        # ends at the offset 18 (since the quote is part of the
+        # f-string but not the wat string)
+        self.assertEqual(wat2.end_col_offset, 17)
+        self.assertEqual(fstring.end_col_offset, 18)
 
     def test_docstring(self):
         def f():
