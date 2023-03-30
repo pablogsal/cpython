@@ -827,19 +827,32 @@ x = (
                         2
         )}", "3")
 
+        self.assertEqual("\N{LEFT CURLY BRACKET}", '{')
+        self.assertEqual(f'{"\N{LEFT CURLY BRACKET}"}', '{')
+        self.assertEqual(rf'{"\N{LEFT CURLY BRACKET}"}', '{')
+
         self.assertAllRaise(SyntaxError, 'empty expression not allowed',
                             ["f'{\n}'",
                              ])
 
-        self.assertAllRaise(SyntaxError, 'f-string expression part cannot include a backslash',
-                            [r"f'{\'a\'}'",
-                             r"f'{\t3}'",
-                             r"f'{\}'",
-                             r"rf'{\'a\'}'",
-                             r"rf'{\t3}'",
-                             r"rf'{\}'",
-                             r"""rf'{"\N{LEFT CURLY BRACKET}"}'""",
-                             ])
+    def test_invalid_backslashes_inside_fstring_context(self):
+        # All of these variations are invalid python syntax,
+        # so they are also invalid in f-strings as well.
+        cases = [
+            formatting.format(expr=expr)
+            for formatting in [
+                "{expr}",
+                "f'{{{expr}}}'",
+                "rf'{{{expr}}}'",
+            ]
+            for expr in [
+                r"\'a\'",
+                r"\t3",
+                r"\\"[0],
+            ]
+        ]
+        self.assertAllRaise(SyntaxError, 'unexpected character after line continuation',
+                            cases)
 
     def test_no_escapes_for_braces(self):
         """
