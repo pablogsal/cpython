@@ -578,8 +578,14 @@ x = (
         self.assertEqual(f'' '' f'', '')
         self.assertEqual(f'' '' f'' '', '')
 
+        # This is not really [f'{'] + [f'}'] since we treat the inside
+        # of braces as a purely new context, so it is actually f'{ and
+        # then eval('  f') (a valid expression) and then }' which would
+        # constitute a valid f-string.
+        self.assertEqual(f'{' f'}', ' f')
+
         self.assertAllRaise(SyntaxError, "expecting '}'",
-                            ["f'{3' f'}'",  # can't concat to get a valid f-string
+                            ['''f'{3' f"}"''',  # can't concat to get a valid f-string
                              ])
 
     def test_comments(self):
