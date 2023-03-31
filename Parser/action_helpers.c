@@ -1373,9 +1373,16 @@ expr_ty _PyPegen_constant_from_string(Parser* p, Token* tok) {
         _Pypegen_raise_decode_error(p);
         return NULL;
     }
+    if (_PyArena_AddPyObject(p->arena, s) < 0) {
+        Py_DECREF(s);
+        return NULL;
+    }
     PyObject *kind = NULL;
     if (the_str && the_str[0] == 'u') {
         kind = _PyPegen_new_identifier(p, "u");
+        if (kind == NULL) {
+            return NULL;
+        }
     }
     return _PyAST_Constant(s, kind, tok->lineno, tok->col_offset, tok->end_lineno, tok->end_col_offset, p->arena);
 }
@@ -1488,7 +1495,8 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
             expr_ty elem = asdl_seq_GET(strings, i);
             PyBytes_Concat(&res, elem->v.Constant.value);
         }
-        if (_PyArena_AddPyObject(arena, res) < 0) {
+        if (!res || _PyArena_AddPyObject(arena, res) < 0) {
+            Py_XDECREF(res);
             return NULL;
         }
         return _PyAST_Constant(res, kind, lineno, col_offset, end_lineno, end_col_offset, p->arena);
@@ -1589,13 +1597,15 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
                     _PyUnicodeWriter_Dealloc(&writer);
                     return NULL;
                 }
-
+                if (_PyArena_AddPyObject(p->arena, concat_str) < 0) {
+                    Py_DECREF(concat_str);
+                    return NULL;
+                }
                 elem = _PyAST_Constant(concat_str, kind, first_elem->lineno,
                                        first_elem->col_offset,
                                        last_elem->end_lineno,
                                        last_elem->end_col_offset, p->arena);
                 if (elem == NULL) {
-                    Py_DECREF(concat_str);
                     return NULL;
                 }
             }
