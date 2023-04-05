@@ -411,6 +411,50 @@ x = (
 
         expr = """
 x = (
+    u'wat',
+    u"wat",
+    b'wat',
+    b"wat",
+    f'wat',
+    f"wat",
+)
+
+y = (
+    u'''wat''',
+    u\"\"\"wat\"\"\",
+    b'''wat''',
+    b\"\"\"wat\"\"\",
+    f'''wat''',
+    f\"\"\"wat\"\"\",
+)
+        """
+        t = ast.parse(expr)
+        self.assertEqual(type(t), ast.Module)
+        self.assertEqual(len(t.body), 2)
+        x, y = t.body
+
+        # Check the single quoted string offsets first.
+        offsets = [
+            (elt.col_offset, elt.end_col_offset)
+            for elt in x.value.elts
+        ]
+        self.assertTrue(all(
+            offset == (4, 10)
+            for offset in offsets
+        ))
+
+        # Check the triple quoted string offsets.
+        offsets = [
+            (elt.col_offset, elt.end_col_offset)
+            for elt in y.value.elts
+        ]
+        self.assertTrue(all(
+            offset == (4, 14)
+            for offset in offsets
+        ))
+
+        expr = """
+x = (
         'PERL_MM_OPT', (
             f'wat'
             f'some_string={f(x)} '
@@ -444,7 +488,11 @@ x = (
         self.assertEqual(wat2.lineno, 5)
         self.assertEqual(wat2.end_lineno, 6)
         self.assertEqual(wat2.col_offset, 32)
-        self.assertEqual(wat2.end_col_offset, 18)
+        # wat ends at the offset 17, but the whole f-string
+        # ends at the offset 18 (since the quote is part of the
+        # f-string but not the wat string)
+        self.assertEqual(wat2.end_col_offset, 17)
+        self.assertEqual(fstring.end_col_offset, 18)
 
     def test_docstring(self):
         def f():
@@ -578,8 +626,14 @@ x = (
         self.assertEqual(f'' '' f'', '')
         self.assertEqual(f'' '' f'' '', '')
 
+        # This is not really [f'{'] + [f'}'] since we treat the inside
+        # of braces as a purely new context, so it is actually f'{ and
+        # then eval('  f') (a valid expression) and then }' which would
+        # constitute a valid f-string.
+        self.assertEqual(f'{' f'}', ' f')
+
         self.assertAllRaise(SyntaxError, "expecting '}'",
-                            ["f'{3' f'}'",  # can't concat to get a valid f-string
+                            ['''f'{3' f"}"''',  # can't concat to get a valid f-string
                              ])
 
     def test_comments(self):
@@ -743,10 +797,6 @@ x = (
                             ["f'{3)+(4}'",
                              ])
 
-        self.assertAllRaise(SyntaxError, 'unterminated string literal',
-                            ["f'{\n}'",
-                             ])
-
     def test_newlines_before_syntax_error(self):
         self.assertAllRaise(SyntaxError, "invalid syntax",
                 ["f'{.}'", "\nf'{.}'", "\n\nf'{.}'"])
@@ -825,17 +875,38 @@ x = (
                              r"'\N{GREEK CAPITAL LETTER DELTA'",
                              ])
 
-    def test_no_backslashes_in_expression_part(self):
-        self.assertAllRaise(SyntaxError, 'f-string expression part cannot include a backslash',
-                            [r"f'{\'a\'}'",
-                             r"f'{\t3}'",
-                             r"f'{\}'",
-                             r"rf'{\'a\'}'",
-                             r"rf'{\t3}'",
-                             r"rf'{\}'",
-                             r"""rf'{"\N{LEFT CURLY BRACKET}"}'""",
-                             r"f'{\n}'",
+    def test_backslashes_in_expression_part(self):
+        self.assertEqual(f"{(
+                        1 +
+                        2
+        )}", "3")
+
+        self.assertEqual("\N{LEFT CURLY BRACKET}", '{')
+        self.assertEqual(f'{"\N{LEFT CURLY BRACKET}"}', '{')
+        self.assertEqual(rf'{"\N{LEFT CURLY BRACKET}"}', '{')
+
+        self.assertAllRaise(SyntaxError, 'empty expression not allowed',
+                            ["f'{\n}'",
                              ])
+
+    def test_invalid_backslashes_inside_fstring_context(self):
+        # All of these variations are invalid python syntax,
+        # so they are also invalid in f-strings as well.
+        cases = [
+            formatting.format(expr=expr)
+            for formatting in [
+                "{expr}",
+                "f'{{{expr}}}'",
+                "rf'{{{expr}}}'",
+            ]
+            for expr in [
+                r"\'a\'",
+                r"\t3",
+                r"\\"[0],
+            ]
+        ]
+        self.assertAllRaise(SyntaxError, 'unexpected character after line continuation',
+                            cases)
 
     def test_no_escapes_for_braces(self):
         """
@@ -1120,11 +1191,16 @@ x = (
                              "f'{3!:}'",
                              ])
 
-        for conv in 'g', 'A', '3', 'G', '!', 'ä', 'ɐ', 'ª':
+        for conv_identifier in 'g', 'A', 'G', 'ä', 'ɐ':
             self.assertAllRaise(SyntaxError,
                                 "f-string: invalid conversion character %r: "
-                                "expected 's', 'r', or 'a'" % conv,
-                                ["f'{3!" + conv + "}'"])
+                                "expected 's', 'r', or 'a'" % conv_identifier,
+                                ["f'{3!" + conv_identifier + "}'"])
+
+        for conv_non_identifier in '3', '!':
+            self.assertAllRaise(SyntaxError,
+                                "f-string: invalid conversion character",
+                                ["f'{3!" + conv_non_identifier + "}'"])
 
         for conv in ' s', ' s ':
             self.assertAllRaise(SyntaxError,
