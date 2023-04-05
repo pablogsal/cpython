@@ -1373,9 +1373,16 @@ expr_ty _PyPegen_constant_from_string(Parser* p, Token* tok) {
         _Pypegen_raise_decode_error(p);
         return NULL;
     }
+    if (_PyArena_AddPyObject(p->arena, s) < 0) {
+        Py_DECREF(s);
+        return NULL;
+    }
     PyObject *kind = NULL;
     if (the_str && the_str[0] == 'u') {
         kind = _PyPegen_new_identifier(p, "u");
+        if (kind == NULL) {
+            return NULL;
+        }
     }
     return _PyAST_Constant(s, kind, tok->lineno, tok->col_offset, tok->end_lineno, tok->end_col_offset, p->arena);
 }
@@ -1488,7 +1495,8 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
             expr_ty elem = asdl_seq_GET(strings, i);
             PyBytes_Concat(&res, elem->v.Constant.value);
         }
-        if (_PyArena_AddPyObject(arena, res) < 0) {
+        if (!res || _PyArena_AddPyObject(arena, res) < 0) {
+            Py_XDECREF(res);
             return NULL;
         }
         return _PyAST_Constant(res, kind, lineno, col_offset, end_lineno, end_col_offset, p->arena);
@@ -1511,7 +1519,7 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
         if (elem->kind == Constant_kind) {
             asdl_seq_SET(flattened, current_pos++, elem);
         } else {
-            for (j=0; j < asdl_seq_LEN(elem->v.JoinedStr.values); j++) {
+            for (j = 0; j < asdl_seq_LEN(elem->v.JoinedStr.values); j++) {
                 expr_ty subvalue = asdl_seq_GET(elem->v.JoinedStr.values, j);
                 if (subvalue == NULL) {
                     return NULL;
@@ -1526,6 +1534,15 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
     int prev_is_constant = 0;
     for (i = 0; i < n_flattened_elements; i++) {
         expr_ty elem = asdl_seq_GET(flattened, i);
+
+        /* The concatenation of a FormattedValue and an empty Contant should
+           lead to the FormattedValue itself. Thus, we will not take any empty
+           constants into account, just as in `_PyPegen_joined_str` */
+        if (f_string_found && elem->kind == Constant_kind &&
+            PyUnicode_CheckExact(elem->v.Constant.value) &&
+            PyUnicode_GET_LENGTH(elem->v.Constant.value) == 0)
+            continue;
+
         if (!prev_is_constant || elem->kind != Constant_kind) {
             n_elements++;
         }
@@ -1545,44 +1562,59 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
 
         /* if the current elem and the following are constants,
            fold them and all consequent constants */
-        if (elem->kind == Constant_kind && i+1 < n_flattened_elements
-            && asdl_seq_GET(flattened, i+1)->kind == Constant_kind) {
-            expr_ty first_elem = elem;
+        if (elem->kind == Constant_kind) {
+            if (i + 1 < n_flattened_elements &&
+                asdl_seq_GET(flattened, i + 1)->kind == Constant_kind) {
+                expr_ty first_elem = elem;
 
-            /* When a string is getting concatenated, the kind of the string
-               is determined by the first string in the concatenation sequence.
+                /* When a string is getting concatenated, the kind of the string
+                   is determined by the first string in the concatenation
+                   sequence.
 
-               u"abc" "def" -> u"abcdef"
-               "abc" u"abc" ->  "abcabc" */
-            PyObject *kind = elem->v.Constant.kind;
+                   u"abc" "def" -> u"abcdef"
+                   "abc" u"abc" ->  "abcabc" */
+                PyObject *kind = elem->v.Constant.kind;
 
-            _PyUnicodeWriter_Init(&writer);
-            expr_ty last_elem = elem;
-            for (j = i; j < n_flattened_elements; j++) {
-                expr_ty current_elem = asdl_seq_GET(flattened, j);
-                if (current_elem->kind == Constant_kind) {
-                    if (_PyUnicodeWriter_WriteStr(&writer, current_elem->v.Constant.value)) {
-                        _PyUnicodeWriter_Dealloc(&writer);
-                        return NULL;
+                _PyUnicodeWriter_Init(&writer);
+                expr_ty last_elem = elem;
+                for (j = i; j < n_flattened_elements; j++) {
+                    expr_ty current_elem = asdl_seq_GET(flattened, j);
+                    if (current_elem->kind == Constant_kind) {
+                        if (_PyUnicodeWriter_WriteStr(
+                                &writer, current_elem->v.Constant.value)) {
+                            _PyUnicodeWriter_Dealloc(&writer);
+                            return NULL;
+                        }
+                        last_elem = current_elem;
+                    } else {
+                        break;
                     }
-                    last_elem = current_elem;
-                } else {
-                    break;
+                }
+                i = j - 1;
+
+                PyObject *concat_str = _PyUnicodeWriter_Finish(&writer);
+                if (concat_str == NULL) {
+                    _PyUnicodeWriter_Dealloc(&writer);
+                    return NULL;
+                }
+                if (_PyArena_AddPyObject(p->arena, concat_str) < 0) {
+                    Py_DECREF(concat_str);
+                    return NULL;
+                }
+                elem = _PyAST_Constant(concat_str, kind, first_elem->lineno,
+                                       first_elem->col_offset,
+                                       last_elem->end_lineno,
+                                       last_elem->end_col_offset, p->arena);
+                if (elem == NULL) {
+                    return NULL;
                 }
             }
-            i = j-1;
 
-            PyObject *concat_str = _PyUnicodeWriter_Finish(&writer);
-            if (concat_str == NULL) {
-                _PyUnicodeWriter_Dealloc(&writer);
-                return NULL;
-            }
-
-            elem = _PyAST_Constant(concat_str, kind, first_elem->lineno, first_elem->col_offset,
-                                   last_elem->end_lineno, last_elem->end_col_offset, p->arena);
-            if (elem == NULL) {
-                Py_DECREF(concat_str);
-                return NULL;
+            /* Drop all empty contanst strings */
+            if (f_string_found &&
+                PyUnicode_CheckExact(elem->v.Constant.value) &&
+                PyUnicode_GET_LENGTH(elem->v.Constant.value) == 0) {
+                continue;
             }
         }
 
@@ -1594,7 +1626,8 @@ _PyPegen_concatenate_strings(Parser *p, asdl_expr_seq *strings,
         expr_ty elem = asdl_seq_GET(values, 0);
         assert(elem->kind == Constant_kind);
         return elem;
-     }
+    }
 
+    assert(current_pos == n_elements);
     return _PyAST_JoinedStr(values, lineno, col_offset, end_lineno, end_col_offset, p->arena);
 }
