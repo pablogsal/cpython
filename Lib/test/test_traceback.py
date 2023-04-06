@@ -394,6 +394,8 @@ class PurePythonExceptionFormattingMixin:
 
 
 class CAPIExceptionFormattingMixin:
+    LEGACY = 0
+
     def get_exception(self, callable, slice_start=0, slice_end=-1):
         from _testcapi import exception_print
         try:
@@ -401,11 +403,13 @@ class CAPIExceptionFormattingMixin:
             self.fail("No exception thrown.")
         except Exception as e:
             with captured_output("stderr") as tbstderr:
-                exception_print(e)
+                exception_print(e, self.LEGACY)
             return tbstderr.getvalue().splitlines()[slice_start:slice_end]
 
     callable_line = get_exception.__code__.co_firstlineno + 3
 
+class CAPIExceptionFormattingLegacyMixin(CAPIExceptionFormattingMixin):
+    LEGACY = 1
 
 @requires_debug_ranges()
 class TracebackErrorLocationCaretTestBase:
@@ -912,6 +916,16 @@ class CPythonTracebackErrorCaretTests(
     Same set of tests as above but with Python's internal traceback printing.
     """
 
+@cpython_only
+@requires_debug_ranges()
+class CPythonTracebackErrorCaretTests(
+    CAPIExceptionFormattingLegacyMixin,
+    TracebackErrorLocationCaretTestBase,
+    unittest.TestCase,
+):
+    """
+    Same set of tests as above but with Python's legacy internal traceback printing.
+    """
 
 class TracebackFormatTests(unittest.TestCase):
 
@@ -1197,8 +1211,7 @@ class TracebackFormatTests(unittest.TestCase):
     def test_recursive_traceback_cpython_internal(self):
         from _testcapi import exception_print
         def render_exc():
-            exc_type, exc_value, exc_tb = sys.exc_info()
-            exception_print(exc_value)
+            exception_print(sys.exception())
         self._check_recursive_traceback_display(render_exc)
 
     def test_format_stack(self):
@@ -2456,8 +2469,8 @@ class TestTracebackException(unittest.TestCase):
             try:
                 1/0
             finally:
-                exc_info_context = sys.exc_info()
-                exc_context = traceback.TracebackException(*exc_info_context)
+                exc = sys.exception()
+                exc_context = traceback.TracebackException.from_exception(exc)
                 cause = Exception("cause")
                 raise Exception("uh oh") from cause
         except Exception as e:
@@ -2478,8 +2491,8 @@ class TestTracebackException(unittest.TestCase):
             try:
                 1/0
             finally:
-                exc_info_context = sys.exc_info()
-                exc_context = traceback.TracebackException(*exc_info_context)
+                exc = sys.exception()
+                exc_context = traceback.TracebackException.from_exception(exc)
                 raise Exception("uh oh")
         except Exception as e:
             exc_obj = e
@@ -2543,8 +2556,8 @@ class TestTracebackException(unittest.TestCase):
             try:
                 1/0
             finally:
-                exc_info_context = sys.exc_info()
-                exc_context = traceback.TracebackException(*exc_info_context)
+                exc = sys.exception()
+                exc_context = traceback.TracebackException.from_exception(exc)
                 raise Exception("uh oh")
         except Exception as e:
             exc_obj = e

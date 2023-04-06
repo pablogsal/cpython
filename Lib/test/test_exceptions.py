@@ -335,8 +335,7 @@ class ExceptionTests(unittest.TestCase):
             try:
                 _testcapi.raise_exception(BadException, 1)
             except TypeError as err:
-                exc, err, tb = sys.exc_info()
-                co = tb.tb_frame.f_code
+                co = err.__traceback__.tb_frame.f_code
                 self.assertEqual(co.co_name, "test_capi1")
                 self.assertTrue(co.co_filename.endswith('test_exceptions.py'))
             else:
@@ -347,8 +346,7 @@ class ExceptionTests(unittest.TestCase):
             try:
                 _testcapi.raise_exception(BadException, 0)
             except RuntimeError as err:
-                exc, err, tb = sys.exc_info()
-                tb = tb.tb_next
+                tb = err.__traceback__.tb_next
                 co = tb.tb_frame.f_code
                 self.assertEqual(co.co_name, "__init__")
                 self.assertTrue(co.co_filename.endswith('test_exceptions.py'))
@@ -889,28 +887,28 @@ class ExceptionTests(unittest.TestCase):
             try:
                 raise KeyError("caught")
             except KeyError:
-                yield sys.exc_info()[0]
-                yield sys.exc_info()[0]
-            yield sys.exc_info()[0]
+                yield sys.exception()
+                yield sys.exception()
+            yield sys.exception()
         g = yield_raise()
-        self.assertEqual(next(g), KeyError)
-        self.assertEqual(sys.exc_info()[0], None)
-        self.assertEqual(next(g), KeyError)
-        self.assertEqual(sys.exc_info()[0], None)
-        self.assertEqual(next(g), None)
+        self.assertIsInstance(next(g), KeyError)
+        self.assertIsNone(sys.exception())
+        self.assertIsInstance(next(g), KeyError)
+        self.assertIsNone(sys.exception())
+        self.assertIsNone(next(g))
 
         # Same test, but inside an exception handler
         try:
             raise TypeError("foo")
         except TypeError:
             g = yield_raise()
-            self.assertEqual(next(g), KeyError)
-            self.assertEqual(sys.exc_info()[0], TypeError)
-            self.assertEqual(next(g), KeyError)
-            self.assertEqual(sys.exc_info()[0], TypeError)
-            self.assertEqual(next(g), TypeError)
+            self.assertIsInstance(next(g), KeyError)
+            self.assertIsInstance(sys.exception(), TypeError)
+            self.assertIsInstance(next(g), KeyError)
+            self.assertIsInstance(sys.exception(), TypeError)
+            self.assertIsInstance(next(g), TypeError)
             del g
-            self.assertEqual(sys.exc_info()[0], TypeError)
+            self.assertIsInstance(sys.exception(), TypeError)
 
     def test_generator_leaking2(self):
         # See issue 12475.
@@ -925,7 +923,7 @@ class ExceptionTests(unittest.TestCase):
             next(it)
         except StopIteration:
             pass
-        self.assertEqual(sys.exc_info(), (None, None, None))
+        self.assertIsNone(sys.exception())
 
     def test_generator_leaking3(self):
         # See issue #23353.  When gen.throw() is called, the caller's
@@ -934,17 +932,17 @@ class ExceptionTests(unittest.TestCase):
             try:
                 yield
             except ZeroDivisionError:
-                yield sys.exc_info()[1]
+                yield sys.exception()
         it = g()
         next(it)
         try:
             1/0
         except ZeroDivisionError as e:
-            self.assertIs(sys.exc_info()[1], e)
+            self.assertIs(sys.exception(), e)
             gen_exc = it.throw(e)
-            self.assertIs(sys.exc_info()[1], e)
+            self.assertIs(sys.exception(), e)
             self.assertIs(gen_exc, e)
-        self.assertEqual(sys.exc_info(), (None, None, None))
+        self.assertIsNone(sys.exception())
 
     def test_generator_leaking4(self):
         # See issue #23353.  When an exception is raised by a generator,
@@ -953,7 +951,7 @@ class ExceptionTests(unittest.TestCase):
             try:
                 1/0
             except ZeroDivisionError:
-                yield sys.exc_info()[0]
+                yield sys.exception()
                 raise
         it = g()
         try:
@@ -961,7 +959,7 @@ class ExceptionTests(unittest.TestCase):
         except TypeError:
             # The caller's exception state (TypeError) is temporarily
             # saved in the generator.
-            tp = next(it)
+            tp = type(next(it))
         self.assertIs(tp, ZeroDivisionError)
         try:
             next(it)
@@ -969,15 +967,15 @@ class ExceptionTests(unittest.TestCase):
             # with an exception, it shouldn't have restored the old
             # exception state (TypeError).
         except ZeroDivisionError as e:
-            self.assertIs(sys.exc_info()[1], e)
+            self.assertIs(sys.exception(), e)
         # We used to find TypeError here.
-        self.assertEqual(sys.exc_info(), (None, None, None))
+        self.assertIsNone(sys.exception())
 
     def test_generator_doesnt_retain_old_exc(self):
         def g():
-            self.assertIsInstance(sys.exc_info()[1], RuntimeError)
+            self.assertIsInstance(sys.exception(), RuntimeError)
             yield
-            self.assertEqual(sys.exc_info(), (None, None, None))
+            self.assertIsNone(sys.exception())
         it = g()
         try:
             raise RuntimeError
@@ -985,7 +983,7 @@ class ExceptionTests(unittest.TestCase):
             next(it)
         self.assertRaises(StopIteration, next, it)
 
-    def test_generator_finalizing_and_exc_info(self):
+    def test_generator_finalizing_and_sys_exception(self):
         # See #7173
         def simple_gen():
             yield 1
@@ -997,7 +995,7 @@ class ExceptionTests(unittest.TestCase):
                 return next(gen)
         run_gen()
         gc_collect()
-        self.assertEqual(sys.exc_info(), (None, None, None))
+        self.assertIsNone(sys.exception())
 
     def _check_generator_cleanup_exc_state(self, testfunc):
         # Issue #12791: exception state is cleaned up as soon as a generator
@@ -1068,14 +1066,14 @@ class ExceptionTests(unittest.TestCase):
         class MyObject:
             def __del__(self):
                 nonlocal e
-                e = sys.exc_info()
+                e = sys.exception()
         e = ()
         try:
             raise Exception(MyObject())
         except:
             pass
         gc_collect()  # For PyPy or other GCs.
-        self.assertEqual(e, (None, None, None))
+        self.assertIsNone(e)
 
     def test_raise_does_not_create_context_chain_cycle(self):
         class A(Exception):
@@ -1136,7 +1134,6 @@ class ExceptionTests(unittest.TestCase):
         self.assertIsInstance(exc.__context__, ValueError)
         self.assertIs(exc.__context__.__context__, exc.__context__)
 
-    @unittest.skip("See issue 44895")
     def test_no_hang_on_context_chain_cycle2(self):
         # See issue 25782. Cycle at head of context chain.
 
@@ -1694,7 +1691,7 @@ class ExceptionTests(unittest.TestCase):
                 raise ValueError
             except ValueError:
                 yield 1
-            self.assertEqual(sys.exc_info(), (None, None, None))
+            self.assertIsNone(sys.exception())
             yield 2
 
         gen = g()
