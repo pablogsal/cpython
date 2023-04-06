@@ -2523,9 +2523,10 @@ f_string_middle:
             end_quote_size = 0;
         }
 
+        int in_format_spec = current_tok->last_expr_end != -1 && current_tok->bracket_mark_index >= 0;
         if (c == '{') {
             char peek = tok_nextc(tok);
-            if (peek != '{') {
+            if (peek != '{' || in_format_spec) {
                 tok_backup(tok, peek);
                 tok_backup(tok, c);
                 current_tok->bracket_mark[++current_tok->bracket_mark_index] = current_tok->bracket_stack;
@@ -2549,7 +2550,6 @@ f_string_middle:
             // scanning (indicated by the end of the expression being set) and we are not at the top level
             // of the bracket stack (-1 is the top level). Since format specifiers can't legally use double
             // brackets, we can bypass it here.
-            int in_format_spec = current_tok->last_expr_end != -1 && current_tok->bracket_mark_index >= 0;
             if (peek == '}' && !in_format_spec) {
                 p_start = tok->start;
                 p_end = tok->cur - 1;
