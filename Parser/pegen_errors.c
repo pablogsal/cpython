@@ -205,7 +205,7 @@ exit:
 // PARSER ERRORS
 
 void *
-_PyPegen_raise_error(Parser *p, PyObject *errtype, const char *errmsg, ...)
+_PyPegen_raise_error(Parser *p, PyObject *errtype, int use_mark, const char *errmsg, ...)
 {
     if (p->fill == 0) {
         va_list va;
@@ -214,8 +214,13 @@ _PyPegen_raise_error(Parser *p, PyObject *errtype, const char *errmsg, ...)
         va_end(va);
         return NULL;
     }
-
-    Token *t = p->known_err_token != NULL ? p->known_err_token : p->tokens[p->fill - 1];
+    if (use_mark && p->mark == p->fill && _PyPegen_fill_token(p) < 0) {
+        p->error_indicator = 1;
+        return NULL;
+    }
+    Token *t = p->known_err_token != NULL
+                   ? p->known_err_token
+                   : p->tokens[use_mark ? p->mark : p->fill - 1];
     Py_ssize_t col_offset;
     Py_ssize_t end_col_offset = -1;
     if (t->col_offset == -1) {
