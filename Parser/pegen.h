@@ -156,7 +156,7 @@ typedef enum {
 int _Pypegen_raise_decode_error(Parser *p);
 void _PyPegen_raise_tokenizer_init_error(PyObject *filename);
 int _Pypegen_tokenizer_error(Parser *p);
-void *_PyPegen_raise_error(Parser *p, PyObject *errtype, const char *errmsg, ...);
+void *_PyPegen_raise_error(Parser *p, PyObject *errtype, int use_mark, const char *errmsg, ...);
 void *_PyPegen_raise_error_known_location(Parser *p, PyObject *errtype,
                                           Py_ssize_t lineno, Py_ssize_t col_offset,
                                           Py_ssize_t end_lineno, Py_ssize_t end_col_offset,
@@ -176,8 +176,9 @@ RAISE_ERROR_KNOWN_LOCATION(Parser *p, PyObject *errtype,
     va_end(va);
     return NULL;
 }
-#define RAISE_SYNTAX_ERROR(msg, ...) _PyPegen_raise_error(p, PyExc_SyntaxError, msg, ##__VA_ARGS__)
-#define RAISE_INDENTATION_ERROR(msg, ...) _PyPegen_raise_error(p, PyExc_IndentationError, msg, ##__VA_ARGS__)
+#define RAISE_SYNTAX_ERROR(msg, ...) _PyPegen_raise_error(p, PyExc_SyntaxError, 0, msg, ##__VA_ARGS__)
+#define RAISE_INDENTATION_ERROR(msg, ...) _PyPegen_raise_error(p, PyExc_IndentationError, 0, msg, ##__VA_ARGS__)
+#define RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN(msg, ...) _PyPegen_raise_error(p, PyExc_SyntaxError, 1, msg, ##__VA_ARGS__)
 #define RAISE_SYNTAX_ERROR_KNOWN_RANGE(a, b, msg, ...) \
     RAISE_ERROR_KNOWN_LOCATION(p, PyExc_SyntaxError, (a)->lineno, (a)->col_offset, (b)->end_lineno, (b)->end_col_offset, msg, ##__VA_ARGS__)
 #define RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, msg, ...) \

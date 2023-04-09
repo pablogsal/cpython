@@ -1358,14 +1358,19 @@ invalid_kvpair:
 invalid_starred_expression:
     | a='*' expression '=' b=expression { RAISE_SYNTAX_ERROR_KNOWN_RANGE(a, b, "cannot assign to iterable argument unpacking") }
 invalid_replacement_field:
-    | '{' a='=' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: expression required before '='") }
-    | '{' a=':' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: expression required before ':'") }
-    | '{' a='!' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: expression required before '!'") }
-    | '{' a='}' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: empty expression not allowed") }
-    | '{' (yield_expr | star_expressions) "="? invalid_conversion_character
-    | '{' (yield_expr | star_expressions) "="? [ "!" NAME ] [ ':' fstring_format_spec* ] !'}' {
-         RAISE_SYNTAX_ERROR("f-string: expecting '}'")
-    }
+    | '{' !(yield_expr | star_expressions) { RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting expression after '{'")}
+    | '{' (yield_expr | star_expressions) !('=' | '!' | ':' | '}') {
+        PyErr_Occurred() ? NULL : RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting '=', or '!', or ':', or '}'") }
+    | '{' (yield_expr | star_expressions) '=' !('!' | ':' | '}') {
+        PyErr_Occurred() ? NULL : RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting '!', or ':', or '}'") }
+    | '{' (yield_expr | star_expressions) '='? invalid_conversion_character
+    | '{' (yield_expr | star_expressions) '='? ['!' NAME] !(':' | '}') {
+        PyErr_Occurred() ? NULL : RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting ':' or '}'") }
+    | '{' (yield_expr | star_expressions) '='? ['!' NAME] ':' fstring_format_spec* !'}' {
+        PyErr_Occurred() ? NULL : RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting '}', or format specs") }
+    | '{' (yield_expr | star_expressions) '='? ['!' NAME] !'}' {
+        PyErr_Occurred() ? NULL : RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting '}'") }
+
 invalid_conversion_character:
-    | a="!" &(':'|'}') { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: missed conversion character") }
-    | a="!" !NAME { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: invalid conversion character") }
+    | '!' &(':' | '}') { RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: missing conversion character") }
+    | '!' !NAME { RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: invalid conversion character") }
