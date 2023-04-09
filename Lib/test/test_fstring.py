@@ -931,7 +931,7 @@ x = (
 
         # lambda doesn't work without parens, because the colon
         #  makes the parser think it's a format_spec
-        self.assertAllRaise(SyntaxError, 'f-string: invalid syntax',
+        self.assertAllRaise(SyntaxError, 'invalid syntax',
                             ["f'{lambda x:x}'",
                              ])
 
@@ -1258,8 +1258,6 @@ x = (
                              "f'{{{'",
                              "f'{{}}{'",
                              "f'{'",
-                             "f'x{<'",  # See bpo-46762.
-                             "f'x{>'",
                              "f'{i='",  # See gh-93418.
                              ])
 
@@ -1483,7 +1481,7 @@ x = (
         self.assertEqual(x, 10)
 
     def test_invalid_syntax_error_message(self):
-        with self.assertRaisesRegex(SyntaxError, "f-string: invalid syntax"):
+        with self.assertRaisesRegex(SyntaxError, "invalid syntax"):
             compile("f'{a $ b}'", "?", "exec")
 
     def test_with_two_commas_in_format_specifier(self):
@@ -1507,11 +1505,11 @@ x = (
             f'{1:_,}'
 
     def test_syntax_error_for_starred_expressions(self):
-        error_msg = re.escape("cannot use starred expression here")
+        error_msg = re.escape("can't use starred expression here")
         with self.assertRaisesRegex(SyntaxError, error_msg):
             compile("f'{*a}'", "?", "exec")
 
-        error_msg = re.escape("cannot use double starred expression here")
+        error_msg = re.escape("invalid syntax")
         with self.assertRaisesRegex(SyntaxError, error_msg):
             compile("f'{**a}'", "?", "exec")
 

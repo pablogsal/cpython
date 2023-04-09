@@ -1363,9 +1363,9 @@ invalid_replacement_field:
     | '{' a='!' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: expression required before '!'") }
     | '{' a='}' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: empty expression not allowed") }
     | '{' (yield_expr | star_expressions) "="? invalid_conversion_character
-    | '{' (yield_expr | star_expressions) "="? [ "!" NAME ] [ ':' fstring_format_spec* ] !'}' {
-         RAISE_SYNTAX_ERROR("f-string: expecting '}'")
-    }
+    # We explicitly require either a conversion character or a format spec (or both) in order for this to not get too general
+    | '{' (yield_expr | star_expressions) "="? "!" NAME [':' fstring_format_spec*] !'}' { RAISE_SYNTAX_ERROR("f-string: expecting '}'") }
+    | '{' (yield_expr | star_expressions) "="? ':' fstring_format_spec* !'}' { RAISE_SYNTAX_ERROR("f-string: expecting '}'") }
 invalid_conversion_character:
     | a="!" &(':'|'}') { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: missed conversion character") }
     | a="!" !NAME { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: invalid conversion character") }
