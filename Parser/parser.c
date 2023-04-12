@@ -58,7 +58,7 @@ static KeywordToken *reserved_keywords[] = {
         {"assert", 526},
         {"global", 523},
         {"except", 636},
-        {"lambda", 586},
+        {"lambda", 654},
         {NULL, -1},
     },
     (KeywordToken[]) {
@@ -14618,7 +14618,7 @@ lambdef_rule(Parser *p)
         void *a;
         expr_ty b;
         if (
-            (_keyword = _PyPegen_expect_token(p, 586))  // token='lambda'
+            (_keyword = _PyPegen_expect_token(p, 654))  // token='lambda'
             &&
             (a = lambda_params_rule(p), !p->error_indicator)  // lambda_params?
             &&
@@ -24121,6 +24121,7 @@ invalid_starred_expression_rule(Parser *p)
 //     | '{' '!'
 //     | '{' ':'
 //     | '{' '}'
+//     | '{' 'lambda'
 //     | '{' !(yield_expr | star_expressions)
 //     | '{' (yield_expr | star_expressions) !('=' | '!' | ':' | '}')
 //     | '{' (yield_expr | star_expressions) '=' !('!' | ':' | '}')
@@ -24156,7 +24157,7 @@ invalid_replacement_field_rule(Parser *p)
         )
         {
             D(fprintf(stderr, "%*c+ invalid_replacement_field[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "'{' '='"));
-            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: expression required before '='" );
+            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: valid expression required before '='" );
             if (_res == NULL && PyErr_Occurred()) {
                 p->error_indicator = 1;
                 p->level--;
@@ -24183,7 +24184,7 @@ invalid_replacement_field_rule(Parser *p)
         )
         {
             D(fprintf(stderr, "%*c+ invalid_replacement_field[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "'{' '!'"));
-            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: expression required before '!'" );
+            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: valid expression required before '!'" );
             if (_res == NULL && PyErr_Occurred()) {
                 p->error_indicator = 1;
                 p->level--;
@@ -24210,7 +24211,7 @@ invalid_replacement_field_rule(Parser *p)
         )
         {
             D(fprintf(stderr, "%*c+ invalid_replacement_field[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "'{' ':'"));
-            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: expression required before ':'" );
+            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: valid expression required before ':'" );
             if (_res == NULL && PyErr_Occurred()) {
                 p->error_indicator = 1;
                 p->level--;
@@ -24237,7 +24238,7 @@ invalid_replacement_field_rule(Parser *p)
         )
         {
             D(fprintf(stderr, "%*c+ invalid_replacement_field[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "'{' '}'"));
-            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: expression required before '}'" );
+            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: valid expression required before '}'" );
             if (_res == NULL && PyErr_Occurred()) {
                 p->error_indicator = 1;
                 p->level--;
@@ -24248,6 +24249,33 @@ invalid_replacement_field_rule(Parser *p)
         p->mark = _mark;
         D(fprintf(stderr, "%*c%s invalid_replacement_field[%d-%d]: %s failed!\n", p->level, ' ',
                   p->error_indicator ? "ERROR!" : "-", _mark, p->mark, "'{' '}'"));
+    }
+    { // '{' 'lambda'
+        if (p->error_indicator) {
+            p->level--;
+            return NULL;
+        }
+        D(fprintf(stderr, "%*c> invalid_replacement_field[%d-%d]: %s\n", p->level, ' ', _mark, p->mark, "'{' 'lambda'"));
+        Token * _literal;
+        Token * a;
+        if (
+            (_literal = _PyPegen_expect_token(p, 25))  // token='{'
+            &&
+            (a = _PyPegen_expect_token(p, 654))  // token='lambda'
+        )
+        {
+            D(fprintf(stderr, "%*c+ invalid_replacement_field[%d-%d]: %s succeeded!\n", p->level, ' ', _mark, p->mark, "'{' 'lambda'"));
+            _res = RAISE_SYNTAX_ERROR_KNOWN_LOCATION ( a , "f-string: lambda expression are not allowed without parentheses" );
+            if (_res == NULL && PyErr_Occurred()) {
+                p->error_indicator = 1;
+                p->level--;
+                return NULL;
+            }
+            goto done;
+        }
+        p->mark = _mark;
+        D(fprintf(stderr, "%*c%s invalid_replacement_field[%d-%d]: %s failed!\n", p->level, ' ',
+                  p->error_indicator ? "ERROR!" : "-", _mark, p->mark, "'{' 'lambda'"));
     }
     { // '{' !(yield_expr | star_expressions)
         if (p->error_indicator) {

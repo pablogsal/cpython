@@ -638,7 +638,7 @@ class CmdLineTest(unittest.TestCase):
                 [
                     b'    foo = f"""{}',
                     b'               ^',
-                    b'SyntaxError: f-string: expression required before \'}\'',
+                    b'SyntaxError: f-string: valid expression required before \'}\'',
                 ],
             )
 

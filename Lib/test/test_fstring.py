@@ -722,7 +722,8 @@ x = (
         self.assertEqual(f'{x} {x}', '1 2')
 
     def test_missing_expression(self):
-        self.assertAllRaise(SyntaxError, "f-string: expression required before '}'",
+        self.assertAllRaise(SyntaxError,
+                            "f-string: valid expression required before '}'",
                             ["f'{}'",
                              "f'{ }'"
                              "f' {} '",
@@ -734,7 +735,8 @@ x = (
                              "f'''{\t\f\r\n}'''",
                              ])
 
-        self.assertAllRaise(SyntaxError, "f-string: expression required before '!'",
+        self.assertAllRaise(SyntaxError,
+                            "f-string: valid expression required before '!'",
                             ["f'{!r}'",
                              "f'{ !r}'",
                              "f'{!}'",
@@ -755,7 +757,8 @@ x = (
                              "f'{ !xr:a}'",
                              ])
 
-        self.assertAllRaise(SyntaxError, "f-string: expression required before ':'",
+        self.assertAllRaise(SyntaxError,
+                            "f-string: valid expression required before ':'",
                             ["f'{:}'",
                              "f'{ :!}'",
                              "f'{:2}'",
@@ -763,7 +766,8 @@ x = (
                              "f'{:'",
                              ])
 
-        self.assertAllRaise(SyntaxError, "f-string: expression required before '='",
+        self.assertAllRaise(SyntaxError,
+                            "f-string: valid expression required before '='",
                             ["f'{=}'",
                              "f'{ =}'",
                              "f'{ =:}'",
@@ -879,7 +883,8 @@ x = (
         self.assertEqual(f'{"\N{LEFT CURLY BRACKET}"}', '{')
         self.assertEqual(rf'{"\N{LEFT CURLY BRACKET}"}', '{')
 
-        self.assertAllRaise(SyntaxError, "f-string: expression required before '}'",
+        self.assertAllRaise(SyntaxError,
+                            "f-string: valid expression required before '}'",
                             ["f'{\n}'",
                              ])
 
@@ -926,7 +931,8 @@ x = (
         # lambda doesn't work without parens, because the colon
         #  makes the parser think it's a format_spec
         self.assertAllRaise(SyntaxError, 
-                            "f-string: expecting a valid expression after '{'",
+                            "f-string: lambda expression are not allowed "
+                            "without parentheses",
                             ["f'{lambda x:x}'",
                              ])
 
