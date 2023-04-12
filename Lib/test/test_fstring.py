@@ -693,15 +693,13 @@ x = (
         self.assertEqual(f'{10:#{3 != {4:5} and width}x}', '       0xa')
         self.assertEqual(f'result: {value:{width:{0}}.{precision:1}}', 'result:      12.35')
 
-        self.assertAllRaise(SyntaxError,
-                            """f-string: invalid conversion character 'r{"': """
-                            """expected 's', 'r', or 'a'""",
+        self.assertAllRaise(SyntaxError, "f-string: expecting ':' or '}'",
                             ["""f'{"s"!r{":10"}}'""",
-
                              # This looks like a nested format spec.
                              ])
 
-        self.assertAllRaise(SyntaxError, "f-string: invalid syntax",
+        self.assertAllRaise(SyntaxError,
+                            "f-string: expecting a valid expression after '{'",
                             [# Invalid syntax inside a nested spec.
                              "f'{4:{/5}}'",
                              ])
@@ -724,7 +722,7 @@ x = (
         self.assertEqual(f'{x} {x}', '1 2')
 
     def test_missing_expression(self):
-        self.assertAllRaise(SyntaxError, 'f-string: empty expression not allowed',
+        self.assertAllRaise(SyntaxError, "f-string: expression required before '}'",
                             ["f'{}'",
                              "f'{ }'"
                              "f' {} '",
@@ -736,7 +734,6 @@ x = (
                              "f'''{\t\f\r\n}'''",
                              ])
 
-        # Different error messages are raised when a specifier ('!', ':' or '=') is used after an empty expression
         self.assertAllRaise(SyntaxError, "f-string: expression required before '!'",
                             ["f'{!r}'",
                              "f'{ !r}'",
@@ -784,13 +781,9 @@ x = (
     def test_parens_in_expressions(self):
         self.assertEqual(f'{3,}', '(3,)')
 
-        # Add these because when an expression is evaluated, parens
-        #  are added around it. But we shouldn't go from an invalid
-        #  expression to a valid one. The added parens are just
-        #  supposed to allow whitespace (including newlines).
-        self.assertAllRaise(SyntaxError, 'invalid syntax',
+        self.assertAllRaise(SyntaxError,
+                            "f-string: expecting a valid expression after '{'",
                             ["f'{,}'",
-                             "f'{,}'",  # this is (,), which is an error
                              ])
 
         self.assertAllRaise(SyntaxError, r"f-string: unmatched '\)'",
@@ -798,7 +791,8 @@ x = (
                              ])
 
     def test_newlines_before_syntax_error(self):
-        self.assertAllRaise(SyntaxError, "invalid syntax",
+        self.assertAllRaise(SyntaxError,
+                            "f-string: expecting a valid expression after '{'",
                 ["f'{.}'", "\nf'{.}'", "\n\nf'{.}'"])
 
     def test_backslashes_in_string_part(self):
@@ -885,7 +879,7 @@ x = (
         self.assertEqual(f'{"\N{LEFT CURLY BRACKET}"}', '{')
         self.assertEqual(rf'{"\N{LEFT CURLY BRACKET}"}', '{')
 
-        self.assertAllRaise(SyntaxError, 'empty expression not allowed',
+        self.assertAllRaise(SyntaxError, "f-string: expression required before '}'",
                             ["f'{\n}'",
                              ])
 
@@ -931,7 +925,8 @@ x = (
 
         # lambda doesn't work without parens, because the colon
         #  makes the parser think it's a format_spec
-        self.assertAllRaise(SyntaxError, 'invalid syntax',
+        self.assertAllRaise(SyntaxError, 
+                            "f-string: expecting a valid expression after '{'",
                             ["f'{lambda x:x}'",
                              ])
 
@@ -1185,7 +1180,7 @@ x = (
                              "f'{3!g'",
                              ])
 
-        self.assertAllRaise(SyntaxError, 'f-string: missed conversion character',
+        self.assertAllRaise(SyntaxError, 'f-string: missing conversion character',
                             ["f'{3!}'",
                              "f'{3!:'",
                              "f'{3!:}'",
@@ -1244,8 +1239,7 @@ x = (
                              ])
 
         self.assertAllRaise(SyntaxError, "f-string: expecting '}'",
-                            ["f'{3:{{>10}'",
-                             "f'{3'",
+                            ["f'{3'",
                              "f'{3!'",
                              "f'{3:'",
                              "f'{3!s'",
@@ -1259,6 +1253,11 @@ x = (
                              "f'{{}}{'",
                              "f'{'",
                              "f'{i='",  # See gh-93418.
+                             ])
+
+        self.assertAllRaise(SyntaxError,
+                            "f-string: expecting a valid expression after '{'",
+                            ["f'{3:{{>10}'",
                              ])
 
         # But these are just normal strings.
@@ -1481,7 +1480,8 @@ x = (
         self.assertEqual(x, 10)
 
     def test_invalid_syntax_error_message(self):
-        with self.assertRaisesRegex(SyntaxError, "invalid syntax"):
+        with self.assertRaisesRegex(SyntaxError,
+                                    "f-string: expecting '=', or '!', or ':', or '}'"):
             compile("f'{a $ b}'", "?", "exec")
 
     def test_with_two_commas_in_format_specifier(self):
@@ -1505,12 +1505,11 @@ x = (
             f'{1:_,}'
 
     def test_syntax_error_for_starred_expressions(self):
-        error_msg = re.escape("can't use starred expression here")
-        with self.assertRaisesRegex(SyntaxError, error_msg):
+        with self.assertRaisesRegex(SyntaxError, "can't use starred expression here"):
             compile("f'{*a}'", "?", "exec")
 
-        error_msg = re.escape("invalid syntax")
-        with self.assertRaisesRegex(SyntaxError, error_msg):
+        with self.assertRaisesRegex(SyntaxError,
+                                    "f-string: expecting a valid expression after '{'"):
             compile("f'{**a}'", "?", "exec")
 
 if __name__ == '__main__':
