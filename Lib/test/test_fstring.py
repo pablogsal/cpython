@@ -929,11 +929,23 @@ x = (
         self.assertEqual(f'{(lambda y:x*y)("8"):10}', "88888     ")
 
         # lambda doesn't work without parens, because the colon
-        #  makes the parser think it's a format_spec
+        # makes the parser think it's a format_spec
+        # emit warning if we can match a format_spec
         self.assertAllRaise(SyntaxError, 
-                            "f-string: lambda expression are not allowed "
+                            "f-string: lambda expressions are not allowed "
                             "without parentheses",
                             ["f'{lambda x:x}'",
+                             "f'{lambda :x}'",
+                             "f'{lambda *arg, :x}'",
+                             "f'{1, lambda:x}'",
+                             ])
+        
+        # but don't emit the paren warning in general cases
+        self.assertAllRaise(SyntaxError, 
+                            "f-string: expecting a valid expression after '{'",
+                            ["f'{lambda x:}'",
+                             "f'{lambda :}'",
+                             "f'{+ lambda:None}'",
                              ])
 
     def test_valid_prefixes(self):

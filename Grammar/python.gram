@@ -1140,6 +1140,8 @@ invalid_expression:
         _PyPegen_check_legacy_stmt(p, a) ? NULL : p->tokens[p->mark-1]->level == 0 ? NULL :
         RAISE_SYNTAX_ERROR_KNOWN_RANGE(a, b, "invalid syntax. Perhaps you forgot a comma?") }
    | a=disjunction 'if' b=disjunction !('else'|':') { RAISE_SYNTAX_ERROR_KNOWN_RANGE(a, b, "expected 'else' after 'if' expression") }
+   | a='lambda' [lambda_params] b=':' &(FSTRING_MIDDLE | fstring_replacement_field)  {
+        RAISE_SYNTAX_ERROR_KNOWN_RANGE(a, b, "f-string: lambda expressions are not allowed without parentheses") }
 
 invalid_named_expression(memo):
     | a=expression ':=' expression {
@@ -1362,7 +1364,6 @@ invalid_replacement_field:
     | '{' a='!' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: valid expression required before '!'") }
     | '{' a=':' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: valid expression required before ':'") }
     | '{' a='}' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: valid expression required before '}'") }
-    | '{' a='lambda' { RAISE_SYNTAX_ERROR_KNOWN_LOCATION(a, "f-string: lambda expression are not allowed without parentheses") }
     | '{' !(yield_expr | star_expressions) { RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting a valid expression after '{'")}
     | '{' (yield_expr | star_expressions) !('=' | '!' | ':' | '}') {
         PyErr_Occurred() ? NULL : RAISE_SYNTAX_ERROR_ON_NEXT_TOKEN("f-string: expecting '=', or '!', or ':', or '}'") }
