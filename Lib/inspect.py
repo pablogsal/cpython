@@ -2185,7 +2185,8 @@ def _signature_strip_non_python_syntax(signature):
             if string == ',':
                 current_parameter += 1
 
-        if (type == ERRORTOKEN) and (string == '$'):
+        # if (type == ERRORTOKEN) and (string == '$'):
+        if (type == OP) and (string == '$'):
             assert self_parameter is None
             self_parameter = current_parameter
             continue
@@ -2193,7 +2194,7 @@ def _signature_strip_non_python_syntax(signature):
         add(string)
         if (string == ','):
             add(' ')
-    clean_signature = ''.join(text)
+    clean_signature = ''.join(text).strip()
     return clean_signature, self_parameter
 
 
@@ -2213,7 +2214,6 @@ def _signature_fromstr(cls, obj, s, skip_bound_arg=True):
         module = None
 
     if not isinstance(module, ast.Module):
-        breakpoint()
         raise ValueError("{!r} builtin has invalid signature".format(obj))
 
     f = module.body[0]
