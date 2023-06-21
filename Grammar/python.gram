@@ -383,6 +383,8 @@ while_stmt[stmt_ty]:
 
 for_stmt[stmt_ty]:
     | invalid_for_stmt
+    | 'for' t=star_targets 'in' ex=star_expressions ':' tc=[TYPE_COMMENT] b=block el=elif_stmt {
+        _PyAST_For(t, ex, b, CHECK(asdl_stmt_seq*, _PyPegen_singleton_seq(p, el)), NEW_TYPE_COMMENT(p, tc), EXTRA) }
     | 'for' t=star_targets 'in' ~ ex=star_expressions ':' tc=[TYPE_COMMENT] b=block el=[else_block] {
         _PyAST_For(t, ex, b, el, NEW_TYPE_COMMENT(p, tc), EXTRA) }
     | ASYNC 'for' t=star_targets 'in' ~ ex=star_expressions ':' tc=[TYPE_COMMENT] b=block el=[else_block] {
