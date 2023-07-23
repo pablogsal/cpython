@@ -106,62 +106,48 @@ PyRun_AnyFileExFlags(FILE *fp, const char *filename, int closeit,
     return res;
 }
 
-
 int
 _PyRun_InteractiveLoopObject(FILE *fp, PyObject *filename, PyCompilerFlags *flags)
 {
-    PyCompilerFlags local_flags = _PyCompilerFlags_INIT;
-    if (flags == NULL) {
-        flags = &local_flags;
+    PyObject *module, *runpy, *runmodule, *runargs, *result;
+    const wchar_t *modname = L"code";
+    runpy = PyImport_ImportModule("runpy");
+    if (runpy == NULL) {
+        return -1;
     }
-
-    PyThreadState *tstate = _PyThreadState_GET();
-    PyObject *v = _PySys_GetAttr(tstate, &_Py_ID(ps1));
-    if (v == NULL) {
-        _PySys_SetAttr(&_Py_ID(ps1), v = PyUnicode_FromString(">>> "));
-        Py_XDECREF(v);
+    runmodule = PyObject_GetAttrString(runpy, "_run_module_as_main");
+    if (runmodule == NULL) {
+        Py_DECREF(runpy);
+        return -1;
     }
-    v = _PySys_GetAttr(tstate, &_Py_ID(ps2));
-    if (v == NULL) {
-        _PySys_SetAttr(&_Py_ID(ps2), v = PyUnicode_FromString("... "));
-        Py_XDECREF(v);
+    module = PyUnicode_FromWideChar(modname, wcslen(modname));
+    if (module == NULL) {
+        Py_DECREF(runpy);
+        Py_DECREF(runmodule);
+        return -1;
     }
-
-#ifdef Py_REF_DEBUG
-    int show_ref_count = _Py_GetConfig()->show_ref_count;
-#endif
-    int err = 0;
-    int ret;
-    int nomem_count = 0;
-    do {
-        ret = PyRun_InteractiveOneObjectEx(fp, filename, flags);
-        if (ret == -1 && PyErr_Occurred()) {
-            /* Prevent an endless loop after multiple consecutive MemoryErrors
-             * while still allowing an interactive command to fail with a
-             * MemoryError. */
-            if (PyErr_ExceptionMatches(PyExc_MemoryError)) {
-                if (++nomem_count > 16) {
-                    PyErr_Clear();
-                    err = -1;
-                    break;
-                }
-            } else {
-                nomem_count = 0;
-            }
-            PyErr_Print();
-            flush_io();
-        } else {
-            nomem_count = 0;
-        }
-#ifdef Py_REF_DEBUG
-        if (show_ref_count) {
-            _PyDebug_PrintTotalRefs();
-        }
-#endif
-    } while (ret != E_EOF);
-    return err;
+    runargs = PyTuple_Pack(2, module, Py_False);
+    if (runargs == NULL) {
+        Py_DECREF(runpy);
+        Py_DECREF(runmodule);
+        Py_DECREF(module);
+        return -1;
+    }
+    _PyRuntime.signals.unhandled_keyboard_interrupt = 0;
+    result = PyObject_Call(runmodule, runargs, NULL);
+    if (!result && PyErr_Occurred() == PyExc_KeyboardInterrupt) {
+        _PyRuntime.signals.unhandled_keyboard_interrupt = 1;
+    }
+    Py_DECREF(runpy);
+    Py_DECREF(runmodule);
+    Py_DECREF(module);
+    Py_DECREF(runargs);
+    if (result == NULL) {
+        return -1;
+    }
+    Py_DECREF(result);
+    return 0;
 }
-
 
 int
 PyRun_InteractiveLoopFlags(FILE *fp, const char *filename, PyCompilerFlags *flags)
