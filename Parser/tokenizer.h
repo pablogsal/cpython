@@ -20,14 +20,6 @@ enum decoding_state {
     STATE_NORMAL
 };
 
-enum interactive_underflow_t {
-    /* Normal mode of operation: return a new token when asked in interactive mode */
-    IUNDERFLOW_NORMAL,
-    /* Forcefully return ENDMARKER when asked for a new token in interactive mode. This
-     * can be used to prevent the tokenizer to prompt the user for new tokens */
-    IUNDERFLOW_STOP,
-};
-
 struct token {
     int level;
     int lineno, col_offset, end_lineno, end_col_offset;
@@ -71,9 +63,6 @@ struct tok_state {
     char *buf;          /* Input buffer, or NULL; malloc'ed if fp != NULL or readline != NULL */
     char *cur;          /* Next character in buffer */
     char *inp;          /* End of data in buffer */
-    int fp_interactive; /* If the file descriptor is interactive */
-    char *interactive_src_start; /* The start of the source parsed so far in interactive mode */
-    char *interactive_src_end; /* The end of the source parsed so far in interactive mode */
     const char *end;    /* End of input buffer if buf != NULL */
     const char *start;  /* Start of current token if not NULL */
     int done;           /* E_OK normally, E_EOF at EOF, otherwise error code */
@@ -84,7 +73,6 @@ struct tok_state {
     int indstack[MAXINDENT];            /* Stack of indents */
     int atbol;          /* Nonzero if at begin of new line */
     int pendin;         /* Pending indents (if > 0) or dedents (if < 0) */
-    const char *prompt, *nextprompt;          /* For interactive prompting */
     int lineno;         /* Current line number */
     int first_lineno;   /* First line of a single line or multi line string
                            expression (cf. issue 16806) */
@@ -122,8 +110,6 @@ struct tok_state {
     int async_def_indent; /* Indentation level of the outermost 'async def'. */
     int async_def_nl;     /* =1 if the outermost 'async def' had at least one
                              NEWLINE token after it. */
-    /* How to proceed when asked for a new token in interactive mode */
-    enum interactive_underflow_t interactive_underflow;
     int report_warnings;
     // TODO: Factor this into its own thing
     tokenizer_mode tok_mode_stack[MAXFSTRINGLEVEL];
@@ -140,8 +126,7 @@ struct tok_state {
 extern struct tok_state *_PyTokenizer_FromString(const char *, int, int);
 extern struct tok_state *_PyTokenizer_FromUTF8(const char *, int, int);
 extern struct tok_state *_PyTokenizer_FromReadline(PyObject*, const char*, int, int);
-extern struct tok_state *_PyTokenizer_FromFile(FILE *, const char*,
-                                              const char *, const char *);
+extern struct tok_state *_PyTokenizer_FromFile(FILE *, const char*);
 extern void _PyTokenizer_Free(struct tok_state *);
 extern void _PyToken_Free(struct token *);
 extern void _PyToken_Init(struct token *);

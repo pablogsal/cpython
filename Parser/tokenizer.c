@@ -75,9 +75,6 @@ tok_new(void)
     if (tok == NULL)
         return NULL;
     tok->buf = tok->cur = tok->inp = NULL;
-    tok->fp_interactive = 0;
-    tok->interactive_src_start = NULL;
-    tok->interactive_src_end = NULL;
     tok->start = NULL;
     tok->end = NULL;
     tok->done = E_OK;
@@ -88,7 +85,6 @@ tok_new(void)
     tok->indstack[0] = 0;
     tok->atbol = 1;
     tok->pendin = 0;
-    tok->prompt = tok->nextprompt = NULL;
     tok->lineno = 0;
     tok->starting_col_offset = -1;
     tok->col_offset = -1;
@@ -108,7 +104,6 @@ tok_new(void)
     tok->async_def = 0;
     tok->async_def_indent = 0;
     tok->async_def_nl = 0;
-    tok->interactive_underflow = IUNDERFLOW_NORMAL;
     tok->str = NULL;
     tok->report_warnings = 1;
     tok->tok_extra_tokens = 0;
@@ -328,45 +323,6 @@ check_bom(int get_char(struct tok_state *),
     return 1;
 }
 
-static int
-tok_concatenate_interactive_new_line(struct tok_state *tok, const char *line) {
-    assert(tok->fp_interactive);
-
-    if (!line) {
-        return 0;
-    }
-
-    Py_ssize_t current_size = tok->interactive_src_end - tok->interactive_src_start;
-    Py_ssize_t line_size = strlen(line);
-    char last_char = line[line_size > 0 ? line_size - 1 : line_size];
-    if (last_char != '\n') {
-        line_size += 1;
-    }
-    char* new_str = tok->interactive_src_start;
-
-    new_str = PyMem_Realloc(new_str, current_size + line_size + 1);
-    if (!new_str) {
-        if (tok->interactive_src_start) {
-            PyMem_Free(tok->interactive_src_start);
-        }
-        tok->interactive_src_start = NULL;
-        tok->interactive_src_end = NULL;
-        tok->done = E_NOMEM;
-        return -1;
-    }
-    strcpy(new_str + current_size, line);
-    tok->implicit_newline = 0;
-    if (last_char != '\n') {
-        /* Last line does not end in \n, fake one */
-        new_str[current_size + line_size - 1] = '\n';
-        new_str[current_size + line_size] = '\0';
-        tok->implicit_newline = 1;
-    }
-    tok->interactive_src_start = new_str;
-    tok->interactive_src_end = new_str + current_size + line_size;
-    return 0;
-}
-
 /* Traverse and remember all f-string buffers, in order to be able to restore
    them after reallocating tok->buf */
 static void
@@ -568,10 +524,6 @@ tok_readline_recode(struct tok_state *tok) {
     memcpy(tok->inp, buf, buflen);
     tok->inp += buflen;
     *tok->inp = '\0';
-    if (tok->fp_interactive &&
-        tok_concatenate_interactive_new_line(tok, buf) == -1) {
-        goto error;
-    }
     Py_DECREF(line);
     return 1;
 error:
@@ -962,8 +914,7 @@ _PyTokenizer_FromUTF8(const char *str, int exec_input, int preserve_crlf)
 /* Set up tokenizer for file */
 
 struct tok_state *
-_PyTokenizer_FromFile(FILE *fp, const char* enc,
-                      const char *ps1, const char *ps2)
+_PyTokenizer_FromFile(FILE *fp, const char* enc)
 {
     struct tok_state *tok = tok_new();
     if (tok == NULL)
@@ -975,8 +926,6 @@ _PyTokenizer_FromFile(FILE *fp, const char* enc,
     tok->cur = tok->inp = tok->buf;
     tok->end = tok->buf + BUFSIZ;
     tok->fp = fp;
-    tok->prompt = ps1;
-    tok->nextprompt = ps2;
     if (enc != NULL) {
         /* Must copy encoding declaration since it
            gets copied into the parse tree. */
@@ -1008,9 +957,6 @@ _PyTokenizer_Free(struct tok_state *tok)
     if (tok->input) {
         PyMem_Free(tok->input);
     }
-    if (tok->interactive_src_start != NULL) {
-        PyMem_Free(tok->interactive_src_start);
-    }
     free_fstring_expressions(tok);
     PyMem_Free(tok);
 }
@@ -1037,10 +983,6 @@ tok_readline_raw(struct tok_state *tok)
         char *line = _Py_UniversalNewlineFgetsWithSize(tok->inp, n_chars, tok->fp, NULL, &line_size);
         if (line == NULL) {
             return 1;
-        }
-        if (tok->fp_interactive &&
-            tok_concatenate_interactive_new_line(tok, line) == -1) {
-            return 0;
         }
         tok->inp += line_size;
         if (tok->inp == tok->buf) {
@@ -1130,98 +1072,6 @@ tok_underflow_string(struct tok_state *tok) {
     tok->line_start = tok->cur;
     ADVANCE_LINENO();
     tok->inp = end;
-    return 1;
-}
-
-static int
-tok_underflow_interactive(struct tok_state *tok) {
-    if (tok->interactive_underflow == IUNDERFLOW_STOP) {
-        tok->done = E_INTERACT_STOP;
-        return 1;
-    }
-    char *newtok = PyOS_Readline(tok->fp ? tok->fp : stdin, stdout, tok->prompt);
-    if (newtok != NULL) {
-        char *translated = translate_newlines(newtok, 0, 0, tok);
-        PyMem_Free(newtok);
-        if (translated == NULL) {
-            return 0;
-        }
-        newtok = translated;
-    }
-    if (tok->encoding && newtok && *newtok) {
-        /* Recode to UTF-8 */
-        Py_ssize_t buflen;
-        const char* buf;
-        PyObject *u = translate_into_utf8(newtok, tok->encoding);
-        PyMem_Free(newtok);
-        if (u == NULL) {
-            tok->done = E_DECODE;
-            return 0;
-        }
-        buflen = PyBytes_GET_SIZE(u);
-        buf = PyBytes_AS_STRING(u);
-        newtok = PyMem_Malloc(buflen+1);
-        if (newtok == NULL) {
-            Py_DECREF(u);
-            tok->done = E_NOMEM;
-            return 0;
-        }
-        strcpy(newtok, buf);
-        Py_DECREF(u);
-    }
-    if (tok->fp_interactive &&
-        tok_concatenate_interactive_new_line(tok, newtok) == -1) {
-        PyMem_Free(newtok);
-        return 0;
-    }
-    if (tok->nextprompt != NULL) {
-        tok->prompt = tok->nextprompt;
-    }
-    if (newtok == NULL) {
-        tok->done = E_INTR;
-    }
-    else if (*newtok == '\0') {
-        PyMem_Free(newtok);
-        tok->done = E_EOF;
-    }
-    else if (tok->start != NULL) {
-        Py_ssize_t cur_multi_line_start = tok->multi_line_start - tok->buf;
-        remember_fstring_buffers(tok);
-        size_t size = strlen(newtok);
-        ADVANCE_LINENO();
-        if (!tok_reserve_buf(tok, size + 1)) {
-            PyMem_Free(tok->buf);
-            tok->buf = NULL;
-            PyMem_Free(newtok);
-            return 0;
-        }
-        memcpy(tok->cur, newtok, size + 1);
-        PyMem_Free(newtok);
-        tok->inp += size;
-        tok->multi_line_start = tok->buf + cur_multi_line_start;
-        restore_fstring_buffers(tok);
-    }
-    else {
-        remember_fstring_buffers(tok);
-        ADVANCE_LINENO();
-        PyMem_Free(tok->buf);
-        tok->buf = newtok;
-        tok->cur = tok->buf;
-        tok->line_start = tok->buf;
-        tok->inp = strchr(tok->buf, '\0');
-        tok->end = tok->inp + 1;
-        restore_fstring_buffers(tok);
-    }
-    if (tok->done != E_OK) {
-        if (tok->prompt != NULL) {
-            PySys_WriteStderr("\n");
-        }
-        return 0;
-    }
-
-    if (tok->tok_mode_stack_index && !update_fstring_expr(tok, 0)) {
-        return 0;
-    }
     return 1;
 }
 
@@ -1377,9 +1227,6 @@ tok_nextc(struct tok_state *tok)
         }
         else if (tok->fp == NULL) {
             rc = tok_underflow_string(tok);
-        }
-        else if (tok->prompt != NULL) {
-            rc = tok_underflow_interactive(tok);
         }
         else {
             rc = tok_underflow_file(tok);
@@ -1844,21 +1691,8 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         if (c == '#' || c == '\n' || c == '\r') {
             /* Lines with only whitespace and/or comments
                shouldn't affect the indentation and are
-               not passed to the parser as NEWLINE tokens,
-               except *totally* empty lines in interactive
-               mode, which signal the end of a command group. */
-            if (col == 0 && c == '\n' && tok->prompt != NULL) {
-                blankline = 0; /* Let it through */
-            }
-            else if (tok->prompt != NULL && tok->lineno == 1) {
-                /* In interactive mode, if the first line contains
-                   only spaces and/or a comment, let it through. */
-                blankline = 0;
-                col = altcol = 0;
-            }
-            else {
-                blankline = 1; /* Ignore completely */
-            }
+               not passed to the parser as NEWLINE tokens */
+            blankline = 1; /* Ignore completely */
             /* We can't jump back right here since we still
                may need to skip to the end of a comment */
         }
@@ -2039,10 +1873,6 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
             tok->comment_newline = blankline;
             return MAKE_TOKEN(COMMENT);
         }
-    }
-
-    if (tok->done == E_INTERACT_STOP) {
-        return MAKE_TOKEN(ENDMARKER);
     }
 
     /* Check for EOF and errors now */
@@ -2971,7 +2801,7 @@ _PyTokenizer_FindEncodingFilename(int fd, PyObject *filename)
     if (fp == NULL) {
         return NULL;
     }
-    tok = _PyTokenizer_FromFile(fp, NULL, NULL, NULL);
+    tok = _PyTokenizer_FromFile(fp, NULL);
     if (tok == NULL) {
         fclose(fp);
         return NULL;

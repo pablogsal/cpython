@@ -110,7 +110,7 @@ int
 _PyRun_InteractiveLoopObject(FILE *fp, PyObject *filename, PyCompilerFlags *flags)
 {
     PyObject *module, *runpy, *runmodule, *runargs, *result;
-    const wchar_t *modname = L"code";
+    const wchar_t *modname = L"repr";
     runpy = PyImport_ImportModule("runpy");
     if (runpy == NULL) {
         return -1;
@@ -165,7 +165,7 @@ PyRun_InteractiveLoopFlags(FILE *fp, const char *filename, PyCompilerFlags *flag
 }
 
 
-// Call _PyParser_ASTFromFile() with sys.stdin.encoding, sys.ps1 and sys.ps2
+// Call _PyParser_ASTFromFile() with sys.stdin.encoding
 static int
 pyrun_one_parse_ast(FILE *fp, PyObject *filename,
                     PyCompilerFlags *flags, PyArena *arena, mod_ty *pmod)
@@ -227,8 +227,7 @@ pyrun_one_parse_ast(FILE *fp, PyObject *filename,
 
     int errcode = 0;
     *pmod = _PyParser_ASTFromFile(fp, filename, encoding,
-                                  Py_single_input, ps1, ps2,
-                                  flags, &errcode, arena);
+                                  Py_single_input, flags, &errcode, arena);
     Py_XDECREF(ps1_obj);
     Py_XDECREF(ps2_obj);
     Py_XDECREF(encoding_obj);
@@ -1619,8 +1618,7 @@ pyrun_file(FILE *fp, PyObject *filename, int start, PyObject *globals,
     }
 
     mod_ty mod;
-    mod = _PyParser_ASTFromFile(fp, filename, NULL, start, NULL, NULL,
-                                flags, NULL, arena);
+    mod = _PyParser_ASTFromFile(fp, filename, NULL, start, flags, NULL, arena);
 
     if (closeit) {
         fclose(fp);

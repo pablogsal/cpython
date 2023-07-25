@@ -822,9 +822,6 @@ reset_parser_state_for_error_pass(Parser *p)
     }
     p->mark = 0;
     p->call_invalid_rules = 1;
-    // Don't try to get extra tokens in interactive mode when trying to
-    // raise specialized errors in the second pass.
-    p->tok->interactive_underflow = IUNDERFLOW_STOP;
 }
 
 static inline int
@@ -880,20 +877,15 @@ _PyPegen_run_parser(Parser *p)
 
 mod_ty
 _PyPegen_run_parser_from_file_pointer(FILE *fp, int start_rule, PyObject *filename_ob,
-                             const char *enc, const char *ps1, const char *ps2,
-                             PyCompilerFlags *flags, int *errcode, PyArena *arena)
+                             const char *enc, PyCompilerFlags *flags, int *errcode, PyArena *arena)
 {
-    struct tok_state *tok = _PyTokenizer_FromFile(fp, enc, ps1, ps2);
+    struct tok_state *tok = _PyTokenizer_FromFile(fp, enc);
     if (tok == NULL) {
         if (PyErr_Occurred()) {
             _PyPegen_raise_tokenizer_init_error(filename_ob);
             return NULL;
         }
         return NULL;
-    }
-    if (!tok->fp || ps1 != NULL || ps2 != NULL ||
-        PyUnicode_CompareWithASCIIString(filename_ob, "<stdin>") == 0) {
-        tok->fp_interactive = 1;
     }
     // This transfers the ownership to the tokenizer
     tok->filename = Py_NewRef(filename_ob);

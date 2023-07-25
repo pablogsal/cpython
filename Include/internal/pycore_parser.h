@@ -53,8 +53,6 @@ extern struct _mod* _PyParser_ASTFromFile(
     PyObject *filename_ob,
     const char *enc,
     int mode,
-    const char *ps1,
-    const char *ps2,
     PyCompilerFlags *flags,
     int *errcode,
     PyArena *arena);

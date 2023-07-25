@@ -153,11 +153,6 @@ _PyPegen_tokenize_full_source_to_check_for_errors(Parser *p) {
     // over generic syntax errors only if the line number of the error is
     // before the one that we had for the generic error.
 
-    // We don't want to tokenize to the end for interactive input
-    if (p->tok->prompt != NULL) {
-        return 0;
-    }
-
     PyObject *type, *value, *traceback;
     PyErr_Fetch(&type, &value, &traceback);
 
@@ -255,22 +250,13 @@ _PyPegen_raise_error(Parser *p, PyObject *errtype, int use_mark, const char *err
 static PyObject *
 get_error_line_from_tokenizer_buffers(Parser *p, Py_ssize_t lineno)
 {
-    /* If the file descriptor is interactive, the source lines of the current
-     * (multi-line) statement are stored in p->tok->interactive_src_start.
-     * If not, we're parsing from a string, which means that the whole source
-     * is stored in p->tok->str. */
     assert((p->tok->fp == NULL && p->tok->str != NULL) || p->tok->fp != NULL);
 
-    char *cur_line = p->tok->fp_interactive ? p->tok->interactive_src_start : p->tok->str;
-    if (cur_line == NULL) {
-        assert(p->tok->fp_interactive);
-        // We can reach this point if the tokenizer buffers for interactive source have not been
-        // initialized because we failed to decode the original source with the given locale.
-        return PyUnicode_FromStringAndSize("", 0);
-    }
+    char *cur_line = p->tok->str;
+    assert (cur_line != NULL);
 
     Py_ssize_t relative_lineno = p->starting_lineno ? lineno - p->starting_lineno + 1 : lineno;
-    const char* buf_end = p->tok->fp_interactive ? p->tok->interactive_src_end : p->tok->inp;
+    const char* buf_end = p->tok->inp;
 
     for (int i = 0; i < relative_lineno - 1; i++) {
         char *new_line = strchr(cur_line, '\n');
@@ -330,10 +316,7 @@ _PyPegen_raise_error_known_location(Parser *p, PyObject *errtype,
         goto error;
     }
 
-    if (p->tok->fp_interactive && p->tok->interactive_src_start != NULL) {
-        error_line = get_error_line_from_tokenizer_buffers(p, lineno);
-    }
-    else if (p->start_rule == Py_file_input) {
+    if (p->start_rule == Py_file_input) {
         error_line = _PyErr_ProgramDecodedTextObject(p->tok->filename,
                                                      (int) lineno, p->tok->encoding);
     }
