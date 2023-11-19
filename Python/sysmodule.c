@@ -2218,6 +2218,16 @@ sys_activate_stack_trampoline_impl(PyObject *module, const char *backend)
             }
         }
     }
+    else if (strcmp(backend, "perfjit") == 0) {
+        _PyPerf_Callbacks cur_cb;
+        _PyPerfTrampoline_GetCallbacks(&cur_cb);
+        if (cur_cb.write_state != _Py_perfmap_jit_callbacks.write_state) {
+            if (_PyPerfTrampoline_SetCallbacks(&_Py_perfmap_jit_callbacks) < 0 ) {
+                PyErr_SetString(PyExc_ValueError, "can't activate perf jit trampoline");
+                return NULL;
+            }
+        }
+    }
     else {
         PyErr_Format(PyExc_ValueError, "invalid backend: %s", backend);
         return NULL;
@@ -2320,35 +2330,14 @@ sys__get_cpu_count_config_impl(PyObject *module)
     return config->cpu_count;
 }
 
-static PerfMapState perf_map_state;
 
 PyAPI_FUNC(int) PyUnstable_PerfMapState_Init(void) {
 #ifndef MS_WINDOWS
-    char filename[100];
-    pid_t pid = getpid();
-    // Use nofollow flag to prevent symlink attacks.
-    int flags = O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW;
-#ifdef O_CLOEXEC
-    flags |= O_CLOEXEC;
-#endif
-    snprintf(filename, sizeof(filename) - 1, "/tmp/perf-%jd.map",
-                (intmax_t)pid);
-    int fd = open(filename, flags, 0600);
-    if (fd == -1) {
-        return -1;
-    }
-    else{
-        perf_map_state.perf_map = fdopen(fd, "a");
-        if (perf_map_state.perf_map == NULL) {
-            close(fd);
-            return -1;
+        _PyPerf_Callbacks cur_cb;
+        _PyPerfTrampoline_GetCallbacks(&cur_cb);
+        if (cur_cb.init_state != NULL) {
+            cur_cb.init_state();
         }
-    }
-    perf_map_state.map_lock = PyThread_allocate_lock();
-    if (perf_map_state.map_lock == NULL) {
-        fclose(perf_map_state.perf_map);
-        return -2;
-    }
 #endif
     return 0;
 }
@@ -2356,69 +2345,48 @@ PyAPI_FUNC(int) PyUnstable_PerfMapState_Init(void) {
 PyAPI_FUNC(int) PyUnstable_WritePerfMapEntry(
     const void *code_addr,
     unsigned int code_size,
-    const char *entry_name
+    PyCodeObject* code
 ) {
 #ifndef MS_WINDOWS
-    if (perf_map_state.perf_map == NULL) {
-        int ret = PyUnstable_PerfMapState_Init();
-        if (ret != 0){
-            return ret;
+        void *state = _PyPerfTrampoline_GetState();
+        if (state) {
+            if (Py_TYPE((PyObject*)code) != &PyCode_Type) {
+                PyErr_SetString(PyExc_TypeError, "code must be a code object");
+                return -1;
+            }
+            _PyPerf_Callbacks cur_cb;
+            _PyPerfTrampoline_GetCallbacks(&cur_cb);
+            if (cur_cb.write_state != NULL) {
+                cur_cb.write_state(state, code_addr, code_size, code);
+            }
         }
-    }
-    PyThread_acquire_lock(perf_map_state.map_lock, 1);
-    fprintf(perf_map_state.perf_map, "%" PRIxPTR " %x %s\n", (uintptr_t) code_addr, code_size, entry_name);
-    fflush(perf_map_state.perf_map);
-    PyThread_release_lock(perf_map_state.map_lock);
 #endif
     return 0;
 }
 
 PyAPI_FUNC(void) PyUnstable_PerfMapState_Fini(void) {
 #ifndef MS_WINDOWS
-    if (perf_map_state.perf_map != NULL) {
-        // close the file
-        PyThread_acquire_lock(perf_map_state.map_lock, 1);
-        fclose(perf_map_state.perf_map);
-        PyThread_release_lock(perf_map_state.map_lock);
-
-        // clean up the lock and state
-        PyThread_free_lock(perf_map_state.map_lock);
-        perf_map_state.perf_map = NULL;
-    }
+        void *state = _PyPerfTrampoline_GetState();
+        if (state) {
+            _PyPerf_Callbacks cur_cb;
+            _PyPerfTrampoline_GetCallbacks(&cur_cb);
+            if (cur_cb.free_state != NULL) {
+                cur_cb.free_state(state);
+            }
+        }
 #endif
 }
 
 PyAPI_FUNC(int) PyUnstable_CopyPerfMapFile(const char* parent_filename) {
 #ifndef MS_WINDOWS
-    FILE* from = fopen(parent_filename, "r");
-    if (!from) {
-        return -1;
-    }
-    if (perf_map_state.perf_map == NULL) {
-        int ret = PyUnstable_PerfMapState_Init();
-        if (ret != 0) {
-            return ret;
+        void *state = _PyPerfTrampoline_GetState();
+        if (state) {
+            _PyPerf_Callbacks cur_cb;
+            _PyPerfTrampoline_GetCallbacks(&cur_cb);
+            if (cur_cb.copy_file != NULL) {
+                cur_cb.copy_file(parent_filename);
+            }
         }
-    }
-    char buf[4096];
-    PyThread_acquire_lock(perf_map_state.map_lock, 1);
-    int fflush_result = 0, result = 0;
-    while (1) {
-        size_t bytes_read = fread(buf, 1, sizeof(buf), from);
-        size_t bytes_written = fwrite(buf, 1, bytes_read, perf_map_state.perf_map);
-        fflush_result = fflush(perf_map_state.perf_map);
-        if (fflush_result != 0 || bytes_read == 0 || bytes_written < bytes_read) {
-            result = -1;
-            goto close_and_release;
-        }
-        if (bytes_read < sizeof(buf) && feof(from)) {
-            goto close_and_release;
-        }
-    }
-close_and_release:
-    fclose(from);
-    PyThread_release_lock(perf_map_state.map_lock);
-    return result;
 #endif
     return 0;
 }

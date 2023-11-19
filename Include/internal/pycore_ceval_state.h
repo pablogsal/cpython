@@ -43,6 +43,7 @@ struct trampoline_api_st {
     void (*write_state)(void* state, const void *code_addr,
                         unsigned int code_size, PyCodeObject* code);
     int (*free_state)(void* state);
+    int (*copy_file)(const char* filename);
     void *state;
 };
 #endif

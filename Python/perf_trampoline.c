@@ -145,6 +145,19 @@ any DWARF information available for them).
 #include <sys/types.h>
 #include <unistd.h>               // sysconf()
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+
 #if defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
 #define PY_HAVE_INVALIDATE_ICACHE
 
@@ -195,6 +208,71 @@ typedef struct trampoline_api_st trampoline_api_t;
 #define perf_map_file _PyRuntime.ceval.perf.map_file
 #define persist_after_fork _PyRuntime.ceval.perf.persist_after_fork
 
+static PerfMapState perf_map_state;
+
+static int perf_map_copy_file(const char* parent_filename) {
+    FILE* from = fopen(parent_filename, "r");
+    if (!from) {
+        return -1;
+    }
+    void* state = _PyPerfTrampoline_GetState();
+    if (state == NULL) {
+        int ret = PyUnstable_PerfMapState_Init();
+        if (ret != 0) {
+            return ret;
+        }
+    }
+    char buf[4096];
+    PyThread_acquire_lock(perf_map_state.map_lock, 1);
+    int fflush_result = 0, result = 0;
+    while (1) {
+        size_t bytes_read = fread(buf, 1, sizeof(buf), from);
+        size_t bytes_written = fwrite(buf, 1, bytes_read, perf_map_state.perf_map);
+        fflush_result = fflush(perf_map_state.perf_map);
+        if (fflush_result != 0 || bytes_read == 0 || bytes_written < bytes_read) {
+            result = -1;
+            goto close_and_release;
+        }
+        if (bytes_read < sizeof(buf) && feof(from)) {
+            goto close_and_release;
+        }
+    }
+close_and_release:
+    fclose(from);
+    PyThread_release_lock(perf_map_state.map_lock);
+    return result;
+}
+
+static void* perf_map_init(void) {
+    char filename[100];
+    pid_t pid = getpid();
+    // Use nofollow flag to prevent symlink attacks.
+    int flags = O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW;
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+    snprintf(filename, sizeof(filename) - 1, "/tmp/perf-%jd.map",
+                (intmax_t)pid);
+    int fd = open(filename, flags, 0600);
+    if (fd == -1) {
+        return NULL;
+    }
+    else{
+        perf_map_state.perf_map = fdopen(fd, "a");
+        if (perf_map_state.perf_map == NULL) {
+            close(fd);
+            return NULL;
+        }
+    }
+    perf_map_state.map_lock = PyThread_allocate_lock();
+    if (perf_map_state.map_lock == NULL) {
+        fclose(perf_map_state.perf_map);
+        return NULL;
+    }
+    return &perf_map_state;
+}
+
+
 static void
 perf_map_write_entry(void *state, const void *code_addr,
                          unsigned int code_size, PyCodeObject *co)
@@ -213,14 +291,379 @@ perf_map_write_entry(void *state, const void *code_addr,
         return;
     }
     snprintf(perf_map_entry, perf_map_entry_size, "py::%s:%s", entry, filename);
-    PyUnstable_WritePerfMapEntry(code_addr, code_size, perf_map_entry);
+
+    if (perf_map_state.perf_map == NULL) {
+        int ret = PyUnstable_PerfMapState_Init();
+        if(ret != 0){
+            return;
+        }
+    }
+    PyThread_acquire_lock(perf_map_state.map_lock, 1);
+    fprintf(perf_map_state.perf_map, "%" PRIxPTR " %x %s\n", (uintptr_t) code_addr, code_size, perf_map_entry);
+    fflush(perf_map_state.perf_map);
+    PyThread_release_lock(perf_map_state.map_lock);
+
+
     PyMem_RawFree(perf_map_entry);
 }
 
+
+static int perf_map_fini(void* state) {
+    if (perf_map_state.perf_map != NULL) {
+        // close the file
+        PyThread_acquire_lock(perf_map_state.map_lock, 1);
+        fclose(perf_map_state.perf_map);
+        PyThread_release_lock(perf_map_state.map_lock);
+
+        // clean up the lock and state
+        PyThread_free_lock(perf_map_state.map_lock);
+        perf_map_state.perf_map = NULL;
+    }
+    return 0;
+}
+
 _PyPerf_Callbacks _Py_perfmap_callbacks = {
-    NULL,
+    &perf_map_init,
     &perf_map_write_entry,
-    NULL,
+    &perf_map_fini,
+    &perf_map_copy_file,
+};
+
+
+// Jitdump perf format
+
+typedef struct {
+    FILE* perf_map;
+    PyThread_type_lock map_lock;
+    void* mapped_buffer;
+    size_t mapped_size;
+} PerfMapJitState;
+
+
+static PerfMapJitState perf_jit_map_state;
+
+typedef uint64_t uword;
+typedef const char* CodeComments;
+
+#define Pd "d"
+#define MB (1024 * 1024)
+
+#define EM_386      3
+#define EM_X86_64   62
+#define EM_ARM      40
+#define EM_AARCH64  183
+#define EM_RISCV    243
+
+#define TARGET_ARCH_IA32   0
+#define TARGET_ARCH_X64    0
+#define TARGET_ARCH_ARM    0
+#define TARGET_ARCH_ARM64  0
+#define TARGET_ARCH_RISCV32 0
+#define TARGET_ARCH_RISCV64 0
+
+#define FLAG_generate_perf_jitdump 0
+#define FLAG_write_protect_code 0
+#define FLAG_write_protect_vm_isolate 0
+#define FLAG_code_comments 0
+
+#define UNREACHABLE()
+
+static uword GetElfMachineArchitecture(void) {
+#if TARGET_ARCH_IA32
+    return EM_386;
+#elif TARGET_ARCH_X64
+    return EM_X86_64;
+#elif TARGET_ARCH_ARM
+    return EM_ARM;
+#elif TARGET_ARCH_ARM64
+    return EM_AARCH64;
+#elif TARGET_ARCH_RISCV32 || TARGET_ARCH_RISCV64
+    return EM_RISCV;
+#else
+    UNREACHABLE();
+    return 0;
+#endif
+}
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t size;
+    uint32_t elf_mach_target;
+    uint32_t reserved;
+    uint32_t process_id;
+    uint64_t time_stamp;
+    uint64_t flags;
+} Header;
+
+ enum PerfEvent {
+    kLoad = 0,
+    kMove = 1,
+    kDebugInfo = 2,
+    kClose = 3,
+    kUnwindingInfo = 4
+};
+
+struct BaseEvent {
+    uint32_t event;
+    uint32_t size;
+    uint64_t time_stamp;
+  };
+
+typedef struct {
+    struct BaseEvent base;
+    uint32_t process_id;
+    uint32_t thread_id;
+    uint64_t vma;
+    uint64_t code_address;
+    uint64_t code_size;
+    uint64_t code_id;
+} CodeLoadEvent;
+
+typedef struct {
+    struct BaseEvent base;
+    uint64_t unwind_data_size;
+    uint64_t eh_frame_hdr_size;
+    uint64_t mapped_size;
+} CodeUnwindingInfoEvent;
+
+const intptr_t kMillisecondsPerSecond = 1000;
+const intptr_t kMicrosecondsPerMillisecond = 1000;
+const intptr_t kMicrosecondsPerSecond = (kMicrosecondsPerMillisecond * kMillisecondsPerSecond);
+const intptr_t kNanosecondsPerMicrosecond = 1000;
+const intptr_t kNanosecondsPerMillisecond = (kNanosecondsPerMicrosecond * kMicrosecondsPerMillisecond);
+const intptr_t kNanosecondsPerSecond = (kNanosecondsPerMicrosecond * kMicrosecondsPerSecond);
+
+// Dwarf encoding constants
+
+static int code_id_ = 0;
+
+uint8_t kUData4 = 0x03;
+uint8_t kSData4 = 0x0b;
+uint8_t kPcRel = 0x10;
+uint8_t kDataRel = 0x30;
+uint8_t kOmit = 0xff;
+static const int kEhFrameHdrSize = 20;
+typedef struct {
+    unsigned char version;
+    unsigned char eh_frame_ptr_enc;
+    unsigned char	fde_count_enc;
+    unsigned char	table_enc;
+    char eh_frame_ptr[20-4];
+} EhFrame;
+
+static int64_t get_current_monotonic_ticks(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        UNREACHABLE();
+        return 0;
+    }
+    // Convert to nanoseconds.
+    int64_t result = ts.tv_sec;
+    result *= kNanosecondsPerSecond;
+    result += ts.tv_nsec;
+    return result;
+}
+
+int64_t get_current_time_microseconds(void) {
+  // gettimeofday has microsecond resolution.
+  struct timeval tv;
+  if (gettimeofday(&tv, NULL) < 0) {
+    UNREACHABLE();
+    return 0;
+  }
+  return ((int64_t)(tv.tv_sec) * 1000000) + tv.tv_usec;
+}
+
+
+static int64_t round_up(int64_t value, int64_t multiple) {
+    if (multiple == 0) {
+        // Avoid division by zero
+        return value;
+    }
+
+    int64_t remainder = value % multiple;
+    if (remainder == 0) {
+        // Value is already a multiple of 'multiple'
+        return value;
+    }
+
+    // Calculate the difference to the next multiple
+    int64_t difference = multiple - remainder;
+
+    // Add the difference to the value
+    int64_t rounded_up_value = value + difference;
+
+    return rounded_up_value;
+}
+
+
+static void perf_map_jit_write_fully(const void* buffer, size_t size) {
+    FILE* out_file = perf_jit_map_state.perf_map;
+    const char* ptr = (const char*)(buffer);
+    while (size > 0) {
+        const size_t written = fwrite(ptr, 1, size, out_file);
+        if (written == 0) {
+            UNREACHABLE();
+            break;
+        }
+        size -= written;
+        ptr += written;
+    }
+}
+
+static void perf_map_jit_write_header(int pid, FILE* out_file) {
+    Header header;
+    header.magic = 0x4A695444;
+    header.version = 1;
+    header.size = sizeof(Header);
+    header.elf_mach_target = GetElfMachineArchitecture();
+    header.process_id = pid;
+    header.time_stamp = get_current_time_microseconds();
+    header.flags = 0;
+    perf_map_jit_write_fully(&header, sizeof(header));
+}
+
+static void* perf_map_jit_init(void) {
+    char filename[100];
+    int pid = getpid();
+    snprintf(filename, sizeof(filename) - 1, "/tmp/jit-%d.dump", pid);
+    const int fd = open(filename, O_CREAT | O_TRUNC | O_RDWR, 0666);
+    if (fd == -1) {
+        return NULL;
+    }
+
+    const long page_size = sysconf(_SC_PAGESIZE);  // NOLINT(runtime/int)
+    if (page_size == -1) {
+        close(fd);
+        return NULL;
+    }
+
+    // The perf jit interface forces us to map the first page of the file
+    // to signal that we are using the interface.
+    perf_jit_map_state.mapped_buffer = mmap(NULL, page_size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, 0);
+    if (perf_jit_map_state.mapped_buffer == NULL) {
+        close(fd);
+        return NULL;
+    }
+    perf_jit_map_state.mapped_size = page_size;
+    perf_jit_map_state.perf_map = fdopen(fd, "w+");
+    if (perf_jit_map_state.perf_map == NULL) {
+        close(fd);
+        return NULL;
+    }
+    setvbuf(perf_jit_map_state.perf_map, NULL, _IOFBF, 2 * MB);
+    perf_map_jit_write_header(pid, perf_jit_map_state.perf_map);
+
+    perf_jit_map_state.map_lock = PyThread_allocate_lock();
+    if (perf_jit_map_state.map_lock == NULL) {
+        fclose(perf_map_state.perf_map);
+        return NULL;
+    }
+    return &perf_jit_map_state;
+}
+
+static void perf_map_jit_write_entry(void *state, const void *code_addr,
+                         unsigned int code_size, PyCodeObject *co)
+{
+
+    if (perf_jit_map_state.perf_map == NULL) {
+        void* ret = perf_map_jit_init();
+        if(ret == NULL){
+            return;
+        }
+    }
+
+    const char *entry = "";
+    if (co->co_qualname != NULL) {
+        entry = PyUnicode_AsUTF8(co->co_qualname);
+    }
+    const char *filename = "";
+    if (co->co_filename != NULL) {
+        filename = PyUnicode_AsUTF8(co->co_filename);
+    }
+
+
+    size_t perf_map_entry_size = snprintf(NULL, 0, "py::%s:%s", entry, filename) + 1;
+    char* perf_map_entry = (char*) PyMem_RawMalloc(perf_map_entry_size);
+    if (perf_map_entry == NULL) {
+        return;
+    }
+    snprintf(perf_map_entry, perf_map_entry_size, "py::%s:%s", entry, filename);
+
+    const size_t name_length = strlen(perf_map_entry);
+    uword base = (uword)code_addr;
+    uword size = code_size;
+
+    // Write the code unwinding info event.
+    CodeUnwindingInfoEvent ev2;
+    EhFrame f;
+
+    ev2.base.event = kUnwindingInfo;
+    ev2.base.time_stamp = get_current_monotonic_ticks();
+    ev2.eh_frame_hdr_size = kEhFrameHdrSize;
+
+    ev2.unwind_data_size = kEhFrameHdrSize;
+    ev2.mapped_size = 0;
+
+    int content_size = sizeof(ev2) + ev2.unwind_data_size;
+    int padding_size = round_up(content_size, 8) - content_size;
+    ev2.base.size = content_size + padding_size;
+
+    perf_map_jit_write_fully(&ev2, sizeof(ev2));
+
+    f.version = 1;
+    f.eh_frame_ptr_enc = kSData4 | kPcRel;
+    f.fde_count_enc = kUData4;
+    f.table_enc = kSData4 | kDataRel;
+    for (int i = 0; i < kEhFrameHdrSize - 4; i++) {
+        f.eh_frame_ptr[i] = 0;
+    }
+    perf_map_jit_write_fully(&f, sizeof(f));
+    char padding_bytes[] = "\0\0\0\0\0\0\0\0";
+    perf_map_jit_write_fully(padding_bytes, padding_size);
+
+    // Write the code load event.
+    CodeLoadEvent ev;
+    ev.base.event = kLoad;
+    ev.base.size = sizeof(ev) + (name_length+1) + size;
+    ev.base.time_stamp = get_current_monotonic_ticks();
+    ev.process_id = getpid();
+    ev.thread_id = syscall(SYS_gettid);
+    ev.vma = base;
+    ev.code_address = base;
+    ev.code_size = size;
+    ev.code_id = code_id_++;
+
+    perf_map_jit_write_fully(&ev, sizeof(ev));
+    perf_map_jit_write_fully(perf_map_entry, name_length+1);
+    perf_map_jit_write_fully((void*)(base), size);
+    return;
+}
+
+static int perf_map_jit_fini(void* state) {
+    if (perf_jit_map_state.perf_map != NULL) {
+        // close the file
+        PyThread_acquire_lock(perf_jit_map_state.map_lock, 1);
+        fclose(perf_jit_map_state.perf_map);
+        PyThread_release_lock(perf_jit_map_state.map_lock);
+
+        // clean up the lock and state
+        PyThread_free_lock(perf_jit_map_state.map_lock);
+        perf_jit_map_state.perf_map = NULL;
+    }
+    if (perf_jit_map_state.mapped_buffer != NULL) {
+        munmap(perf_jit_map_state.mapped_buffer, perf_jit_map_state.mapped_size);
+    }
+    return 0;
+}
+
+
+_PyPerf_Callbacks _Py_perfmap_jit_callbacks = {
+    &perf_map_jit_init,
+    &perf_map_jit_write_entry,
+    &perf_map_jit_fini,
+    NULL
 };
 
 static int
@@ -256,7 +699,7 @@ new_code_arena(void)
     for (size_t i = 0; i < n_copies; i++) {
         memcpy(memory + i * code_size, start, code_size * sizeof(char));
     }
-    // Some systems may prevent us from creating executable code on the fly.
+    // Some systems may prevent us from creating executable /code on the fly.
     int res = mprotect(memory, mem_size, PROT_READ | PROT_EXEC);
     if (res == -1) {
         PyErr_SetFromErrno(PyExc_OSError);
@@ -398,11 +841,27 @@ _PyPerfTrampoline_GetCallbacks(_PyPerf_Callbacks *callbacks)
         return;
     }
 #ifdef PY_HAVE_PERF_TRAMPOLINE
+    if (perf_status != PERF_STATUS_OK) {
+        callbacks->init_state = NULL;
+        callbacks->write_state = NULL;
+        callbacks->free_state = NULL;
+        callbacks->copy_file = NULL;
+        return;
+    }
     callbacks->init_state = trampoline_api.init_state;
     callbacks->write_state = trampoline_api.write_state;
     callbacks->free_state = trampoline_api.free_state;
+    callbacks->copy_file = trampoline_api.copy_file;
 #endif
-    return;
+}
+
+void *
+_PyPerfTrampoline_GetState(void)
+{
+#ifdef PY_HAVE_PERF_TRAMPOLINE
+    return trampoline_api.state;
+#endif
+    return NULL;
 }
 
 int
@@ -418,6 +877,7 @@ _PyPerfTrampoline_SetCallbacks(_PyPerf_Callbacks *callbacks)
     trampoline_api.init_state = callbacks->init_state;
     trampoline_api.write_state = callbacks->write_state;
     trampoline_api.free_state = callbacks->free_state;
+    trampoline_api.copy_file = callbacks->copy_file;
     trampoline_api.state = NULL;
     perf_status = PERF_STATUS_OK;
 #endif
@@ -450,6 +910,7 @@ _PyPerfTrampoline_Init(int activate)
         }
         perf_status = PERF_STATUS_OK;
     }
+
 #endif
     return 0;
 }
