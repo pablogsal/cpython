@@ -2379,13 +2379,10 @@ PyAPI_FUNC(void) PyUnstable_PerfMapState_Fini(void) {
 
 PyAPI_FUNC(int) PyUnstable_CopyPerfMapFile(const char* parent_filename) {
 #ifndef MS_WINDOWS
-        void *state = _PyPerfTrampoline_GetState();
-        if (state) {
-            _PyPerf_Callbacks cur_cb;
-            _PyPerfTrampoline_GetCallbacks(&cur_cb);
-            if (cur_cb.copy_file != NULL) {
-                cur_cb.copy_file(parent_filename);
-            }
+        _PyPerf_Callbacks cur_cb;
+        _PyPerfTrampoline_GetCallbacks(&cur_cb);
+        if (cur_cb.copy_file != NULL) {
+            cur_cb.copy_file(parent_filename);
         }
 #endif
     return 0;

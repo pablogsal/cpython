@@ -318,6 +318,7 @@ static int perf_map_fini(void* state) {
         // clean up the lock and state
         PyThread_free_lock(perf_map_state.map_lock);
         perf_map_state.perf_map = NULL;
+        trampoline_api.state = NULL;
     }
     return 0;
 }
@@ -655,6 +656,7 @@ static int perf_map_jit_fini(void* state) {
     if (perf_jit_map_state.mapped_buffer != NULL) {
         munmap(perf_jit_map_state.mapped_buffer, perf_jit_map_state.mapped_size);
     }
+    trampoline_api.state = NULL;
     return 0;
 }
 
@@ -807,6 +809,9 @@ default_eval:
 int PyUnstable_PerfTrampoline_CompileCode(PyCodeObject *co)
 {
 #ifdef PY_HAVE_PERF_TRAMPOLINE
+    if (perf_status != PERF_STATUS_OK) {
+        return -1;
+    }
     py_trampoline f = NULL;
     assert(extra_code_index != -1);
     int ret = _PyCode_GetExtra((PyObject *)co, extra_code_index, (void **)&f);
@@ -911,6 +916,16 @@ _PyPerfTrampoline_Init(int activate)
         perf_status = PERF_STATUS_OK;
     }
 
+    if (trampoline_api.init_state) {
+        trampoline_api.state = trampoline_api.init_state();
+        if (trampoline_api.state == NULL) {
+            return -1;
+        }
+    }
+    else {
+        trampoline_api.state = NULL;
+    }
+
 #endif
     return 0;
 }
@@ -947,15 +962,17 @@ _PyPerfTrampoline_AfterFork_Child(void)
         char filename[256];
         pid_t parent_pid = getppid();
         snprintf(filename, sizeof(filename), "/tmp/perf-%d.map", parent_pid);
-        if (PyUnstable_CopyPerfMapFile(filename) != 0) {
+        if ( PyUnstable_CopyPerfMapFile(filename) != 0) {
             return PyStatus_Error("Failed to copy perf map file.");
         }
     } else {
+        PyUnstable_PerfMapState_Fini();
         // Restart trampoline in file in child.
         int was_active = _PyIsPerfTrampolineActive();
         _PyPerfTrampoline_Fini();
         if (was_active) {
             _PyPerfTrampoline_Init(1);
+            trampoline_api.init_state();
         }
     }
 #endif

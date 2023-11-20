@@ -383,6 +383,29 @@ class TestPerfProfilerMixin:
             self.assertNotIn(f"py::bar:{script}", stdout)
             self.assertNotIn(f"py::baz:{script}", stdout)
 
+@unittest.skipUnless(perf_command_works(), "perf command doesn't work")
+@unittest.skipUnless(
+    is_unwinding_reliable_with_frame_pointers(),
+    "Unwinding is unreliable with frame pointers",
+)
+class TestPerfProfiler(unittest.TestCase, TestPerfProfilerMixin):
+    def run_perf(self, script_dir, script, activate_trampoline=True):
+        if activate_trampoline:
+            return run_perf(script_dir, sys.executable, "-Xperf", script)
+        return run_perf(script_dir, sys.executable, script)
+
+    def setUp(self):
+        super().setUp()
+        self.perf_files = set(pathlib.Path("/tmp/").glob("perf-*.map"))
+
+    def tearDown(self) -> None:
+        super().tearDown()
+        files_to_delete = (
+            set(pathlib.Path("/tmp/").glob("perf-*.map")) - self.perf_files
+        )
+        for file in files_to_delete:
+            file.unlink()
+
     def test_pre_fork_compile(self):
         code = """if 1:
                 import sys
@@ -400,7 +423,7 @@ class TestPerfProfilerMixin:
                     foo_fork()
 
                 def foo():
-                    pass
+                    import time; time.sleep(1)
 
                 def bar():
                     foo()
@@ -455,30 +478,6 @@ class TestPerfProfilerMixin:
         for line in perf_file_lines:
             if f"py::foo_fork:{script}" in line or f"py::bar_fork:{script}" in line:
                 self.assertIn(line, child_perf_file_contents)
-
-
-@unittest.skipUnless(perf_command_works(), "perf command doesn't work")
-@unittest.skipUnless(
-    is_unwinding_reliable_with_frame_pointers(),
-    "Unwinding is unreliable with frame pointers",
-)
-class TestPerfProfiler(unittest.TestCase, TestPerfProfilerMixin):
-    def run_perf(self, script_dir, script, activate_trampoline=True):
-        if activate_trampoline:
-            return run_perf(script_dir, sys.executable, "-Xperf", script)
-        return run_perf(script_dir, sys.executable, script)
-
-    def setUp(self):
-        super().setUp()
-        self.perf_files = set(pathlib.Path("/tmp/").glob("perf-*.map"))
-
-    def tearDown(self) -> None:
-        super().tearDown()
-        files_to_delete = (
-            set(pathlib.Path("/tmp/").glob("perf-*.map")) - self.perf_files
-        )
-        for file in files_to_delete:
-            file.unlink()
 
 
 @unittest.skipUnless(perf_command_works(), "perf command doesn't work")
