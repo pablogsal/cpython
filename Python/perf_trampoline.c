@@ -580,7 +580,31 @@ enum {
     DWRF_CFA_offset = 0x80
 };
 
-enum { DWRF_EH_PE_udata4 = 3, DWRF_EH_PE_textrel = 0x20 };
+enum
+  {
+    DWRF_EH_PE_absptr = 0x00,
+    DWRF_EH_PE_omit = 0xff,
+
+    /* FDE data encoding.  */
+    DWRF_EH_PE_uleb128 = 0x01,
+    DWRF_EH_PE_udata2 = 0x02,
+    DWRF_EH_PE_udata4 = 0x03,
+    DWRF_EH_PE_udata8 = 0x04,
+    DWRF_EH_PE_sleb128 = 0x09,
+    DWRF_EH_PE_sdata2 = 0x0a,
+    DWRF_EH_PE_sdata4 = 0x0b,
+    DWRF_EH_PE_sdata8 = 0x0c,
+    DWRF_EH_PE_signed = 0x08,
+
+    /* FDE flags.  */
+    DWRF_EH_PE_pcrel = 0x10,
+    DWRF_EH_PE_textrel = 0x20,
+    DWRF_EH_PE_datarel = 0x30,
+    DWRF_EH_PE_funcrel = 0x40,
+    DWRF_EH_PE_aligned = 0x50,
+
+    DWRF_EH_PE_indirect = 0x80
+  };
 
 enum { DWRF_TAG_compile_unit = 0x11 };
 
@@ -703,7 +727,7 @@ elf_init_ehframe(ELFObjectContext* ctx)
                  DWRF_SV(-(int64_t)sizeof(uintptr_t)); /* Data alignment factor. */
                  DWRF_U8(DWRF_REG_RA); /* Return address register. */
                  DWRF_UV(1);
-                 DWRF_U8(DWRF_EH_PE_textrel | DWRF_EH_PE_udata4); /* Augmentation data. */
+                 DWRF_U8(DWRF_EH_PE_pcrel | DWRF_EH_PE_sdata4); /* Augmentation data. */
                  DWRF_U8(DWRF_CFA_def_cfa); DWRF_UV(DWRF_REG_SP); DWRF_UV(sizeof(uintptr_t));
                  DWRF_U8(DWRF_CFA_offset|DWRF_REG_RA); DWRF_UV(1);
                  DWRF_ALIGNNOP(sizeof(uintptr_t));
@@ -713,7 +737,7 @@ elf_init_ehframe(ELFObjectContext* ctx)
 
     /* Emit DWARF EH FDE. */
     DWRF_SECTION(FDE, DWRF_U32((uint32_t)(p - framep)); /* Offset to CIE. */
-                 DWRF_U32(0x0); /* Machine code offset relative to .text. */
+                 DWRF_U32(-0x30); /* Machine code offset relative to .text. */
                  DWRF_U32(ctx->code_size); /* Machine code length. */
                  DWRF_U8(0); /* Augmentation data. */
     /* Registers saved in CFRAME. */
