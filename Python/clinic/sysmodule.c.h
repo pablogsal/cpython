@@ -480,6 +480,14 @@ exit:
     return return_value;
 }
 
+PyDoc_STRVAR(sys_setassertrewritter__doc__,
+"setassertrewritter($module, rewriter, /)\n"
+"--\n"
+"\n");
+
+#define SYS_SETASSERTREWRITTER_METHODDEF    \
+    {"setassertrewritter", (PyCFunction)sys_setassertrewritter, METH_O, sys_setassertrewritter__doc__},
+
 PyDoc_STRVAR(sys_setrecursionlimit__doc__,
 "setrecursionlimit($module, limit, /)\n"
 "--\n"
@@ -1614,4 +1622,4 @@ exit:
 #ifndef SYS_GETANDROIDAPILEVEL_METHODDEF
     #define SYS_GETANDROIDAPILEVEL_METHODDEF
 #endif /* !defined(SYS_GETANDROIDAPILEVEL_METHODDEF) */
-/*[clinic end generated code: output=9cc9069aef1482bc input=a9049054013a1b77]*/
+/*[clinic end generated code: output=424794710ea8891b input=a9049054013a1b77]*/
