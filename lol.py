@@ -4,9 +4,13 @@ import rewrite
 def foo(x):
     r = rewrite.AssertionRewriter()
     r.visit(x)
-    print(ast.dump(x))
-    return x
-sys.setassertrewritter(foo)
+    x2 = ast.Module(r.statements)
+    print("Modified ast code: ")
+    print(ast.unparse(x2))
+    print()
+    return x2
+
+# sys.setassertrewritter(foo)
 
 import lel
 

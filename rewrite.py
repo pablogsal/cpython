@@ -135,7 +135,6 @@ class AssertionRewriter(ast.NodeVisitor):
         self.variables_overwrite: defaultdict[tuple[ast.AST, ...], Dict[str, str]] = (
             defaultdict(dict)
         )
-
     def run(self, mod: ast.Assert) -> None:
         """Find all assert statements in *mod* and rewrite them."""
         return self.visit(mod)
@@ -163,7 +162,7 @@ class AssertionRewriter(ast.NodeVisitor):
 
     def helper(self, name: str, *args: ast.expr) -> ast.expr:
         """Call a helper in this module."""
-        py_name = ast.Name("@pytest_ar", ast.Load())
+        py_name = ast.Name("@sys", ast.Load())
         attr = ast.Attribute(py_name, name, ast.Load())
         return ast.Call(attr, list(args), [])
 
@@ -217,9 +216,13 @@ class AssertionRewriter(ast.NodeVisitor):
 
     def generic_visit(self, node: ast.AST) -> Tuple[ast.Name, str]:
         """Handle expressions we don't have custom code for."""
-        assert isinstance(node, ast.expr)
         res = self.assign(node)
         return res, self.explanation_param(self.display(res))
+
+    def visit_Module(self, mod: ast.Module) -> List:
+        assert(len(mod.body) == 1)
+        assert(isinstance(mod.body[0], ast.Assert))
+        self.visit(mod.body[0])
 
     def visit_Assert(self, assert_: ast.Assert) -> List[ast.stmt]:
         """Return the AST statements to replace the ast.Assert instance.
@@ -229,7 +232,7 @@ class AssertionRewriter(ast.NodeVisitor):
         raises an assertion error with a detailed explanation in case
         the expression is false.
         """
-        self.statements: List[ast.stmt] = []
+        self.statements: List[ast.stmt] = [ast.Import( names=[ast.alias(name='rewrite', asname='@sys'), ast.alias(name='builtins', asname="@py_builtins")])]
         self.variables: List[str] = []
         self.variable_counter = itertools.count()
 
@@ -253,7 +256,10 @@ class AssertionRewriter(ast.NodeVisitor):
         template = ast.BinOp(assertmsg, ast.Add(), ast.Constant(explanation))
         msg = self.pop_format_context(template)
         fmt = self.helper("_format_explanation", msg)
-        err_name = ast.Name("AssertionError", ast.Load())
+        err_name = ast.Attribute(
+            value=ast.Name(id='@py_builtins', ctx=ast.Load()),
+            attr='AssertionError',
+            ctx=ast.Load())
         exc = ast.Call(err_name, [fmt], [])
         raise_ = ast.Raise(exc, None)
 
@@ -268,7 +274,6 @@ class AssertionRewriter(ast.NodeVisitor):
         for stmt in self.statements:
             for node in traverse_node(stmt):
                 ast.copy_location(node, assert_)
-        return ast.Module(self.statements)
 
     def visit_NamedExpr(self, name: ast.NamedExpr) -> Tuple[ast.NamedExpr, str]:
         # This method handles the 'walrus operator' repr of the target
@@ -491,3 +496,30 @@ def get_cache_dir(file_path: Path) -> Path:
     else:
         # classic pycache directory
         return file_path.parent / "__pycache__"
+
+def repr_compare(op, left, right):
+    print(op, left, right)
+
+def _call_reprcompare(
+    ops: Sequence[str],
+    results: Sequence[bool],
+    expls: Sequence[str],
+    each_obj: Sequence[object],
+) -> str:
+    for i, res, expl in zip(range(len(ops)), results, expls):
+        try:
+            done = not res
+        except Exception:
+            done = True
+        if done:
+            break
+    custom = repr_compare(ops[i], each_obj[i], each_obj[i + 1])
+    if custom is not None:
+        return custom
+    return expl
+
+def _saferepr(arg):
+    return arg
+
+def _format_explanation(arg):
+    return arg

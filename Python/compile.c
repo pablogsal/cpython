@@ -134,6 +134,7 @@ compiler_setup(compiler *c, mod_ty mod, PyObject *filename,
         }
         return ERROR;
     }
+    c->c_in_assert_rewrite = 0;
     return SUCCESS;
 }
 

@@ -480,7 +480,6 @@ _PySymtable_Build(mod_ty mod, PyObject *filename, _PyFutureFeatures *future)
     return NULL;
 }
 
-
 void
 _PySymtable_Free(struct symtable *st)
 {
@@ -542,6 +541,17 @@ _PyST_GetSymbol(PySTEntryObject *ste, PyObject *name)
         return -1;
     }
     return symbol;
+}
+
+int
+_PyST_RegisterSymbol(PySTEntryObject *ste, PyObject *name)
+{
+    PyObject *o = PyLong_FromLong(USE | DEF_LOCAL);
+    if (PyDict_SetItem(ste->ste_symbols, name, o) < 0) {
+        Py_DECREF(o);
+        return -1;
+    }
+    return 0;
 }
 
 int
