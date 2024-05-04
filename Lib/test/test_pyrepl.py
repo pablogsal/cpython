@@ -21,6 +21,7 @@ readline = import_module('readline')
 from _pyrepl.console import Console, Event
 from _pyrepl.readline import ReadlineAlikeReader, ReadlineConfig
 from _pyrepl.simple_interact import _strip_final_indent
+from _pyrepl.unix_console import UnixConsole
 from _pyrepl.unix_eventqueue import EventQueue
 
 
@@ -923,6 +924,68 @@ class TestReader(TestCase):
         reader, _ = handle_events_narrow_console(events)
         reader.setpos_from_xy(0, 1)
         self.assertEqual(reader.pos, 9)
+
+
+def unix_console(events):
+    console = UnixConsole()
+    console.get_event = MagicMock(side_effect=events)
+    console.prepare()
+    return console
+
+
+handle_events_unix_console = partial(handle_all_events, prepare_console=unix_console)
+
+
+TERM_CAPABILITIES = {
+    "bel": b"\x07",
+    "civis": b"\x1b[?25l",
+    "clear": b"\x1b[H\x1b[2J",
+    "cnorm": b"\x1b[?12l\x1b[?25h",
+    "cub": b"\x1b[%p1%dD",
+    "cub1": b"\x08",
+    "cud": b"\x1b[%p1%dB",
+    "cud1": b"\n",
+    "cuf": b"\x1b[%p1%dC",
+    "cuf1": b"\x1b[C",
+    "cup": b"\x1b[%i%p1%d;%p2%dH",
+    "cuu": b"\x1b[%p1%dA",
+    "cuu1": b"\x1b[A",
+    "dch1": b"\x1b[P",
+    "dch": b"\x1b[%p1%dP",
+    "el": b"\x1b[K",
+    "hpa": b"\x1b[%i%p1%dG",
+    "ich": b"\x1b[%p1%d@",
+    "ich1": None,
+    "ind": b"\n",
+    "pad": None,
+    "ri": b"\x1bM",
+    "rmkx": b"\x1b[?1l\x1b>",
+    "smkx": b"\x1b[?1h\x1b=",
+}
+
+
+CONSOLE_BUFFER = []
+
+
+@patch("_pyrepl.curses.tigetstr", side_effect=lambda s: TERM_CAPABILITIES.get(s))
+@patch(
+    "_pyrepl.curses.tparm",
+    side_effect=lambda s, *args: s + b":" + b",".join(bytes(i) for i in args),
+)
+@patch("_pyrepl.curses.setupterm")
+@patch("termios.tcsetattr")
+@patch("os.write", side_effect=lambda _, s: CONSOLE_BUFFER.append(s))
+class TestConsole(TestCase):
+    def setUp(self) -> None:
+        CONSOLE_BUFFER.clear()
+
+    def test_something(self, _os_write, _tcsetattr, _setupterm, _tparm, _tigetstr):
+        code = "11+11"
+        events = code_to_events(code)
+        _, _ = handle_events_unix_console(events)
+
+        for c in code:
+            self.assertIn(c.encode(), CONSOLE_BUFFER)
 
 
 if __name__ == "__main__":
