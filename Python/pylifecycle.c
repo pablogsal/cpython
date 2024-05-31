@@ -3329,3 +3329,15 @@ PyOS_setsig(int sig, PyOS_sighandler_t handler)
     return oldhandler;
 #endif
 }
+
+int _PyOS_CallInputHook(void)
+{
+    // The return value is ignored, but let's handle it anyway
+    int result = 0;
+    if (PyOS_InputHook) {
+        Py_BEGIN_ALLOW_THREADS;
+        result = PyOS_InputHook();
+        Py_END_ALLOW_THREADS;
+    }
+    return result;
+}
