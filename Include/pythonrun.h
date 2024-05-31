@@ -17,9 +17,9 @@ PyAPI_FUNC(void) PyErr_Display(PyObject *, PyObject *, PyObject *);
 PyAPI_FUNC(void) PyErr_DisplayException(PyObject *);
 #endif
 
-
 /* Stuff with no proper home (yet) */
 PyAPI_DATA(int) (*PyOS_InputHook)(void);
+PyAPI_FUNC(int) _PyOS_CallInputHook(void);
 
 /* Stack size, in "pointers" (so we get extra safety margins
    on 64-bit platforms).  On a 32-bit platform, this translates

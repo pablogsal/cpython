@@ -645,7 +645,7 @@ class Reader:
             self.dirty = True
 
         while True:
-            self.call_PyOS_InputHook()
+            ctypes.pythonapi._PyOS_CallInputHook()
             event = self.console.get_event(block)
             if not event:  # can only happen if we're not blocking
                 return False
@@ -704,10 +704,3 @@ class Reader:
     def get_unicode(self) -> str:
         """Return the current buffer as a unicode string."""
         return "".join(self.buffer)
-
-    def call_PyOS_InputHook(self):
-        if self.input_hook_addr is None:
-            self.input_hook_addr = ctypes.c_void_p.in_dll(ctypes.pythonapi, 'PyOS_InputHook').value
-        if not self.input_hook_addr:
-            return
-        ctypes.PYFUNCTYPE(ctypes.c_int)(self.input_hook_addr)()
