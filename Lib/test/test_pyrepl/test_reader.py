@@ -1,8 +1,10 @@
 import itertools
 import functools
 from unittest import TestCase
+from unittest.mock import MagicMock
 
 from .support import handle_all_events, handle_events_narrow_console, code_to_events, prepare_reader
+from test.support import import_helper
 from _pyrepl.console import Event
 
 
@@ -176,3 +178,24 @@ class TestReader(TestCase):
         )
         self.assert_screen_equals(reader, expected)
         self.assertTrue(reader.finished)
+
+    def test_input_hook_is_called_if_set(self):
+        import_helper.import_module('ctypes')
+        from ctypes import pythonapi, c_int, CFUNCTYPE, c_void_p, POINTER, cast
+
+        CMPFUNC = CFUNCTYPE(c_int)
+        the_mock = MagicMock()
+
+        def input_hook():
+            the_mock()
+            return 0
+
+        the_input_hook = CMPFUNC(input_hook)
+        prev_value = c_void_p.in_dll(pythonapi, "PyOS_InputHook").value
+        try:
+            c_void_p.in_dll(pythonapi, "PyOS_InputHook").value =  cast(the_input_hook, c_void_p).value
+            events = code_to_events("a")
+            reader, _ = handle_all_events(events)
+            the_mock.assert_called()
+        finally:
+            c_void_p.in_dll(pythonapi, "PyOS_InputHook").value =  prev_value

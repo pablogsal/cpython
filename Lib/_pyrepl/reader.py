@@ -24,6 +24,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
 import unicodedata
+import ctypes
 from _colorize import can_colorize, ANSIColors  # type: ignore[import-not-found]
 
 
@@ -239,6 +240,7 @@ class Reader:
     lxy: tuple[int, int] = field(init=False)
     calc_screen: CalcScreen = field(init=False)
     scheduled_commands: list[str] = field(default_factory=list)
+    input_hook_addr: ctypes.c_void_p | None = None
 
     def __post_init__(self) -> None:
         # Enable the use of `insert` without a `prepare` call - necessary to
@@ -643,6 +645,7 @@ class Reader:
             self.dirty = True
 
         while True:
+            self.call_PyOS_InputHook()
             event = self.console.get_event(block)
             if not event:  # can only happen if we're not blocking
                 return False
@@ -701,3 +704,10 @@ class Reader:
     def get_unicode(self) -> str:
         """Return the current buffer as a unicode string."""
         return "".join(self.buffer)
+
+    def call_PyOS_InputHook(self):
+        if self.input_hook_addr is None:
+            self.input_hook_addr = ctypes.c_void_p.in_dll(ctypes.pythonapi, 'PyOS_InputHook').value
+        if not self.input_hook_addr:
+            return
+        ctypes.PYFUNCTYPE(ctypes.c_int)(self.input_hook_addr)()
