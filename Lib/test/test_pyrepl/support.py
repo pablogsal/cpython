@@ -38,6 +38,16 @@ def code_to_events(code: str):
         yield Event(evt="key", data=c, raw=bytearray(c.encode("utf-8")))
 
 
+def clean_screen(screen: Iterable[str]):
+    """Cleans color and console characters out of a screen output.
+
+    This is useful for screen testing, it increases the test readability since
+    it strips out all the unreadable side of the screen.
+    """
+    return '\n'.join(screen).replace(
+        '\x1b[1;35m>>>\x1b[0m', '').replace('\x1b[1;35m...\x1b[0m', '').strip()
+
+
 def prepare_reader(console: Console, **kwargs):
     config = ReadlineConfig(readline_completer=kwargs.pop("readline_completer", None))
     reader = ReadlineAlikeReader(console=console, config=config)

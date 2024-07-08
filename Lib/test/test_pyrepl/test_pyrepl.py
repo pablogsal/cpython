@@ -17,6 +17,7 @@ from .support import (
     more_lines,
     multiline_input,
     code_to_events,
+    clean_screen
 )
 from _pyrepl.console import Event
 from _pyrepl.readline import ReadlineAlikeReader, ReadlineConfig
@@ -550,17 +551,20 @@ class TestPyReplOutput(TestCase):
                 Event(evt="key", data="up", raw=bytearray(b"\x1bOA")),
                 Event(evt="key", data="up", raw=bytearray(b"\x1bOA")),
                 Event(evt="key", data="up", raw=bytearray(b"\x1bOA")),
+                Event(evt="key", data="\n", raw=bytearray(b"\n")),
+                Event(evt="key", data="\n", raw=bytearray(b"\n")),
             ]
         ))
 
         reader = self.prepare_reader(events)
-
-        print()
         output = multiline_input(reader)
         output = multiline_input(reader)
         output = multiline_input(reader)
-        print(output)
-        self.assertEqual(output, "1+1")
+        self.assertEqual(
+            clean_screen(reader.screen),
+            'def bar():\n    x = 1\n    y = 2\n    z = 3'
+        )
+        self.assertEqual(output, "def foo():\n    x = 1\n    y = 2\n    z = 3\n    ")
 
 
     def test_history_navigation_with_down_arrow(self):
