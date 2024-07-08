@@ -542,6 +542,33 @@ class TestPyReplOutput(TestCase):
         output = multiline_input(reader)
         self.assertEqual(output, "1+1")
 
+    def test_blech(self):
+        code = """\
+def foo():
+    x = 1
+    y = 2
+    z =3
+
+def bar():
+    return 42
+"""
+        events = itertools.chain(
+            code_to_events(code),
+            [
+                Event(evt="key", data="up", raw=bytearray(b"\x1bOA")),
+                Event(evt="key", data="up", raw=bytearray(b"\x1bOA")),
+                Event(evt="key", data="up", raw=bytearray(b"\x1bOA")),
+                Event(evt="key", data="\n", raw=bytearray(b"\n")),
+            ],
+        )
+
+        reader = self.prepare_reader(events)
+
+        output = multiline_input(reader)
+        self.assertEqual(output, "1+1")
+
+
+
     def test_history_navigation_with_down_arrow(self):
         events = itertools.chain(
             code_to_events("1+1\n2+2\n"),
