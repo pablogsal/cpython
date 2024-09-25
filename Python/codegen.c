@@ -2806,6 +2806,15 @@ codegen_assert(compiler *c, stmt_ty s)
     if (OPTIMIZATION_LEVEL(c)) {
         return SUCCESS;
     }
+
+    if (asdl_seq_LEN(s->v.Assert.extended_assert) != 0) {
+        asdl_stmt_seq* stmts = s->v.Assert.extended_assert;
+        for (Py_ssize_t i = 0; i < asdl_seq_LEN(stmts); i++) {
+            VISIT(c, stmt, (stmt_ty)asdl_seq_GET(stmts, i));
+        }
+        return SUCCESS;
+    }
+
     NEW_JUMP_TARGET_LABEL(c, end);
     RETURN_IF_ERROR(codegen_jump_if(c, LOC(s), s->v.Assert.test, end, 1));
     ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
