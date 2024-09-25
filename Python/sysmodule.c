@@ -1282,29 +1282,6 @@ sys_getswitchinterval_impl(PyObject *module)
 }
 
 /*[clinic input]
-sys.setassertrewritter
-
-    rewriter: object
-    /
-
-[clinic start generated code]*/
-
-static PyObject *
-sys_setassertrewritter(PyObject *module, PyObject *rewriter)
-/*[clinic end generated code: output=9d685e1d6876d5b3 input=e147a3e27b6952f4]*/
-{
-    PyThreadState *tstate = _PyThreadState_GET();
-    PyInterpreterState *is = tstate->interp;
-    if (is->runtime->assert_rewriter != NULL) {
-        Py_DECREF(is->runtime->assert_rewriter);
-    }
-    Py_INCREF(rewriter);
-    is->runtime->assert_rewriter = rewriter;
-    Py_RETURN_NONE;
-}
-
-
-/*[clinic input]
 sys.setrecursionlimit
 
     limit as new_limit: int
@@ -2597,7 +2574,6 @@ static PyMethodDef sys_methods[] = {
     SYS_GETTOTALREFCOUNT_METHODDEF
     SYS_GETREFCOUNT_METHODDEF
     SYS_GETRECURSIONLIMIT_METHODDEF
-    SYS_SETASSERTREWRITTER_METHODDEF
     {"getsizeof", _PyCFunction_CAST(sys_getsizeof),
      METH_VARARGS | METH_KEYWORDS, getsizeof_doc},
     SYS__GETFRAME_METHODDEF

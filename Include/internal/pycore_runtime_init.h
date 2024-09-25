@@ -212,7 +212,6 @@ extern PyTypeObject _PyExc_MemoryError;
             }, \
         }, \
         ._main_interpreter = _PyInterpreterState_INIT(runtime._main_interpreter), \
-        .assert_rewriter = NULL, \
     }
 
 #define _PyInterpreterState_INIT(INTERP) \

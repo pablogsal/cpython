@@ -356,8 +356,6 @@ typedef struct pyruntimestate {
     bool wasm_type_reflection_available;
 #endif
 
-PyObject* assert_rewriter;
-
 } _PyRuntimeState;
 
 
