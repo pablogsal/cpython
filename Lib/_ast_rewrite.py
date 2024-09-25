@@ -1,37 +1,12 @@
 """Rewrite assertion AST to produce nice error messages."""
 
 import ast
-from collections import defaultdict
 import errno
-import functools
-import importlib.abc
-import importlib.machinery
-import importlib.util
-import io
 import itertools
-import marshal
 import os
+from collections import defaultdict
 from pathlib import Path
-from pathlib import PurePath
-import struct
-import sys
-import tokenize
-import types
-from typing import Callable
-from typing import Dict
-from typing import IO
-from typing import Iterable
-from typing import Iterator
-from typing import List
-from typing import Optional
-from typing import Sequence
-from typing import Set
-from typing import Tuple
-from typing import TYPE_CHECKING
-from typing import Union
-
-class Sentinel:
-    pass
+from typing import Iterator, Sequence
 
 
 UNARY_MAP = {ast.Not: "not %s", ast.Invert: "~%s", ast.USub: "-%s", ast.UAdd: "+%s"}
@@ -120,16 +95,9 @@ class AssertionRewriter(ast.NodeVisitor):
     def __init__(self) -> None:
         super().__init__()
         self.scope: tuple[ast.AST, ...] = ()
-        self.variables_overwrite: defaultdict[tuple[ast.AST, ...], Dict[str, str]] = (
+        self.variables_overwrite: defaultdict[tuple[ast.AST, ...], dict[str, str]] = (
             defaultdict(dict)
         )
-    def run(self, mod: ast.Assert) -> None:
-        """Find all assert statements in *mod* and rewrite them."""
-        return self.visit(mod)
-
-    @staticmethod
-    def is_rewrite_disabled(docstring: str) -> bool:
-        return "PYTEST_DONT_REWRITE" in docstring
 
     def variable(self) -> str:
         """Get a new variable."""
@@ -179,7 +147,7 @@ class AssertionRewriter(ast.NodeVisitor):
         to format a string of %-formatted values as added by
         .explanation_param().
         """
-        self.explanation_specifiers: Dict[str, ast.expr] = {}
+        self.explanation_specifiers: dict[str, ast.expr] = {}
         self.stack.append(self.explanation_specifiers)
 
     def pop_format_context(self, expl_expr: ast.expr) -> ast.Name:
@@ -199,29 +167,29 @@ class AssertionRewriter(ast.NodeVisitor):
         self.expl_stmts.append(ast.Assign([ast.Name(name, ast.Store())], form))
         return ast.Name(name, ast.Load())
 
-    def generic_visit(self, node: ast.AST) -> Tuple[ast.Name, str]:
+    def generic_visit(self, node: ast.AST) -> tuple[ast.Name, str]:
         """Handle expressions we don't have custom code for."""
         res = self.assign(node)
         return res, self.explanation_param(self.display(res))
 
-    def visit_Module(self, mod: ast.Module) -> List:
+    def visit_Module(self, mod: ast.Module) -> list[ast.stmt]:
         assert(len(mod.body) == 1)
         assert(isinstance(mod.body[0], ast.Assert))
-        self.visit(mod.body[0])
+        return self.visit(mod.body[0])
 
-    def visit_Assert(self, assert_: ast.Assert) -> List[ast.stmt]:
+    def visit_Assert(self, assert_: ast.Assert) -> list[ast.stmt]:
         """Return the AST statements to replace the ast.Assert instance.
         This rewrites the test of an assertion to provide
         intermediate values and replace it with an if statement which
         raises an assertion error with a detailed explanation in case
         the expression is false.
         """
-        self.statements: List[ast.stmt] = [ast.Import( names=[ast.alias(name='_ast_rewrite', asname='@sys'), ast.alias(name='builtins', asname="@py_builtins")])]
-        self.variables: List[str] = []
+        self.statements: list[ast.stmt] = [ast.Import( names=[ast.alias(name='_ast_rewrite', asname='@sys'), ast.alias(name='builtins', asname="@py_builtins")])]
+        self.variables: list[str] = []
         self.variable_counter = itertools.count()
 
-        self.stack: List[Dict[str, ast.expr]] = []
-        self.expl_stmts: List[ast.stmt] = []
+        self.stack: list[dict[str, ast.expr]] = []
+        self.expl_stmts: list[ast.stmt] = []
         self.push_format_context()
         # Rewrite assert into a bunch of statements.
         top_condition, explanation = self.visit(assert_.test)
@@ -259,7 +227,7 @@ class AssertionRewriter(ast.NodeVisitor):
             for node in traverse_node(stmt):
                 ast.copy_location(node, assert_)
 
-    def visit_NamedExpr(self, name: ast.NamedExpr) -> Tuple[ast.NamedExpr, str]:
+    def visit_NamedExpr(self, name: ast.NamedExpr) -> tuple[ast.NamedExpr, str]:
         # This method handles the 'walrus operator' repr of the target
         # name if it's a local variable or _should_repr_global_name()
         # thinks it's acceptable.
@@ -271,7 +239,7 @@ class AssertionRewriter(ast.NodeVisitor):
         expr = ast.IfExp(test, self.display(name), ast.Constant(target_id))
         return name, self.explanation_param(expr)
 
-    def visit_Name(self, name: ast.Name) -> Tuple[ast.Name, str]:
+    def visit_Name(self, name: ast.Name) -> tuple[ast.Name, str]:
         # Display the repr of the name if it's a local variable or
         # _should_repr_global_name() thinks it's acceptable.
         locs = ast.Call(self.builtin("locals"), [], [])
@@ -281,7 +249,7 @@ class AssertionRewriter(ast.NodeVisitor):
         expr = ast.IfExp(test, self.display(name), ast.Constant(name.id))
         return name, self.explanation_param(expr)
 
-    def visit_BoolOp(self, boolop: ast.BoolOp) -> Tuple[ast.Name, str]:
+    def visit_BoolOp(self, boolop: ast.BoolOp) -> tuple[ast.Name, str]:
         res_var = self.variable()
         expl_list = self.assign(ast.List([], ast.Load()))
         app = ast.Attribute(expl_list, "append", ast.Load())
@@ -293,7 +261,7 @@ class AssertionRewriter(ast.NodeVisitor):
         # Process each operand, short-circuiting if needed.
         for i, v in enumerate(boolop.values):
             if i:
-                fail_inner: List[ast.stmt] = []
+                fail_inner: list[ast.stmt] = []
                 # cond is set in a prior loop iteration below
                 self.expl_stmts.append(ast.If(cond, fail_inner, []))  # noqa: F821
                 self.expl_stmts = fail_inner
@@ -321,7 +289,7 @@ class AssertionRewriter(ast.NodeVisitor):
                 cond: ast.expr = res
                 if is_or:
                     cond = ast.UnaryOp(ast.Not(), cond)
-                inner: List[ast.stmt] = []
+                inner: list[ast.stmt] = []
                 self.statements.append(ast.If(cond, inner, []))
                 self.statements = body = inner
         self.statements = save
@@ -330,13 +298,13 @@ class AssertionRewriter(ast.NodeVisitor):
         expl = self.pop_format_context(expl_template)
         return ast.Name(res_var, ast.Load()), self.explanation_param(expl)
 
-    def visit_UnaryOp(self, unary: ast.UnaryOp) -> Tuple[ast.Name, str]:
+    def visit_UnaryOp(self, unary: ast.UnaryOp) -> tuple[ast.Name, str]:
         pattern = UNARY_MAP[unary.op.__class__]
         operand_res, operand_expl = self.visit(unary.operand)
         res = self.assign(ast.UnaryOp(unary.op, operand_res))
         return res, pattern % (operand_expl,)
 
-    def visit_BinOp(self, binop: ast.BinOp) -> Tuple[ast.Name, str]:
+    def visit_BinOp(self, binop: ast.BinOp) -> tuple[ast.Name, str]:
         symbol = BINOP_MAP[binop.op.__class__]
         left_expr, left_expl = self.visit(binop.left)
         right_expr, right_expl = self.visit(binop.right)
@@ -344,7 +312,7 @@ class AssertionRewriter(ast.NodeVisitor):
         res = self.assign(ast.BinOp(left_expr, binop.op, right_expr))
         return res, explanation
 
-    def visit_Call(self, call: ast.Call) -> Tuple[ast.Name, str]:
+    def visit_Call(self, call: ast.Call) -> tuple[ast.Name, str]:
         new_func, func_expl = self.visit(call.func)
         arg_expls = []
         new_args = []
@@ -376,13 +344,13 @@ class AssertionRewriter(ast.NodeVisitor):
         outer_expl = f"{res_expl}\n{{{res_expl} = {expl}\n}}"
         return res, outer_expl
 
-    def visit_Starred(self, starred: ast.Starred) -> Tuple[ast.Starred, str]:
+    def visit_Starred(self, starred: ast.Starred) -> tuple[ast.Starred, str]:
         # A Starred node can appear in a function call.
         res, expl = self.visit(starred.value)
         new_starred = ast.Starred(res, starred.ctx)
         return new_starred, "*" + expl
 
-    def visit_Attribute(self, attr: ast.Attribute) -> Tuple[ast.Name, str]:
+    def visit_Attribute(self, attr: ast.Attribute) -> tuple[ast.Name, str]:
         if not isinstance(attr.ctx, ast.Load):
             return self.generic_visit(attr)
         value, value_expl = self.visit(attr.value)
@@ -392,7 +360,7 @@ class AssertionRewriter(ast.NodeVisitor):
         expl = pat % (res_expl, res_expl, value_expl, attr.attr)
         return res, expl
 
-    def visit_Compare(self, comp: ast.Compare) -> Tuple[ast.expr, str]:
+    def visit_Compare(self, comp: ast.Compare) -> tuple[ast.expr, str]:
         self.push_format_context()
         # We first check if we have overwritten a variable in the previous assert
         if isinstance(
@@ -467,19 +435,6 @@ def try_makedirs(cache_dir: Path) -> bool:
     return True
 
 
-def get_cache_dir(file_path: Path) -> Path:
-    """Return the cache directory to write .pyc files for the given .py file path."""
-    if sys.pycache_prefix:
-        # given:
-        #   prefix = '/tmp/pycs'
-        #   path = '/home/user/proj/test_app.py'
-        # we want:
-        #   '/tmp/pycs/home/user/proj'
-        return Path(sys.pycache_prefix) / Path(*file_path.parts[1:-1])
-    else:
-        # classic pycache directory
-        return file_path.parent / "__pycache__"
-
 def _call_reprcompare(
     ops: Sequence[str],
     results: Sequence[bool],
@@ -496,13 +451,16 @@ def _call_reprcompare(
     # print(ops[i], each_obj[i], each_obj[i + 1])
     return expl
 
-def _saferepr(arg):
+
+def _saferepr(arg: ast.expr) -> ast.expr:
     return arg
 
-def _format_explanation(arg):
+
+def _format_explanation(arg: ast.expr) -> ast.expr:
     return arg
 
-def do_rewrite(x):
+
+def do_rewrite(x: ast.Module) -> ast.Module:
     r = AssertionRewriter()
     r.visit(x)
     x2 = ast.Module(r.statements)
