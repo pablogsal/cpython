@@ -520,6 +520,9 @@
     <None Include="..\Lib\io.py">
       <Filter>Python Files</Filter>
     </None>
+    <None Include="..\Lib\_ast_rewrite.py">
+      <Filter>Python Files</Filter>
+    </None>
     <None Include="..\Lib\_collections_abc.py">
       <Filter>Python Files</Filter>
     </None>

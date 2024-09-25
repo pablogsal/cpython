@@ -43,7 +43,7 @@ module Python
           | Raise(expr? exc, expr? cause)
           | Try(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)
           | TryStar(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)
-          | Assert(expr test, expr? msg)
+          | Assert(expr test, expr? msg, stmt* extended_assert)
 
           | Import(alias* names)
           | ImportFrom(identifier? module, alias* names, int? level)

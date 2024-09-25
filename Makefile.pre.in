@@ -1533,6 +1533,7 @@ FROZEN_FILES_IN = \
 		Lib/abc.py \
 		Lib/codecs.py \
 		Lib/io.py \
+		Lib/_ast_rewrite.py \
 		Lib/_collections_abc.py \
 		Lib/_sitebuiltins.py \
 		Lib/genericpath.py \
@@ -1558,6 +1559,7 @@ FROZEN_FILES_OUT = \
 		Python/frozen_modules/abc.h \
 		Python/frozen_modules/codecs.h \
 		Python/frozen_modules/io.h \
+		Python/frozen_modules/_ast_rewrite.h \
 		Python/frozen_modules/_collections_abc.h \
 		Python/frozen_modules/_sitebuiltins.h \
 		Python/frozen_modules/genericpath.h \
@@ -1607,6 +1609,9 @@ Python/frozen_modules/codecs.h: Lib/codecs.py $(FREEZE_MODULE_DEPS)
 
 Python/frozen_modules/io.h: Lib/io.py $(FREEZE_MODULE_DEPS)
 	$(FREEZE_MODULE) io $(srcdir)/Lib/io.py Python/frozen_modules/io.h
+
+Python/frozen_modules/_ast_rewrite.h: Lib/_ast_rewrite.py $(FREEZE_MODULE_DEPS)
+	$(FREEZE_MODULE) _ast_rewrite $(srcdir)/Lib/_ast_rewrite.py Python/frozen_modules/_ast_rewrite.h
 
 Python/frozen_modules/_collections_abc.h: Lib/_collections_abc.py $(FREEZE_MODULE_DEPS)
 	$(FREEZE_MODULE) _collections_abc $(srcdir)/Lib/_collections_abc.py Python/frozen_modules/_collections_abc.h

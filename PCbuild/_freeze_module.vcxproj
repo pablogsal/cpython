@@ -305,6 +305,11 @@
       <IntFile>$(IntDir)io.g.h</IntFile>
       <OutFile>$(GeneratedFrozenModulesDir)Python\frozen_modules\io.h</OutFile>
     </None>
+    <None Include="..\Lib\_ast_rewrite.py">
+      <ModName>_ast_rewrite</ModName>
+      <IntFile>$(IntDir)_ast_rewrite.g.h</IntFile>
+      <OutFile>$(GeneratedFrozenModulesDir)Python\frozen_modules\_ast_rewrite.h</OutFile>
+    </None>
     <None Include="..\Lib\_collections_abc.py">
       <ModName>_collections_abc</ModName>
       <IntFile>$(IntDir)_collections_abc.g.h</IntFile>
@@ -408,6 +413,7 @@
     <FrozenModule Include="$(GeneratedFrozenModulesDir)Python\frozen_modules\abc.h" FrozenId="abc" />
     <FrozenModule Include="$(GeneratedFrozenModulesDir)Python\frozen_modules\codecs.h" FrozenId="codecs" />
     <FrozenModule Include="$(GeneratedFrozenModulesDir)Python\frozen_modules\io.h" FrozenId="io" />
+    <FrozenModule Include="$(GeneratedFrozenModulesDir)Python\frozen_modules\_ast_rewrite.h" FrozenId="_ast_rewrite" />
     <FrozenModule Include="$(GeneratedFrozenModulesDir)Python\frozen_modules\_collections_abc.h" FrozenId="_collections_abc" />
     <FrozenModule Include="$(GeneratedFrozenModulesDir)Python\frozen_modules\_sitebuiltins.h" FrozenId="_sitebuiltins" />
     <FrozenModule Include="$(GeneratedFrozenModulesDir)Python\frozen_modules\genericpath.h" FrozenId="genericpath" />

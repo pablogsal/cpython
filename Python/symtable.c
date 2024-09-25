@@ -2063,6 +2063,7 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
         VISIT(st, expr, s->v.Assert.test);
         if (s->v.Assert.msg)
             VISIT(st, expr, s->v.Assert.msg);
+        VISIT_SEQ(st, stmt, s->v.Assert.extended_assert);
         break;
     case Import_kind:
         VISIT_SEQ(st, alias, s->v.Import.names);

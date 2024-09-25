@@ -325,6 +325,7 @@ struct _stmt {
         struct {
             expr_ty test;
             expr_ty msg;
+            asdl_stmt_seq *extended_assert;
         } Assert;
 
         struct {
@@ -750,8 +751,9 @@ stmt_ty _PyAST_TryStar(asdl_stmt_seq * body, asdl_excepthandler_seq * handlers,
                        asdl_stmt_seq * orelse, asdl_stmt_seq * finalbody, int
                        lineno, int col_offset, int end_lineno, int
                        end_col_offset, PyArena *arena);
-stmt_ty _PyAST_Assert(expr_ty test, expr_ty msg, int lineno, int col_offset,
-                      int end_lineno, int end_col_offset, PyArena *arena);
+stmt_ty _PyAST_Assert(expr_ty test, expr_ty msg, asdl_stmt_seq *
+                      extended_assert, int lineno, int col_offset, int
+                      end_lineno, int end_col_offset, PyArena *arena);
 stmt_ty _PyAST_Import(asdl_alias_seq * names, int lineno, int col_offset, int
                       end_lineno, int end_col_offset, PyArena *arena);
 stmt_ty _PyAST_ImportFrom(identifier module, asdl_alias_seq * names, int level,

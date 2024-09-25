@@ -215,6 +215,7 @@ void _PyAST_Fini(PyInterpreterState *interp)
     Py_CLEAR(state->excepthandler_type);
     Py_CLEAR(state->expr_context_type);
     Py_CLEAR(state->expr_type);
+    Py_CLEAR(state->extended_assert);
     Py_CLEAR(state->finalbody);
     Py_CLEAR(state->format_spec);
     Py_CLEAR(state->func);
@@ -321,6 +322,7 @@ static int init_identifiers(struct ast_state *state)
     if ((state->end_col_offset = PyUnicode_InternFromString("end_col_offset")) == NULL) return -1;
     if ((state->end_lineno = PyUnicode_InternFromString("end_lineno")) == NULL) return -1;
     if ((state->exc = PyUnicode_InternFromString("exc")) == NULL) return -1;
+    if ((state->extended_assert = PyUnicode_InternFromString("extended_assert")) == NULL) return -1;
     if ((state->finalbody = PyUnicode_InternFromString("finalbody")) == NULL) return -1;
     if ((state->format_spec = PyUnicode_InternFromString("format_spec")) == NULL) return -1;
     if ((state->func = PyUnicode_InternFromString("func")) == NULL) return -1;
@@ -528,6 +530,7 @@ static const char * const TryStar_fields[]={
 static const char * const Assert_fields[]={
     "test",
     "msg",
+    "extended_assert",
 };
 static const char * const Import_fields[]={
     "names",
@@ -2230,6 +2233,22 @@ add_ast_annotations(struct ast_state *state)
             return 0;
         }
         cond = PyDict_SetItemString(Assert_annotations, "msg", type) == 0;
+        Py_DECREF(type);
+        if (!cond) {
+            Py_DECREF(Assert_annotations);
+            return 0;
+        }
+    }
+    {
+        PyObject *type = state->stmt_type;
+        type = Py_GenericAlias((PyObject *)&PyList_Type, type);
+        cond = type != NULL;
+        if (!cond) {
+            Py_DECREF(Assert_annotations);
+            return 0;
+        }
+        cond = PyDict_SetItemString(Assert_annotations, "extended_assert",
+                                    type) == 0;
         Py_DECREF(type);
         if (!cond) {
             Py_DECREF(Assert_annotations);
@@ -6103,7 +6122,7 @@ init_types(struct ast_state *state)
         "     | Raise(expr? exc, expr? cause)\n"
         "     | Try(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)\n"
         "     | TryStar(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)\n"
-        "     | Assert(expr test, expr? msg)\n"
+        "     | Assert(expr test, expr? msg, stmt* extended_assert)\n"
         "     | Import(alias* names)\n"
         "     | ImportFrom(identifier? module, alias* names, int? level)\n"
         "     | Global(identifier* names)\n"
@@ -6228,8 +6247,8 @@ init_types(struct ast_state *state)
         "TryStar(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)");
     if (!state->TryStar_type) return -1;
     state->Assert_type = make_type(state, "Assert", state->stmt_type,
-                                   Assert_fields, 2,
-        "Assert(expr test, expr? msg)");
+                                   Assert_fields, 3,
+        "Assert(expr test, expr? msg, stmt* extended_assert)");
     if (!state->Assert_type) return -1;
     if (PyObject_SetAttr(state->Assert_type, state->msg, Py_None) == -1)
         return -1;
@@ -7447,8 +7466,9 @@ _PyAST_TryStar(asdl_stmt_seq * body, asdl_excepthandler_seq * handlers,
 }
 
 stmt_ty
-_PyAST_Assert(expr_ty test, expr_ty msg, int lineno, int col_offset, int
-              end_lineno, int end_col_offset, PyArena *arena)
+_PyAST_Assert(expr_ty test, expr_ty msg, asdl_stmt_seq * extended_assert, int
+              lineno, int col_offset, int end_lineno, int end_col_offset,
+              PyArena *arena)
 {
     stmt_ty p;
     if (!test) {
@@ -7462,6 +7482,7 @@ _PyAST_Assert(expr_ty test, expr_ty msg, int lineno, int col_offset, int
     p->kind = Assert_kind;
     p->v.Assert.test = test;
     p->v.Assert.msg = msg;
+    p->v.Assert.extended_assert = extended_assert;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -9299,6 +9320,13 @@ ast2obj_stmt(struct ast_state *state, struct validator *vstate, void* _o)
         value = ast2obj_expr(state, vstate, o->v.Assert.msg);
         if (!value) goto failed;
         if (PyObject_SetAttr(result, state->msg, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        value = ast2obj_list(state, vstate,
+                             (asdl_seq*)o->v.Assert.extended_assert,
+                             ast2obj_stmt);
+        if (!value) goto failed;
+        if (PyObject_SetAttr(result, state->extended_assert, value) == -1)
             goto failed;
         Py_DECREF(value);
         break;
@@ -13291,6 +13319,7 @@ obj2ast_stmt(struct ast_state *state, PyObject* obj, stmt_ty* out, PyArena*
     if (isinstance) {
         expr_ty test;
         expr_ty msg;
+        asdl_stmt_seq* extended_assert;
 
         if (PyObject_GetOptionalAttr(obj, state->test, &tmp) < 0) {
             return -1;
@@ -13326,8 +13355,46 @@ obj2ast_stmt(struct ast_state *state, PyObject* obj, stmt_ty* out, PyArena*
             if (res != 0) goto failed;
             Py_CLEAR(tmp);
         }
-        *out = _PyAST_Assert(test, msg, lineno, col_offset, end_lineno,
-                             end_col_offset, arena);
+        if (PyObject_GetOptionalAttr(obj, state->extended_assert, &tmp) < 0) {
+            return -1;
+        }
+        if (tmp == NULL) {
+            tmp = PyList_New(0);
+            if (tmp == NULL) {
+                return -1;
+            }
+        }
+        {
+            int res;
+            Py_ssize_t len;
+            Py_ssize_t i;
+            if (!PyList_Check(tmp)) {
+                PyErr_Format(PyExc_TypeError, "Assert field \"extended_assert\" must be a list, not a %.200s", _PyType_Name(Py_TYPE(tmp)));
+                goto failed;
+            }
+            len = PyList_GET_SIZE(tmp);
+            extended_assert = _Py_asdl_stmt_seq_new(len, arena);
+            if (extended_assert == NULL) goto failed;
+            for (i = 0; i < len; i++) {
+                stmt_ty val;
+                PyObject *tmp2 = Py_NewRef(PyList_GET_ITEM(tmp, i));
+                if (_Py_EnterRecursiveCall(" while traversing 'Assert' node")) {
+                    goto failed;
+                }
+                res = obj2ast_stmt(state, tmp2, &val, arena);
+                _Py_LeaveRecursiveCall();
+                Py_DECREF(tmp2);
+                if (res != 0) goto failed;
+                if (len != PyList_GET_SIZE(tmp)) {
+                    PyErr_SetString(PyExc_RuntimeError, "Assert field \"extended_assert\" changed size during iteration");
+                    goto failed;
+                }
+                asdl_seq_SET(extended_assert, i, val);
+            }
+            Py_CLEAR(tmp);
+        }
+        *out = _PyAST_Assert(test, msg, extended_assert, lineno, col_offset,
+                             end_lineno, end_col_offset, arena);
         if (*out == NULL) goto failed;
         return 0;
     }

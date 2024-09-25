@@ -194,6 +194,7 @@ struct ast_state {
     PyObject *excepthandler_type;
     PyObject *expr_context_type;
     PyObject *expr_type;
+    PyObject *extended_assert;
     PyObject *finalbody;
     PyObject *format_spec;
     PyObject *func;

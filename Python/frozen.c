@@ -47,6 +47,7 @@
 #include "frozen_modules/abc.h"
 #include "frozen_modules/codecs.h"
 #include "frozen_modules/io.h"
+#include "frozen_modules/_ast_rewrite.h"
 #include "frozen_modules/_collections_abc.h"
 #include "frozen_modules/_sitebuiltins.h"
 #include "frozen_modules/genericpath.h"
@@ -77,6 +78,7 @@ static const struct _frozen stdlib_modules[] = {
     {"abc", _Py_M__abc, (int)sizeof(_Py_M__abc), false},
     {"codecs", _Py_M__codecs, (int)sizeof(_Py_M__codecs), false},
     {"io", _Py_M__io, (int)sizeof(_Py_M__io), false},
+    {"_ast_rewrite", _Py_M___ast_rewrite, (int)sizeof(_Py_M___ast_rewrite), false},
 
     /* stdlib - startup, with site */
     {"_collections_abc", _Py_M___collections_abc, (int)sizeof(_Py_M___collections_abc), false},
