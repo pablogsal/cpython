@@ -480,9 +480,6 @@ def get_cache_dir(file_path: Path) -> Path:
         # classic pycache directory
         return file_path.parent / "__pycache__"
 
-def repr_compare(op, left, right):
-    print(op, left, right)
-
 def _call_reprcompare(
     ops: Sequence[str],
     results: Sequence[bool],
@@ -496,9 +493,7 @@ def _call_reprcompare(
             done = True
         if done:
             break
-    custom = repr_compare(ops[i], each_obj[i], each_obj[i + 1])
-    if custom is not None:
-        return custom
+    # print(ops[i], each_obj[i], each_obj[i + 1])
     return expl
 
 def _saferepr(arg):
@@ -507,11 +502,11 @@ def _saferepr(arg):
 def _format_explanation(arg):
     return arg
 
-def foo(x):
+def do_rewrite(x):
     r = AssertionRewriter()
     r.visit(x)
     x2 = ast.Module(r.statements)
-    print("Modified ast code: ")
-    print(ast.unparse(x2))
-    print()
+    # print("Modified ast code: ")
+    # print(ast.unparse(x2))
+    # print()
     return x2

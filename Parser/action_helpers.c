@@ -1712,7 +1712,7 @@ _PyPegen_create_assert(Parser *p, expr_ty test, expr_ty msg,
         return NULL;
     }
 
-    PyObject *rewrite = _PyImport_GetModuleAttrString("_ast_rewrite", "foo");
+    PyObject *rewrite = _PyImport_GetModuleAttrString("_ast_rewrite", "do_rewrite");
     if (rewrite == NULL) {
         PyErr_Clear();
         return assert;
