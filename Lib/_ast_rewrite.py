@@ -460,6 +460,10 @@ def _format_explanation(arg: ast.expr) -> ast.expr:
     return arg
 
 
+def _format_assertmsg(arg: ast.expr) -> ast.expr:
+    return arg
+
+
 def do_rewrite(x: ast.Module) -> ast.Module:
     r = AssertionRewriter()
     r.visit(x)
