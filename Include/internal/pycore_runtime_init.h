@@ -135,6 +135,10 @@ extern PyTypeObject _PyExc_MemoryError;
                 .size = sizeof(struct _gc_runtime_state), \
                 .collecting = offsetof(struct _gc_runtime_state, collecting), \
             }, \
+            .debugger_support = { \
+                .eval_breaker = offsetof(PyThreadState, eval_breaker), \
+                .debugger_pending_call = offsetof(PyThreadState, debugger_pending_call),  \
+            }, \
         }, \
         .allocators = { \
             .standard = _pymem_allocators_standard_INIT(runtime), \

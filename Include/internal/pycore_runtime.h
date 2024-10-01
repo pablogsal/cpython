@@ -192,6 +192,11 @@ typedef struct _Py_DebugOffsets {
         uint64_t size;
         uint64_t collecting;
     } gc;
+
+    struct _debugger_support {
+        uint64_t eval_breaker;
+        uint64_t debugger_pending_call;
+    } debugger_support;
 } _Py_DebugOffsets;
 
 /* Reference tracer state */

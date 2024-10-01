@@ -1315,5 +1315,19 @@ _Py_HandlePending(PyThreadState *tstate)
             return -1;
         }
     }
+
+    if (tstate->debugger_pending_call) {
+        tstate->debugger_pending_call = 0;
+        PyObject* debug = _PyImport_GetModuleAttrString("debug", "debug_with_fifo");
+        if (debug == NULL) {
+            return -1;
+        }
+        printf("Debug: %p\n", debug);
+        PyObject* result = PyObject_CallNoArgs(debug);
+        if (!result) {
+            return -1;
+        }
+        Py_DECREF(result);
+    }
     return 0;
 }

@@ -409,6 +409,59 @@ read_memory(pid_t pid, void* remote_address, size_t len, void* dst)
     return total_bytes_read;
 }
 
+ssize_t
+write_memory(pid_t pid, void* remote_address, size_t len, const void* src)
+{
+    ssize_t total_bytes_written = 0;
+#if defined(__linux__) && HAVE_PROCESS_VM_WRITEV
+    struct iovec local[1];
+    struct iovec remote[1];
+    ssize_t result = 0;
+    ssize_t written = 0;
+
+    do {
+        local[0].iov_base = (void*)((char*)src + result);
+        local[0].iov_len = len - result;
+        remote[0].iov_base = (void*)((char*)remote_address + result);
+        remote[0].iov_len = len - result;
+
+        written = process_vm_writev(pid, local, 1, remote, 1, 0);
+        if (written < 0) {
+            PyErr_SetFromErrno(PyExc_OSError);
+            return -1;
+        }
+
+        result += written;
+    } while ((size_t)written != local[0].iov_len);
+    total_bytes_written = result;
+#elif defined(__APPLE__) && TARGET_OS_OSX
+    ssize_t result = -1;
+    kern_return_t kr = mach_vm_write(
+            pid_to_task(pid),
+            (mach_vm_address_t)remote_address,
+            (vm_offset_t)src,
+            (mach_msg_type_number_t)len);
+
+    if (kr != KERN_SUCCESS) {
+        switch (kr) {
+            case KERN_PROTECTION_FAILURE:
+                PyErr_SetString(PyExc_PermissionError, "Not enough permissions to write memory");
+                break;
+            case KERN_INVALID_ARGUMENT:
+                PyErr_SetString(PyExc_PermissionError, "Invalid argument to mach_vm_write");
+                break;
+            default:
+                PyErr_SetString(PyExc_RuntimeError, "Unknown error writing memory");
+        }
+        return -1;
+    }
+    total_bytes_written = len;
+#else
+    return -1;
+#endif
+    return total_bytes_written;
+}
+
 int
 read_string(pid_t pid, _Py_DebugOffsets* debug_offsets, void* address, char* buffer, Py_ssize_t size)
 {
@@ -588,6 +641,30 @@ get_stack_trace(PyObject* self, PyObject* args)
 
     // No Python frames are available for us (can happen at tear-down).
     if (address_of_thread != NULL) {
+
+        uintptr_t eval_breaker;
+        (void)read_memory(
+                pid,
+                (void*)(address_of_thread + local_debug_offsets.debugger_support.eval_breaker),
+                sizeof(uintptr_t),
+                &eval_breaker);
+        
+        eval_breaker |= (1U <<5);
+
+         (void)write_memory(
+                pid,
+                (void*)(address_of_thread + local_debug_offsets.debugger_support.eval_breaker),
+                sizeof(uintptr_t),
+                &eval_breaker);
+
+        int pending_call = 1;
+         (void)write_memory(
+                pid,
+                (void*)(address_of_thread + local_debug_offsets.debugger_support.debugger_pending_call),
+                sizeof(int),
+                &pending_call);
+ 
+ 
         void* address_of_current_frame;
         (void)read_memory(
                 pid,
