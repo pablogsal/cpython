@@ -40,6 +40,7 @@
 @MODULE__QUEUE_TRUE@_queue _queuemodule.c
 @MODULE__RANDOM_TRUE@_random _randommodule.c
 @MODULE__STRUCT_TRUE@_struct _struct.c
+@MODULE__PDB_TRUE@_pdb _pdbmodule.c
 
 # build supports subinterpreters
 @MODULE__INTERPRETERS_TRUE@_interpreters _interpretersmodule.c
