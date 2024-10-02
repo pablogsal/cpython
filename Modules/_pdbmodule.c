@@ -52,6 +52,7 @@
 #endif
 #include "Python.h"
 #include <internal/pycore_runtime.h>
+#include <internal/pycore_ceval.h>
 
 #ifndef HAVE_PROCESS_VM_READV
 #    define HAVE_PROCESS_VM_READV 0
@@ -586,7 +587,7 @@ activate_debugger_interface_impl(PyObject *module, int pid, int tid)
     if (bytes == -1) {
         return NULL;
     }
-    eval_breaker |= (1U <<5);
+    eval_breaker |= _PY_EVAL_PLEASE_STOP_BIT;
 
     bytes = write_memory(
             pid,
