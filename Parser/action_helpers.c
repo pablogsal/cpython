@@ -1702,7 +1702,7 @@ _PyPegen_create_assert(Parser *p, expr_ty test, expr_ty msg,
     }
     stmt_ty assert = _PyAST_Assert(test, msg, empty, lineno, col_offset, end_lineno, end_col_offset, arena);
 
-    _PyAST_ExpandAssert(assert, arena);
+    asdl_stmt_seq *stmts = _PyAST_ExpandAssert(assert, arena);
     // asdl_stmt_seq *seq = _Py_asdl_stmt_seq_new(1, p->arena);
     // if (!seq) {
     //     return NULL;
@@ -1729,6 +1729,6 @@ _PyPegen_create_assert(Parser *p, expr_ty test, expr_ty msg,
     //     return NULL;
     // }
     // asdl_stmt_seq* stmts = mod_result->v.Module.body;
-    // assert->v.Assert.extended_assert = stmts;
+    assert->v.Assert.extended_assert = stmts;
     return assert;
 }

@@ -2,12 +2,26 @@
 #include "pycore_ast.h"           // expr_ty
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
 #include "pycore_runtime.h"       // _Py_ID()
+#include "internal/pycore_ast.h"
 #include <float.h>                // DBL_MAX_10_EXP
 #include <stdbool.h>
 
+#define DEBUG 0
+
+#if DEBUG
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...)
+#endif
+
 typedef struct {
-    // Add any necessary fields here in the future
+    PyArena *arena;
+    int tmp_name_counter;
+    expr_ty result;
 } PyAssertRewriter;
+
+#define POSITION(n) (n)->lineno, (n)->col_offset, (n)->end_lineno, (n)->end_col_offset
+#define ARENA(r) (r)->arena
 
 // Forward declarations
 int visit_expr(PyAssertRewriter* rewriter, expr_ty expr);
@@ -27,32 +41,32 @@ int visit_arg_seq(PyAssertRewriter* rewriter, asdl_arg_seq* seq);
 
 // Helper functions for specific node types
 int visit_boolop(PyAssertRewriter* rewriter, boolop_ty op) {
-    printf("BoolOp: %s\n", op == And ? "And" : "Or");
+    DEBUG_PRINT("BoolOp: %s\n", op == And ? "And" : "Or");
     return 0;
 }
 
 int visit_operator(PyAssertRewriter* rewriter, operator_ty op) {
     const char* op_str[] = {"Add", "Sub", "Mult", "MatMult", "Div", "Mod", "Pow",
                             "LShift", "RShift", "BitOr", "BitXor", "BitAnd", "FloorDiv"};
-    printf("Operator: %s\n", op_str[op - 1]);
+    DEBUG_PRINT("Operator: %s\n", op_str[op - 1]);
     return 0;
 }
 
 int visit_unaryop(PyAssertRewriter* rewriter, unaryop_ty op) {
     const char* op_str[] = {"Invert", "Not", "UAdd", "USub"};
-    printf("UnaryOp: %s\n", op_str[op - 1]);
+    DEBUG_PRINT("UnaryOp: %s\n", op_str[op - 1]);
     return 0;
 }
 
 int visit_cmpop(PyAssertRewriter* rewriter, cmpop_ty op) {
     const char* op_str[] = {"Eq", "NotEq", "Lt", "LtE", "Gt", "GtE", "Is", "IsNot", "In", "NotIn"};
-    printf("CmpOp: %s\n", op_str[op - 1]);
+    DEBUG_PRINT("CmpOp: %s\n", op_str[op - 1]);
     return 0;
 }
 
 int visit_expr_context(PyAssertRewriter* rewriter, expr_context_ty ctx) {
     const char* ctx_str[] = {"Load", "Store", "Del"};
-    printf("ExprContext: %s\n", ctx_str[ctx - 1]);
+    DEBUG_PRINT("ExprContext: %s\n", ctx_str[ctx - 1]);
     return 0;
 }
 
@@ -91,21 +105,21 @@ int visit_arg_seq(PyAssertRewriter* rewriter, asdl_arg_seq* seq) {
 
 // Functions for specific expression types
 int visit_boolop_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("BoolOp expression\n");
+    DEBUG_PRINT("BoolOp expression\n");
     visit_boolop(rewriter, expr->v.BoolOp.op);
     visit_expr_seq(rewriter, expr->v.BoolOp.values);
     return 0;
 }
 
 int visit_named_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("NamedExpr expression\n");
+    DEBUG_PRINT("NamedExpr expression\n");
     visit_expr(rewriter, expr->v.NamedExpr.target);
     visit_expr(rewriter, expr->v.NamedExpr.value);
     return 0;
 }
 
 int visit_binop_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("BinOp expression\n");
+    DEBUG_PRINT("BinOp expression\n");
     visit_expr(rewriter, expr->v.BinOp.left);
     visit_operator(rewriter, expr->v.BinOp.op);
     visit_expr(rewriter, expr->v.BinOp.right);
@@ -113,21 +127,21 @@ int visit_binop_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_unaryop_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("UnaryOp expression\n");
+    DEBUG_PRINT("UnaryOp expression\n");
     visit_unaryop(rewriter, expr->v.UnaryOp.op);
     visit_expr(rewriter, expr->v.UnaryOp.operand);
     return 0;
 }
 
 int visit_lambda_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Lambda expression\n");
+    DEBUG_PRINT("Lambda expression\n");
     visit_arguments(rewriter, expr->v.Lambda.args);
     visit_expr(rewriter, expr->v.Lambda.body);
     return 0;
 }
 
 int visit_ifexp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("IfExp expression\n");
+    DEBUG_PRINT("IfExp expression\n");
     visit_expr(rewriter, expr->v.IfExp.test);
     visit_expr(rewriter, expr->v.IfExp.body);
     visit_expr(rewriter, expr->v.IfExp.orelse);
@@ -135,20 +149,20 @@ int visit_ifexp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_dict_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Dict expression\n");
+    DEBUG_PRINT("Dict expression\n");
     visit_expr_seq(rewriter, expr->v.Dict.keys);
     visit_expr_seq(rewriter, expr->v.Dict.values);
     return 0;
 }
 
 int visit_set_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Set expression\n");
+    DEBUG_PRINT("Set expression\n");
     visit_expr_seq(rewriter, expr->v.Set.elts);
     return 0;
 }
 
 int visit_listcomp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("ListComp expression\n");
+    DEBUG_PRINT("ListComp expression\n");
     visit_expr(rewriter, expr->v.ListComp.elt);
     for (int i = 0; i < asdl_seq_LEN(expr->v.ListComp.generators); i++) {
         visit_comprehension(rewriter, asdl_seq_GET(expr->v.ListComp.generators, i));
@@ -157,7 +171,7 @@ int visit_listcomp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_setcomp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("SetComp expression\n");
+    DEBUG_PRINT("SetComp expression\n");
     visit_expr(rewriter, expr->v.SetComp.elt);
     for (int i = 0; i < asdl_seq_LEN(expr->v.SetComp.generators); i++) {
         visit_comprehension(rewriter, asdl_seq_GET(expr->v.SetComp.generators, i));
@@ -166,7 +180,7 @@ int visit_setcomp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_generatorexp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("GeneratorExp expression\n");
+    DEBUG_PRINT("GeneratorExp expression\n");
     visit_expr(rewriter, expr->v.GeneratorExp.elt);
     for (int i = 0; i < asdl_seq_LEN(expr->v.GeneratorExp.generators); i++) {
         visit_comprehension(rewriter, asdl_seq_GET(expr->v.GeneratorExp.generators, i));
@@ -175,7 +189,7 @@ int visit_generatorexp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_dictcomp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("DictComp expression\n");
+    DEBUG_PRINT("DictComp expression\n");
     visit_expr(rewriter, expr->v.DictComp.key);
     visit_expr(rewriter, expr->v.DictComp.value);
     for (int i = 0; i < asdl_seq_LEN(expr->v.DictComp.generators); i++) {
@@ -185,13 +199,13 @@ int visit_dictcomp_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_await_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Await expression\n");
+    DEBUG_PRINT("Await expression\n");
     visit_expr(rewriter, expr->v.Await.value);
     return 0;
 }
 
 int visit_yield_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Yield expression\n");
+    DEBUG_PRINT("Yield expression\n");
     if (expr->v.Yield.value) {
         visit_expr(rewriter, expr->v.Yield.value);
     }
@@ -199,21 +213,90 @@ int visit_yield_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_yieldfrom_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("YieldFrom expression\n");
+    DEBUG_PRINT("YieldFrom expression\n");
     visit_expr(rewriter, expr->v.YieldFrom.value);
     return 0;
 }
 
+static expr_ty create_compare_call(PyAssertRewriter *rewriter, expr_ty left, const char* op, expr_ty right, expr_ty orig) {
+    expr_ty func = _PyAST_Name(PyUnicode_FromString("compare"), Load, POSITION(orig), ARENA(rewriter));
+    if (func == NULL) return NULL;
+
+    asdl_expr_seq *args = _Py_asdl_expr_seq_new(3, rewriter->arena);
+    if (args == NULL) return NULL;
+    asdl_seq_SET(args, 0, left);
+    asdl_seq_SET(args, 1, _PyAST_Constant(PyUnicode_FromString(op), NULL, POSITION(orig), ARENA(rewriter)));
+    asdl_seq_SET(args, 2, right);
+
+    return _PyAST_Call(func, args, NULL, POSITION(orig), ARENA(rewriter));
+}
+
+
+static expr_ty create_named_expr(PyAssertRewriter *rewriter, identifier name, expr_ty value, expr_ty orig) {
+    expr_ty target = _PyAST_Name(name, Store, POSITION(orig), ARENA(rewriter));
+    if (target == NULL) return NULL;
+
+    return _PyAST_NamedExpr(target, value, POSITION(orig), ARENA(rewriter));
+}
+
+static expr_ty create_bool_op(PyAssertRewriter *rewriter, boolop_ty op, expr_ty left, expr_ty right, expr_ty orig) {
+    asdl_expr_seq *values = _Py_asdl_expr_seq_new(2, rewriter->arena);
+    if (values == NULL) return NULL;
+    asdl_seq_SET(values, 0, left);
+    asdl_seq_SET(values, 1, right);
+
+    return _PyAST_BoolOp(op, values, POSITION(orig), ARENA(rewriter));
+}
+
 int visit_compare_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Compare expression\n");
-    visit_expr(rewriter, expr->v.Compare.left);
-    visit_int_seq(rewriter, expr->v.Compare.ops);
-    visit_expr_seq(rewriter, expr->v.Compare.comparators);
+    assert(expr != NULL);
+    DEBUG_PRINT("Compare expression\n");
+
+    expr_ty result = NULL;
+    expr_ty left = expr->v.Compare.left;
+
+    for (int i = 0; i < asdl_seq_LEN(expr->v.Compare.ops); i++) {
+        cmpop_ty op = (cmpop_ty)asdl_seq_GET(expr->v.Compare.ops, i);
+        expr_ty right = asdl_seq_GET(expr->v.Compare.comparators, i);
+
+        const char* op_str = (op == Eq) ? "==" :
+                             (op == NotEq) ? "!=" :
+                             (op == Lt) ? "<" :
+                             (op == LtE) ? "<=" :
+                             (op == Gt) ? ">" :
+                             (op == GtE) ? ">=" :
+                             (op == Is) ? "is" :
+                             (op == IsNot) ? "is not" :
+                             (op == In) ? "in" :
+                             (op == NotIn) ? "not in" : "unknown";
+
+        identifier tmp_name = PyUnicode_FromFormat("_tmp%d", rewriter->tmp_name_counter++);
+        if (tmp_name == NULL) return -1;
+
+        expr_ty compare_call = create_compare_call(rewriter, left, op_str, right, expr);
+        if (compare_call == NULL) return -1;
+
+        expr_ty named_expr = create_named_expr(rewriter, tmp_name, compare_call, expr);
+        if (named_expr == NULL) return -1;
+
+        if (result == NULL) {
+            result = named_expr;
+        } else {
+            result = create_bool_op(rewriter, And, result, named_expr, expr);
+            if (result == NULL) return -1;
+        }
+
+        // For the next iteration, the right operand becomes the left operand
+        left = right;
+    }
+
+    rewriter->result = result;
     return 0;
 }
 
+
 int visit_call_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Call expression\n");
+    DEBUG_PRINT("Call expression\n");
     visit_expr(rewriter, expr->v.Call.func);
     visit_expr_seq(rewriter, expr->v.Call.args);
     for (int i = 0; i < asdl_seq_LEN(expr->v.Call.keywords); i++) {
@@ -223,7 +306,7 @@ int visit_call_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_formatted_value_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("FormattedValue expression\n");
+    DEBUG_PRINT("FormattedValue expression\n");
     visit_expr(rewriter, expr->v.FormattedValue.value);
     if (expr->v.FormattedValue.format_spec) {
         visit_expr(rewriter, expr->v.FormattedValue.format_spec);
@@ -232,28 +315,26 @@ int visit_formatted_value_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_joinedstr_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("JoinedStr expression\n");
+    DEBUG_PRINT("JoinedStr expression\n");
     visit_expr_seq(rewriter, expr->v.JoinedStr.values);
     return 0;
 }
 
 int visit_constant_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Constant expression\n");
     return 0;
-    // Note: You might want to add logic to print the constant value based on its type
 }
 
 int visit_attribute_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Attribute expression\n");
+    DEBUG_PRINT("Attribute expression\n");
     visit_expr(rewriter, expr->v.Attribute.value);
-    printf("Attribute: ");
-    _PyObject_Dump(expr->v.Attribute.attr);
+    DEBUG_PRINT("Attribute: ");
+    // _PyObject_Dump(expr->v.Attribute.attr);
     visit_expr_context(rewriter, expr->v.Attribute.ctx);
     return 0;
 }
 
 int visit_subscript_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Subscript expression\n");
+    DEBUG_PRINT("Subscript expression\n");
     visit_expr(rewriter, expr->v.Subscript.value);
     visit_expr(rewriter, expr->v.Subscript.slice);
     visit_expr_context(rewriter, expr->v.Subscript.ctx);
@@ -261,36 +342,36 @@ int visit_subscript_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 }
 
 int visit_starred_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Starred expression\n");
+    DEBUG_PRINT("Starred expression\n");
     visit_expr(rewriter, expr->v.Starred.value);
     visit_expr_context(rewriter, expr->v.Starred.ctx);
     return 0;
 }
 
 int visit_name_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Name expression\n");
-    printf("Identifier: ");
-    _PyObject_Dump(expr->v.Name.id);
+    DEBUG_PRINT("Name expression\n");
+    DEBUG_PRINT("Identifier: ");
+    // _PyObject_Dump(expr->v.Name.id);
     visit_expr_context(rewriter, expr->v.Name.ctx);
     return 0;
 }
 
 int visit_list_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("List expression\n");
+    DEBUG_PRINT("List expression\n");
     visit_expr_seq(rewriter, expr->v.List.elts);
     visit_expr_context(rewriter, expr->v.List.ctx);
     return 0;
 }
 
 int visit_tuple_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Tuple expression\n");
+    DEBUG_PRINT("Tuple expression\n");
     visit_expr_seq(rewriter, expr->v.Tuple.elts);
     visit_expr_context(rewriter, expr->v.Tuple.ctx);
     return 0;
 }
 
 int visit_slice_expr(PyAssertRewriter* rewriter, expr_ty expr) {
-    printf("Slice expression\n");
+    DEBUG_PRINT("Slice expression\n");
     if (expr->v.Slice.lower) visit_expr(rewriter, expr->v.Slice.lower);
     if (expr->v.Slice.upper) visit_expr(rewriter, expr->v.Slice.upper);
     if (expr->v.Slice.step) visit_expr(rewriter, expr->v.Slice.step);
@@ -304,7 +385,7 @@ int visit_expr(PyAssertRewriter* rewriter, expr_ty expr) {
         return -1;
     }
 
-    printf("Expression at line %d, col %d\n", expr->lineno, expr->col_offset);
+    DEBUG_PRINT("Expression at line %d, col %d\n", expr->lineno, expr->col_offset);
 
     switch (expr->kind) {
         case BoolOp_kind: visit_boolop_expr(rewriter, expr); break;
@@ -344,17 +425,17 @@ int visit_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 
 int visit_comprehension(PyAssertRewriter* rewriter, struct _comprehension *comp) {
     assert(comp != NULL);
-    printf("Comprehension\n");
+    DEBUG_PRINT("Comprehension\n");
     visit_expr(rewriter, comp->target);
     visit_expr(rewriter, comp->iter);
     visit_expr_seq(rewriter, comp->ifs);
-    printf("Is async: %d\n", comp->is_async);
+    DEBUG_PRINT("Is async: %d\n", comp->is_async);
     return 0;
 }
 
 int visit_arguments(PyAssertRewriter* rewriter, arguments_ty args) {
     assert(args != NULL);
-    printf("Arguments\n");
+    DEBUG_PRINT("Arguments\n");
     visit_arg_seq(rewriter, args->posonlyargs);
     visit_arg_seq(rewriter, args->args);
     if (args->vararg) visit_arg(rewriter, args->vararg);
@@ -367,40 +448,67 @@ int visit_arguments(PyAssertRewriter* rewriter, arguments_ty args) {
 
 int visit_arg(PyAssertRewriter* rewriter, arg_ty arg) {
     assert(arg != NULL);
-    printf("Arg: ");
-    _PyObject_Dump(arg->arg);
+    DEBUG_PRINT("Arg: ");
+    // _PyObject_Dump(arg->arg);
     if (arg->annotation) visit_expr(rewriter, arg->annotation);
     if (arg->type_comment) {
-        printf("Type comment: ");
-        _PyObject_Dump(arg->type_comment);
+        DEBUG_PRINT("Type comment: ");
+        // _PyObject_Dump(arg->type_comment);
     }
-    printf("Line: %d, Col: %d, End Line: %d, End Col: %d\n",
+    DEBUG_PRINT("Line: %d, Col: %d, End Line: %d, End Col: %d\n",
            arg->lineno, arg->col_offset, arg->end_lineno, arg->end_col_offset);
     return 0;
 }
 
 int visit_keyword(PyAssertRewriter* rewriter, keyword_ty keyword) {
     assert(keyword != NULL);
-    printf("Keyword\n");
+    DEBUG_PRINT("Keyword\n");
     if (keyword->arg) {
-        printf("Arg: \n");
-        _PyObject_Dump(keyword->arg);
+        DEBUG_PRINT("Arg: \n");
+        // _PyObject_Dump(keyword->arg);
     }
     visit_expr(rewriter, keyword->value);
-    printf("Line: %d, Col: %d, End Line: %d, End Col: %d\n",
+    DEBUG_PRINT("Line: %d, Col: %d, End Line: %d, End Col: %d\n",
            keyword->lineno, keyword->col_offset, keyword->end_lineno, keyword->end_col_offset);
     return 0;
 }
 
-PyObject *
+static void PyAssertRewriter_free(PyAssertRewriter *rewriter) {
+    return;
+}
+
+static int PyAssertRewriter_init(PyAssertRewriter *rewriter, PyArena *arena) {
+    rewriter->arena = arena;
+    return 0;
+}
+
+asdl_stmt_seq*
 _PyAST_ExpandAssert(stmt_ty assert, PyArena *arena)
 {
     PyAssertRewriter rewriter = {0};
+    if (PyAssertRewriter_init(&rewriter, arena) < 0) {
+        return NULL;
+    }
+
     if(visit_expr(&rewriter, assert->v.Assert.test) != 0) {
         if (!PyErr_Occurred()) {
             PyErr_SetString(PyExc_SystemError, "Failed to visit expression");
         }
         return NULL;
     }
-    Py_RETURN_NONE;
+
+    PyAssertRewriter_free(&rewriter);
+
+    if (rewriter.result == NULL) {
+        return _Py_asdl_stmt_seq_new(0, arena);
+    }
+
+    stmt_ty expr = _PyAST_Expr(rewriter.result, POSITION(assert), arena);
+
+    asdl_stmt_seq *wrapper = _Py_asdl_stmt_seq_new(1, arena);
+    if (wrapper == NULL) {
+        return NULL;
+    }
+    asdl_seq_SET(wrapper, 0, expr);
+    return wrapper;
 }

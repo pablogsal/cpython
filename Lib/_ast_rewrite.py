@@ -169,6 +169,7 @@ class AssertionRewriter(ast.NodeVisitor):
 
     def generic_visit(self, node: ast.AST) -> tuple[ast.Name, str]:
         """Handle expressions we don't have custom code for."""
+        print(type(node))
         res = self.assign(node)
         return res, self.explanation_param(self.display(res))
 
@@ -468,7 +469,7 @@ def do_rewrite(x: ast.Module) -> ast.Module:
     r = AssertionRewriter()
     r.visit(x)
     x2 = ast.Module(r.statements)
-    # print("Modified ast code: ")
-    # print(ast.unparse(x2))
-    # print()
+    print("Modified ast code: ")
+    print(ast.unparse(x2))
+    print()
     return x2
