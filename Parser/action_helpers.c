@@ -1701,32 +1701,34 @@ _PyPegen_create_assert(Parser *p, expr_ty test, expr_ty msg,
         return NULL;
     }
     stmt_ty assert = _PyAST_Assert(test, msg, empty, lineno, col_offset, end_lineno, end_col_offset, arena);
-    asdl_stmt_seq *seq = _Py_asdl_stmt_seq_new(1, p->arena);
-    if (!seq) {
-        return NULL;
-    }
-    asdl_seq_SET(seq, 0, assert);
-    mod_ty m = _PyAST_Module(seq, NULL, arena);
-    PyObject* assert_ast = PyAST_mod2obj(m);
-    if (assert_ast == NULL) {
-        return NULL;
-    }
 
-    PyObject *rewrite = _PyImport_GetModuleAttrString("_ast_rewrite", "do_rewrite");
-    if (rewrite == NULL) {
-        PyErr_Clear();
-        return assert;
-    }
+    _PyAST_ExpandAssert(assert, arena);
+    // asdl_stmt_seq *seq = _Py_asdl_stmt_seq_new(1, p->arena);
+    // if (!seq) {
+    //     return NULL;
+    // }
+    // asdl_seq_SET(seq, 0, assert);
+    // mod_ty m = _PyAST_Module(seq, NULL, arena);
+    // PyObject* assert_ast = PyAST_mod2obj(m);
+    // if (assert_ast == NULL) {
+    //     return NULL;
+    // }
 
-    PyObject* res = PyObject_CallOneArg(rewrite, assert_ast);
-    if (res == NULL) {
-        return NULL;
-    }
-    mod_ty mod_result = PyAST_obj2mod(res, arena, 0);
-    if (mod_result == NULL) {
-        return NULL;
-    }
-    asdl_stmt_seq* stmts = mod_result->v.Module.body;
-    assert->v.Assert.extended_assert = stmts;
+    // PyObject *rewrite = _PyImport_GetModuleAttrString("_ast_rewrite", "do_rewrite");
+    // if (rewrite == NULL) {
+    //     PyErr_Clear();
+    //     return assert;
+    // }
+
+    // PyObject* res = PyObject_CallOneArg(rewrite, assert_ast);
+    // if (res == NULL) {
+    //     return NULL;
+    // }
+    // mod_ty mod_result = PyAST_obj2mod(res, arena, 0);
+    // if (mod_result == NULL) {
+    //     return NULL;
+    // }
+    // asdl_stmt_seq* stmts = mod_result->v.Module.body;
+    // assert->v.Assert.extended_assert = stmts;
     return assert;
 }
