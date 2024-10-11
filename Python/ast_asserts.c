@@ -248,6 +248,16 @@ static expr_ty create_bool_op(PyAssertRewriter *rewriter, boolop_ty op, expr_ty 
     return _PyAST_BoolOp(op, values, POSITION(orig), ARENA(rewriter));
 }
 
+static expr_ty create_lambda_call(PyAssertRewriter *rewriter, expr_ty body, expr_ty orig) {
+    arguments_ty args = _PyAST_arguments(NULL, NULL, NULL, NULL, NULL, NULL, NULL, rewriter->arena);
+    if (args == NULL) return NULL;
+
+    expr_ty lambda = _PyAST_Lambda(args, body, POSITION(orig), ARENA(rewriter));
+    if (lambda == NULL) return NULL;
+
+    return _PyAST_Call(lambda, NULL, NULL, POSITION(orig), ARENA(rewriter));
+}
+
 int visit_compare_expr(PyAssertRewriter* rewriter, expr_ty expr) {
     assert(expr != NULL);
     DEBUG_PRINT("Compare expression\n");
@@ -288,6 +298,11 @@ int visit_compare_expr(PyAssertRewriter* rewriter, expr_ty expr) {
 
         // For the next iteration, the right operand becomes the left operand
         left = right;
+    }
+
+    // Wrap the result in a lambda call
+    if (result != NULL) {
+        result = create_lambda_call(rewriter, result, expr);
     }
 
     rewriter->result = result;
