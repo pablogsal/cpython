@@ -648,7 +648,7 @@ get_stack_trace(PyObject* self, PyObject* args)
                 (void*)(address_of_thread + local_debug_offsets.debugger_support.eval_breaker),
                 sizeof(uintptr_t),
                 &eval_breaker);
-        
+
         eval_breaker |= (1U <<5);
 
          (void)write_memory(
@@ -663,8 +663,8 @@ get_stack_trace(PyObject* self, PyObject* args)
                 (void*)(address_of_thread + local_debug_offsets.debugger_support.debugger_pending_call),
                 sizeof(int),
                 &pending_call);
- 
- 
+
+
         void* address_of_current_frame;
         (void)read_memory(
                 pid,

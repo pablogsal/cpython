@@ -85,6 +85,7 @@ import tokenize
 import traceback
 import linecache
 import _colorize
+import time
 
 from contextlib import contextmanager
 from rlcompleter import Completer
@@ -2361,7 +2362,7 @@ class RemotePdb(Pdb):
         super().__init__(completekey, stdin, stdout, skip, nosigint, readrc, mode)
         self.__stdin = stdin
         self.__stdout = stdout
-    
+
     def set_quit(self) -> types.NoneType:
         self.__stdin.close()
         self.__stdout.close()
@@ -2372,9 +2373,8 @@ class RemotePdb(Pdb):
             return super().trace_dispatch(frame, event, arg)
         except BaseException:
             pass
-    
+
     def __del__(self):
-        super().__del__()
         self.__stdin.close()
         self.__stdout.close()
 
@@ -2383,11 +2383,9 @@ def _debug_with_fifo():
     def _create_fifo(fifo_path) :
         if not os.path.exists(fifo_path):
             os.mkfifo(fifo_path)
-        
+
     INPUT_FIFO = f"/tmp/pdb_input_fifo_{os.getpid()}"
     OUTPUT_FIFO = f"/tmp/pdb_output_fifo_{os.getpid()}"
-    INPUT_FIFO = "/tmp/pdb_input_fifo"
-    OUTPUT_FIFO =f"/tmp/pdb_output_fifo"
 
     current_stdin = sys.stdin
     current_stdout = sys.stdout
@@ -2440,6 +2438,79 @@ def pm():
     post_mortem(sys.last_exc)
 
 
+def read_fifo(fifo, timeout=0.1):
+    import select
+    rlist, _, _ = select.select([fifo], [], [], timeout)
+    if rlist:
+        # Read everything available in the fifo
+        output = ""
+        while True:
+            line = fifo.readline()
+            if not line:
+                break
+            output += line
+        return output
+    return None
+
+
+def attach_to_pid(pid):
+    if sys.platform in ("win32", "cygwin"):
+        print("Error: This feature is not supported on Windows")
+        sys.exit(1)
+
+    import fcntl
+    import _pdb
+
+    try:
+        _pdb.activate_debugger_interface(pid)
+    except PermissionError:
+        print(f"Error: Permission denied. Make sure you have the necessary permissions to attach to PID {pid}.")
+        sys.exit(1)
+
+    INPUT_FIFO = f"/tmp/pdb_input_fifo_{pid}"
+    OUTPUT_FIFO = f"/tmp/pdb_output_fifo_{pid}"
+    while not os.path.exists(INPUT_FIFO) or not os.path.exists(OUTPUT_FIFO):
+        print("Waiting for debugger to attach...\r", end="")
+        time.sleep(0.1)
+
+    print("PDB FIFO Driver")
+    print("Type 'quit' or 'exit' to end the session.")
+
+    fd = os.open(INPUT_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+    try:
+        with os.fdopen(fd, "w") as input_fifo, open(OUTPUT_FIFO, "r") as output_fifo:
+            flags = fcntl.fcntl(output_fifo, fcntl.F_GETFL)
+            fcntl.fcntl(output_fifo, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            # Check for any pending output
+            output = read_fifo(output_fifo)
+            if output:
+                print(output, end="")
+            while True:
+                # Get user input
+                try:
+                    command = input("")
+                except OSError:
+                    break
+
+                if command.lower() in ("quit", "exit"):
+                    break
+
+                # Send command to PDB
+                input_fifo.write(command + "\n")
+                input_fifo.flush()
+
+                # Wait for and print the response
+                output = read_fifo(output_fifo)
+                if not output:
+                    break
+                print(output, end="")
+                if command and not output:
+                    break
+    except BrokenPipeError:
+        pass
+
+    print("PDB session ended.")
+
 # Main program for testing
 
 TESTCMD = 'import x; x.main()'
@@ -2483,6 +2554,7 @@ def main():
     parser.add_argument('-m', metavar='module', dest='module')
     parser.add_argument('args', nargs='*',
                         help="when -m is not specified, the first arg is the script to debug")
+    parser.add_argument('-p', '--pid', type=int, help="attach to the specified PID", default=None)
 
     if len(sys.argv) == 1:
         # If no arguments were given (python -m pdb), print the whole help message.
@@ -2491,6 +2563,13 @@ def main():
         sys.exit(2)
 
     opts = parser.parse_args()
+
+    if opts.pid and opts.module:
+        parser.error("argument -m: not allowed with argument --pid")
+
+    if opts.pid:
+        attach_to_pid(opts.pid)
+        return
 
     if opts.module:
         file = opts.module

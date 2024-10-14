@@ -424,7 +424,7 @@ ssize_t
 write_memory(pid_t pid, uintptr_t remote_address, size_t len, const void* src)
 {
     ssize_t total_bytes_written = 0;
-#if defined(__linux__) && HAVE_PROCESS_VM_WRITEV
+#if defined(__linux__) && HAVE_PROCESS_VM_READV
     struct iovec local[1];
     struct iovec remote[1];
     ssize_t result = 0;
@@ -467,6 +467,7 @@ write_memory(pid_t pid, uintptr_t remote_address, size_t len, const void* src)
     }
     total_bytes_written = len;
 #else
+    PyErr_Format(PyExc_RuntimeError, "Writing memory is not supported on this platform");
     return -1;
 #endif
     return total_bytes_written;
