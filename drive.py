@@ -2,6 +2,7 @@
 import os
 import select
 import sys
+import fcntl
 
 # Define FIFO paths (same as in the debug script)
 INPUT_FIFO = "/tmp/pdb_input_fifo"
@@ -11,7 +12,14 @@ OUTPUT_FIFO = "/tmp/pdb_output_fifo"
 def read_fifo(fifo, timeout=0.1):
     rlist, _, _ = select.select([fifo], [], [], timeout)
     if rlist:
-        return fifo.readline().strip()
+        # Read everything available in the fifo
+        output = ""
+        while True:
+            line = fifo.readline()
+            if not line:
+                break
+            output += line
+        return output
     return None
 
 
@@ -24,6 +32,8 @@ def main():
     print("Type 'quit' or 'exit' to end the session.")
 
     with open(INPUT_FIFO, "w") as input_fifo, open(OUTPUT_FIFO, "r") as output_fifo:
+        flags = fcntl.fcntl(output_fifo, fcntl.F_GETFL)
+        fcntl.fcntl(output_fifo, fcntl.F_SETFL, flags | os.O_NONBLOCK)
         while True:
             # Check for any pending output
             while True:

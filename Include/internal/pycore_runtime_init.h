@@ -137,7 +137,9 @@ extern PyTypeObject _PyExc_MemoryError;
             }, \
             .debugger_support = { \
                 .eval_breaker = offsetof(PyThreadState, eval_breaker), \
-                .debugger_pending_call = offsetof(PyThreadState, debugger_pending_call),  \
+                .remote_debugger_support = offsetof(PyThreadState, remote_debugger_support),  \
+                .debugger_pending_call = offsetof(_PyRemoteDebuggerSupport, debugger_pending_call),  \
+                .debugger_script_path = offsetof(_PyRemoteDebuggerSupport, debugger_script_path),  \
             }, \
         }, \
         .allocators = { \

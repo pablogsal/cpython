@@ -501,18 +501,24 @@ activate_debugger_interface
     pid: int
     /
     tid: int = 0
+    debugger_script_path: str = NULL
 
 Return number of occurrences of v in the array.
 [clinic start generated code]*/
 
 static PyObject *
-activate_debugger_interface_impl(PyObject *module, int pid, int tid)
-/*[clinic end generated code: output=485efa8950bf319a input=1bf22924495d2495]*/
+activate_debugger_interface_impl(PyObject *module, int pid, int tid,
+                                 const char *debugger_script_path)
+/*[clinic end generated code: output=6ef03299433b14df input=6aa221d92b729625]*/
 {
 #if (!defined(__linux__) && !defined(__APPLE__)) || (defined(__linux__) && !HAVE_PROCESS_VM_READV)
     PyErr_SetString(PyExc_RuntimeError, "get_stack_trace is not supported on this platform");
     return NULL;
 #endif
+    if (debugger_script_path != NULL && strlen(debugger_script_path) > PATH_MAX) {
+        PyErr_SetString(PyExc_ValueError, "Debugger script path is too long");
+        return NULL;
+    }
 
     uintptr_t runtime_start_address = get_py_runtime(pid);
     struct _Py_DebugOffsets local_debug_offsets;
@@ -600,13 +606,33 @@ activate_debugger_interface_impl(PyObject *module, int pid, int tid)
     }
 
     int pending_call = 1;
+    uintptr_t debugger_pending_call_addr = (
+            address_of_thread +
+            local_debug_offsets.debugger_support.remote_debugger_support +
+            local_debug_offsets.debugger_support.debugger_pending_call);
     bytes = write_memory(
             pid,
-            address_of_thread + local_debug_offsets.debugger_support.debugger_pending_call,
+            debugger_pending_call_addr,
             sizeof(int),
             &pending_call);
+
     if (bytes == -1) {
         return NULL;
+    }
+
+    if (debugger_script_path != NULL) {
+        uintptr_t debugger_script_path_addr = (
+                address_of_thread +
+                local_debug_offsets.debugger_support.remote_debugger_support +
+                local_debug_offsets.debugger_support.debugger_script_path);
+        bytes = write_memory(
+                pid,
+                debugger_script_path_addr,
+                strlen(debugger_script_path) + 1,
+                debugger_script_path);
+        if (bytes == -1) {
+            return NULL;
+        }
     }
 
     Py_RETURN_NONE;

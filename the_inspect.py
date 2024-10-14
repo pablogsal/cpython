@@ -1,4 +1,4 @@
-from _testexternalinspection import get_stack_trace
+from _pdb import activate_debugger_interface
 import sys
 
-print(get_stack_trace(int(sys.argv[1])))
+print(activate_debugger_interface(int(sys.argv[1])))

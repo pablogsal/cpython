@@ -195,7 +195,9 @@ typedef struct _Py_DebugOffsets {
 
     struct _debugger_support {
         uint64_t eval_breaker;
+        uint64_t remote_debugger_support;
         uint64_t debugger_pending_call;
+        uint64_t debugger_script_path;
     } debugger_support;
 } _Py_DebugOffsets;
 

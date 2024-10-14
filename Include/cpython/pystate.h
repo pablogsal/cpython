@@ -29,6 +29,11 @@ typedef int (*Py_tracefunc)(PyObject *, PyFrameObject *, int, PyObject *);
 #define PyTrace_C_RETURN 6
 #define PyTrace_OPCODE 7
 
+typedef struct _remote_debugger_support {
+    int debugger_pending_call;
+    char debugger_script_path[PATH_MAX];
+} _PyRemoteDebuggerSupport;
+
 typedef struct _err_stackitem {
     /* This struct represents a single execution context where we might
      * be currently handling an exception.  It is a per-coroutine state
@@ -201,7 +206,7 @@ struct _ts {
     */
     PyObject *threading_local_sentinel;
 
-    int debugger_pending_call;
+    _PyRemoteDebuggerSupport remote_debugger_support;
 };
 
 #ifdef Py_DEBUG

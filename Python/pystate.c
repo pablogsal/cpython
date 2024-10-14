@@ -1738,8 +1738,7 @@ PyThreadState_Clear(PyThreadState *tstate)
 
     Py_CLEAR(tstate->context);
 
-    tstate->debugger_pending_call = 0;
-
+    tstate->remote_debugger_support.debugger_pending_call = 0;
 #ifdef Py_GIL_DISABLED
     // Each thread should clear own freelists in free-threading builds.
     struct _Py_freelists *freelists = _Py_freelists_GET();

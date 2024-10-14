@@ -2354,6 +2354,52 @@ def set_trace(*, header=None, commands=None):
         pdb.message(header)
     pdb.set_trace(sys._getframe().f_back, commands=commands)
 
+# Remote debugging interface
+
+class RemotePdb(Pdb):
+    def __init__(self, completekey='tab', stdin=None, stdout=None, skip=None, nosigint=False, readrc=True, mode=None):
+        super().__init__(completekey, stdin, stdout, skip, nosigint, readrc, mode)
+        self.__stdin = stdin
+        self.__stdout = stdout
+    
+    def set_quit(self) -> types.NoneType:
+        self.__stdin.close()
+        self.__stdout.close()
+        return super().set_quit()
+
+    def trace_dispatch(self, frame: sys.FrameType, event: str, arg: os.Any) -> Callable[[FrameType, str, Any], TraceFunction | None]:
+        try:
+            return super().trace_dispatch(frame, event, arg)
+        except BaseException:
+            pass
+    
+    def __del__(self):
+        super().__del__()
+        self.__stdin.close()
+        self.__stdout.close()
+
+
+def _debug_with_fifo():
+    def _create_fifo(fifo_path) :
+        if not os.path.exists(fifo_path):
+            os.mkfifo(fifo_path)
+        
+    INPUT_FIFO = f"/tmp/pdb_input_fifo_{os.getpid()}"
+    OUTPUT_FIFO = f"/tmp/pdb_output_fifo_{os.getpid()}"
+    INPUT_FIFO = "/tmp/pdb_input_fifo"
+    OUTPUT_FIFO =f"/tmp/pdb_output_fifo"
+
+    current_stdin = sys.stdin
+    current_stdout = sys.stdout
+    _create_fifo(INPUT_FIFO)
+    _create_fifo(OUTPUT_FIFO)
+    print("Waiting for debugger to attach...")
+    _input = open(INPUT_FIFO, 'r')
+    _output = open(OUTPUT_FIFO, 'w')
+    pdb = RemotePdb(mode='inline', stdin=_input, stdout=_output)
+    pdb.message("REMOTE DEBUGGER ACTIVATED")
+    pdb.set_trace()
+
 # Post-Mortem interface
 
 def post_mortem(t=None):
