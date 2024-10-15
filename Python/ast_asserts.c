@@ -17,7 +17,7 @@
 typedef struct {
     PyArena *arena;
     int tmp_name_counter;
-    expr_ty result;
+    asdl_stmt_seq *result;
 } PyAssertRewriter;
 
 #define POSITION(n) (n)->lineno, (n)->col_offset, (n)->end_lineno, (n)->end_col_offset
@@ -218,97 +218,83 @@ int visit_yieldfrom_expr(PyAssertRewriter* rewriter, expr_ty expr) {
     return 0;
 }
 
-static expr_ty create_compare_call(PyAssertRewriter *rewriter, expr_ty left, const char* op, expr_ty right, expr_ty orig) {
+static expr_ty create_compare_call(PyAssertRewriter *rewriter, expr_ty left, const char* op, expr_ty right, expr_ty assert_var, expr_ty orig) {
     expr_ty func = _PyAST_Name(PyUnicode_FromString("compare"), Load, POSITION(orig), ARENA(rewriter));
     if (func == NULL) return NULL;
 
-    asdl_expr_seq *args = _Py_asdl_expr_seq_new(3, rewriter->arena);
+    asdl_expr_seq *args = _Py_asdl_expr_seq_new(4, rewriter->arena);
     if (args == NULL) return NULL;
     asdl_seq_SET(args, 0, left);
-    asdl_seq_SET(args, 1, _PyAST_Constant(PyUnicode_FromString(op), NULL, POSITION(orig), ARENA(rewriter)));
-    asdl_seq_SET(args, 2, right);
+    asdl_seq_SET(args, 1, right);
+    asdl_seq_SET(args, 2, _PyAST_Constant(PyUnicode_FromString(op), NULL, POSITION(orig), ARENA(rewriter)));
+    asdl_seq_SET(args, 3, assert_var);
 
     return _PyAST_Call(func, args, NULL, POSITION(orig), ARENA(rewriter));
-}
-
-
-static expr_ty create_named_expr(PyAssertRewriter *rewriter, identifier name, expr_ty value, expr_ty orig) {
-    expr_ty target = _PyAST_Name(name, Store, POSITION(orig), ARENA(rewriter));
-    if (target == NULL) return NULL;
-
-    return _PyAST_NamedExpr(target, value, POSITION(orig), ARENA(rewriter));
-}
-
-static expr_ty create_bool_op(PyAssertRewriter *rewriter, boolop_ty op, expr_ty left, expr_ty right, expr_ty orig) {
-    asdl_expr_seq *values = _Py_asdl_expr_seq_new(2, rewriter->arena);
-    if (values == NULL) return NULL;
-    asdl_seq_SET(values, 0, left);
-    asdl_seq_SET(values, 1, right);
-
-    return _PyAST_BoolOp(op, values, POSITION(orig), ARENA(rewriter));
-}
-
-static expr_ty create_lambda_call(PyAssertRewriter *rewriter, expr_ty body, expr_ty orig) {
-    arguments_ty args = _PyAST_arguments(NULL, NULL, NULL, NULL, NULL, NULL, NULL, rewriter->arena);
-    if (args == NULL) return NULL;
-
-    expr_ty lambda = _PyAST_Lambda(args, body, POSITION(orig), ARENA(rewriter));
-    if (lambda == NULL) return NULL;
-
-    return _PyAST_Call(lambda, NULL, NULL, POSITION(orig), ARENA(rewriter));
 }
 
 int visit_compare_expr(PyAssertRewriter* rewriter, expr_ty expr) {
     assert(expr != NULL);
     DEBUG_PRINT("Compare expression\n");
 
-    expr_ty result = NULL;
+    asdl_stmt_seq *stmts = _Py_asdl_stmt_seq_new(asdl_seq_LEN(expr->v.Compare.ops) + 1, rewriter->arena);
+    if (stmts == NULL) return -1;
+
+    asdl_expr_seq *test_exprs = _Py_asdl_expr_seq_new(asdl_seq_LEN(expr->v.Compare.ops), rewriter->arena);
+    if (test_exprs == NULL) return -1;
+
+    asdl_stmt_seq *compare_calls = _Py_asdl_stmt_seq_new(asdl_seq_LEN(expr->v.Compare.ops), rewriter->arena);
+    if (compare_calls == NULL) return -1;
+
     expr_ty left = expr->v.Compare.left;
 
     for (int i = 0; i < asdl_seq_LEN(expr->v.Compare.ops); i++) {
         cmpop_ty op = (cmpop_ty)asdl_seq_GET(expr->v.Compare.ops, i);
         expr_ty right = asdl_seq_GET(expr->v.Compare.comparators, i);
 
-        const char* op_str = (op == Eq) ? "==" :
-                             (op == NotEq) ? "!=" :
-                             (op == Lt) ? "<" :
-                             (op == LtE) ? "<=" :
-                             (op == Gt) ? ">" :
-                             (op == GtE) ? ">=" :
-                             (op == Is) ? "is" :
-                             (op == IsNot) ? "is not" :
-                             (op == In) ? "in" :
-                             (op == NotIn) ? "not in" : "unknown";
+        // Create @py_assertX assignment
+        identifier assert_name = PyUnicode_FromFormat("@py_assert%d", i+1);
+        expr_ty assert_expr = _PyAST_Compare(left,
+                                             _Py_asdl_int_seq_new(1, rewriter->arena),
+                                             _Py_asdl_expr_seq_new(1, rewriter->arena),
+                                             POSITION(expr), ARENA(rewriter));
+        asdl_seq_SET(assert_expr->v.Compare.ops, 0, op);
+        asdl_seq_SET(assert_expr->v.Compare.comparators, 0, right);
 
-        identifier tmp_name = PyUnicode_FromFormat("_tmp%d", rewriter->tmp_name_counter++);
-        if (tmp_name == NULL) return -1;
+        stmt_ty assign_stmt = _PyAST_Assign(_Py_asdl_expr_seq_new(1, rewriter->arena),
+                                            assert_expr, NULL, POSITION(expr), ARENA(rewriter));
+        asdl_seq_SET(assign_stmt->v.Assign.targets, 0,
+                     _PyAST_Name(assert_name, Store, POSITION(expr), ARENA(rewriter)));
 
-        expr_ty compare_call = create_compare_call(rewriter, left, op_str, right, expr);
-        if (compare_call == NULL) return -1;
+        asdl_seq_SET(stmts, i, assign_stmt);
 
-        expr_ty named_expr = create_named_expr(rewriter, tmp_name, compare_call, expr);
-        if (named_expr == NULL) return -1;
+        // Add to test expressions
+        asdl_seq_SET(test_exprs, i, _PyAST_Name(assert_name, Load, POSITION(expr), ARENA(rewriter)));
 
-        if (result == NULL) {
-            result = named_expr;
-        } else {
-            result = create_bool_op(rewriter, And, result, named_expr, expr);
-            if (result == NULL) return -1;
-        }
+        // Create compare call
+        const char* op_str = (op == Eq) ? "==" : (op == NotEq) ? "!=" :
+                             (op == Lt) ? "<" : (op == LtE) ? "<=" :
+                             (op == Gt) ? ">" : (op == GtE) ? ">=" :
+                             (op == Is) ? "is" : (op == IsNot) ? "is not" :
+                             (op == In) ? "in" : (op == NotIn) ? "not in" : "unknown";
 
-        // For the next iteration, the right operand becomes the left operand
+        expr_ty compare_call = create_compare_call(rewriter, left, op_str, right,
+                                                   _PyAST_Name(assert_name, Load, POSITION(expr), ARENA(rewriter)),
+                                                   expr);
+        stmt_ty expr_stmt = _PyAST_Expr(compare_call, POSITION(expr), ARENA(rewriter));
+        asdl_seq_SET(compare_calls, i, expr_stmt);
+
         left = right;
     }
 
-    // Wrap the result in a lambda call
-    if (result != NULL) {
-        result = create_lambda_call(rewriter, result, expr);
-    }
+    // Create the if statement
+    expr_ty test = _PyAST_BoolOp(And, test_exprs, POSITION(expr), ARENA(rewriter));
+    expr_ty not_test = _PyAST_UnaryOp(Not, test, POSITION(expr), ARENA(rewriter));
+    stmt_ty if_stmt = _PyAST_If(not_test, compare_calls, NULL, POSITION(expr), ARENA(rewriter));
+    asdl_seq_SET(stmts, asdl_seq_LEN(expr->v.Compare.ops), if_stmt);
 
-    rewriter->result = result;
+    rewriter->result = stmts;
     return 0;
 }
-
 
 int visit_call_expr(PyAssertRewriter* rewriter, expr_ty expr) {
     DEBUG_PRINT("Call expression\n");
@@ -518,12 +504,5 @@ _PyAST_ExpandAssert(stmt_ty assert, PyArena *arena)
         return _Py_asdl_stmt_seq_new(0, arena);
     }
 
-    stmt_ty expr = _PyAST_Expr(rewriter.result, POSITION(assert), arena);
-
-    asdl_stmt_seq *wrapper = _Py_asdl_stmt_seq_new(1, arena);
-    if (wrapper == NULL) {
-        return NULL;
-    }
-    asdl_seq_SET(wrapper, 0, expr);
-    return wrapper;
+    return rewriter.result;
 }
