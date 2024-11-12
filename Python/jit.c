@@ -18,6 +18,192 @@
 #include "pycore_sliceobject.h"
 #include "pycore_jit.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/mman.h>
+
+#define UNW_LOCAL_ONLY
+#include <libunwind.h>
+
+#define X86_64_RBP 6    // Frame pointer
+#define X86_64_RSP 7    // Stack pointer
+#define X86_64_RIP 16   // Instruction pointer
+
+ //
+
+struct table_entry {
+    int32_t start_ip_offset;
+    int32_t fde_offset;
+};
+
+struct unw_debug_frame_list {
+    unw_word_t start;             // Start of region (inclusive)
+    unw_word_t end;               // End of region (exclusive)
+    unw_word_t load_offset;       // ELF load offset
+    char* debug_frame;            // The debug frame data
+    size_t debug_frame_size;      // Size of debug frame data
+    struct table_entry* index;    // Binary search index
+    size_t index_size;            // Size of index array
+    struct unw_debug_frame_list* next;  // Next in chain
+};
+
+typedef struct {
+    unw_dyn_info_t* di;
+    struct unw_debug_frame_list* debug_frame_list;
+} unwind_registration_t;
+
+// Write LEB128 encoded value, returns number of bytes written
+static int write_uleb128(uint8_t* p, uint64_t value) {
+    uint8_t* start = p;
+    do {
+        uint8_t byte = value & 0x7f;
+        value >>= 7;
+        if (value != 0)
+            byte |= 0x80;
+        *p++ = byte;
+    } while (value != 0);
+    return p - start;
+}
+
+static int write_sleb128(uint8_t* p, int64_t value) {
+    uint8_t* start = p;
+    int more;
+    do {
+        uint8_t byte = value & 0x7f;
+        value >>= 7;
+        more = !((value == 0 && (byte & 0x40) == 0) ||
+                 (value == -1 && (byte & 0x40) != 0));
+        if (more)
+            byte |= 0x80;
+        *p++ = byte;
+    } while (more);
+    return p - start;
+}
+
+static char* create_debug_frame(uintptr_t code_start, size_t code_size, size_t* size, off_t *fde_offset) {
+    *size = 64;  // Initial size, will adjust based on actual content
+    char* data = malloc(*size);
+    if (!data) return NULL;
+
+    unsigned char* p = (unsigned char*)data;
+    unsigned char* cie_start = p;
+
+    // Leave space for CIE length
+    p += 4;
+
+    // CIE ID
+    *(uint32_t*)p = 0xffffffff;
+    p += 4;
+
+    // Version: should be 1
+    *p++ = 1;
+
+    // Augmentation string: empty string
+    *p++ = 0;
+
+    // Code alignment factor (encoded as ULEB128)
+    p += write_uleb128(p, 1);
+
+    // Data alignment factor (encoded as SLEB128)
+    p += write_sleb128(p, -8);
+
+    // Return address register
+    p += write_uleb128(p, 16);  // RAX on x86_64
+
+    // Initial instructions
+    *p++ = 0x0c;  // DW_CFA_def_cfa
+    p += write_uleb128(p, X86_64_RSP);   // RSP
+    p += write_uleb128(p, 16);   // Offset
+
+
+    // Calculate and write CIE length (not including length field itself)
+    *(uint32_t*)cie_start = p - cie_start - 4;
+
+    // Write FDE
+    *fde_offset = p - (unsigned char*)data;
+    unsigned char* fde_start = p;
+
+    // Leave space for FDE length
+    p += 4;
+
+    // CIE pointer
+    *(uint32_t*)p = 0;
+    p += 4;
+
+    // Initial location
+    *(uint64_t*)p = 0;
+    p += 8;
+
+    // Address range
+    *(uint64_t*)p = code_size;
+    p += 8;
+
+    // Write FDE length (not including length field itself)
+    *(uint32_t*)fde_start = p - fde_start - 4;
+
+    *size = p - (unsigned char*)data;
+    return data;
+}
+
+static unwind_registration_t* register_jit_unwind(void* code_start, size_t code_size) {
+    unwind_registration_t* reg = malloc(sizeof(unwind_registration_t));
+    if (!reg) return NULL;
+    memset(reg, 0, sizeof(*reg));
+
+    // Create debug frame list
+    reg->debug_frame_list = malloc(sizeof(struct unw_debug_frame_list));
+    if (!reg->debug_frame_list) {
+        free(reg);
+        return NULL;
+    }
+    memset(reg->debug_frame_list, 0, sizeof(struct unw_debug_frame_list));
+
+    // Set up debug frame list
+    reg->debug_frame_list->start = (unw_word_t)code_start;
+    reg->debug_frame_list->end = (unw_word_t)code_start + code_size;
+    off_t fde_offset = 0;
+    reg->debug_frame_list->debug_frame = create_debug_frame((uintptr_t)code_start, code_size, &reg->debug_frame_list->debug_frame_size, &fde_offset);
+    reg->debug_frame_list->index = malloc(sizeof(struct table_entry));
+    if (!reg->debug_frame_list->index) {
+        free(reg->debug_frame_list);
+        free(reg);
+        return NULL;
+    }
+
+    // Fill in index entry - CORRECTED VERSION
+    reg->debug_frame_list->index[0].start_ip_offset = 0;          // IP offset relative to code_start
+    reg->debug_frame_list->index[0].fde_offset = fde_offset;             // Offset from debug_frame start to our FDE
+    reg->debug_frame_list->index_size = sizeof(struct table_entry);
+
+    // Set up dynamic info
+    reg->di = malloc(sizeof(unw_dyn_info_t));
+    if (!reg->di) {
+        free(reg->debug_frame_list->index);
+        free(reg->debug_frame_list->debug_frame);
+        free(reg->debug_frame_list);
+        free(reg);
+        return NULL;
+    }
+
+    memset(reg->di, 0, sizeof(*reg->di));
+    reg->di->format = UNW_INFO_FORMAT_TABLE;
+    reg->di->start_ip = reg->debug_frame_list->start;
+    reg->di->end_ip = reg->debug_frame_list->end;
+    reg->di->u.ti.name_ptr = (unw_word_t)"JIT";
+    reg->di->u.ti.segbase = (unw_word_t)code_start;  // Important for IP offset calculation
+    reg->di->u.ti.table_len = sizeof(struct unw_debug_frame_list) / sizeof(unw_word_t);
+    reg->di->u.ti.table_data = (unw_word_t*)reg->debug_frame_list;
+
+    _U_dyn_register(reg->di);
+
+    // printf("Registered JIT unwind from %p to %p\n", code_start, (char*)code_start + code_size);
+
+    return reg;
+}
+
+
 // Memory management stuff: ////////////////////////////////////////////////////
 
 #ifndef MS_WINDOWS
@@ -501,6 +687,9 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     // Update the offsets of each instruction:
     for (size_t i = 0; i < length; i++) {
         state.instruction_starts[i] += (uintptr_t)memory;
+        const _PyUOpInstruction *instruction = &trace[i];
+        group = &stencil_groups[instruction->opcode];
+        // register_jit_unwind((void*)state.instruction_starts[i], group->code_size);
     }
     // Loop again to emit the code:
     unsigned char *code = memory;
@@ -536,6 +725,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     }
     executor->jit_code = memory;
     executor->jit_side_entry = memory + trampoline.code_size;
+    register_jit_unwind((void*)memory, total_size);
     executor->jit_size = total_size;
     return 0;
 }
