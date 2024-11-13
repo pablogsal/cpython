@@ -521,7 +521,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     group = &shim;
     group->emit(code, data, debug, executor, NULL, &state);
     // XXX: This is probably wrong:
-    __register_frame(debug);
+    __register_frame(debug + sizeof(uint32_t) + *(uint32_t *)debug);
     code += group->code_size;
     data += group->data_size;
     debug += group->debug_size;
@@ -531,7 +531,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
         group = &stencil_groups[instruction->opcode];
         group->emit(code, data, debug, executor, instruction, &state);
         // XXX: This is probably wrong:
-        __register_frame(debug);
+        __register_frame(debug + sizeof(uint32_t) + *(uint32_t *)debug);
         code += group->code_size;
         data += group->data_size;
         debug += group->debug_size;
@@ -540,7 +540,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     group = &stencil_groups[_FATAL_ERROR];
     group->emit(code, data, debug, executor, NULL, &state);
     // XXX: This is probably wrong:
-    __register_frame(debug);
+    __register_frame(debug + sizeof(uint32_t) + *(uint32_t *)debug);
     code += group->code_size;
     data += group->data_size;
     debug += group->debug_size;
