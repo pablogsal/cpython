@@ -464,6 +464,117 @@ combine_symbol_mask(const symbol_mask src, symbol_mask dest)
 extern void __register_frame(const void *);
 extern void __deregister_frame(const void *);
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#define UNW_LOCAL_ONLY
+#include <libunwind.h>
+#define X86_64_RBP 6    // Frame pointer
+#define X86_64_RSP 7    // Stack pointer
+#define X86_64_RIP 16   // Instruction pointer
+ //
+struct table_entry {
+    int32_t start_ip_offset;
+    int32_t fde_offset;
+};
+struct unw_debug_frame_list {
+    unw_word_t start;             // Start of region (inclusive)
+    unw_word_t end;               // End of region (exclusive)
+    unw_word_t load_offset;       // ELF load offset
+    char* debug_frame;            // The debug frame data
+    size_t debug_frame_size;      // Size of debug frame data
+    struct table_entry* index;    // Binary search index
+    size_t index_size;            // Size of index array
+    struct unw_debug_frame_list* next;  // Next in chain
+};
+typedef struct {
+    unw_dyn_info_t* di;
+    struct unw_debug_frame_list* debug_frame_list;
+} unwind_registration_t;
+// Write LEB128 encoded value, returns number of bytes written
+static int write_uleb128(uint8_t* p, uint64_t value) {
+    uint8_t* start = p;
+    do {
+        uint8_t byte = value & 0x7f;
+        value >>= 7;
+        if (value != 0)
+            byte |= 0x80;
+        *p++ = byte;
+    } while (value != 0);
+    return p - start;
+}
+static int write_sleb128(uint8_t* p, int64_t value) {
+    uint8_t* start = p;
+    int more;
+    do {
+        uint8_t byte = value & 0x7f;
+        value >>= 7;
+        more = !((value == 0 && (byte & 0x40) == 0) ||
+                 (value == -1 && (byte & 0x40) != 0));
+        if (more)
+            byte |= 0x80;
+        *p++ = byte;
+    } while (more);
+    return p - start;
+}
+
+static unwind_registration_t* register_jit_unwind(void* code_start, size_t code_size, void* eh_frame) {
+    unwind_registration_t* reg = malloc(sizeof(unwind_registration_t));
+    if (!reg) return NULL;
+    memset(reg, 0, sizeof(*reg));
+    // Create debug frame list
+    reg->debug_frame_list = malloc(sizeof(struct unw_debug_frame_list));
+    if (!reg->debug_frame_list) {
+        free(reg);
+        return NULL;
+    }
+    memset(reg->debug_frame_list, 0, sizeof(struct unw_debug_frame_list));
+    // Set up debug frame list
+    reg->debug_frame_list->start = (unw_word_t)code_start;
+    reg->debug_frame_list->end = (unw_word_t)code_start + code_size;
+    reg->debug_frame_list->debug_frame = (char*)eh_frame;
+
+    // Patch the CIE pointer in the FDE
+    uint32_t *cie_pointer = (uint32_t*)(((char*)eh_frame) + *(uint32_t*)(eh_frame) + sizeof(uint32_t) + sizeof(uint32_t));
+    *cie_pointer = 0;
+
+    uint32_t *id_pointer = (uint32_t*)(((char*)eh_frame) + sizeof(uint32_t));
+    *id_pointer = 0xffffffff;
+
+    reg->debug_frame_list->index = malloc(sizeof(struct table_entry));
+    if (!reg->debug_frame_list->index) {
+        free(reg->debug_frame_list);
+        free(reg);
+        return NULL;
+    }
+    // Fill in index entry - CORRECTED VERSION
+    reg->debug_frame_list->index[0].start_ip_offset = (int32_t)code_start;
+    reg->debug_frame_list->index[0].fde_offset = *(int32_t*)(eh_frame) + sizeof(uint32_t);
+    reg->debug_frame_list->index_size = sizeof(struct table_entry);
+    // Set up dynamic info
+    reg->di = malloc(sizeof(unw_dyn_info_t));
+    if (!reg->di) {
+        free(reg->debug_frame_list->index);
+        free(reg->debug_frame_list->debug_frame);
+        free(reg->debug_frame_list);
+        free(reg);
+        return NULL;
+    }
+    memset(reg->di, 0, sizeof(*reg->di));
+    reg->di->format = UNW_INFO_FORMAT_TABLE;
+    reg->di->start_ip = reg->debug_frame_list->start;
+    reg->di->end_ip = reg->debug_frame_list->end;
+    reg->di->u.ti.name_ptr = (unw_word_t)"JIT";
+    reg->di->u.ti.segbase = 0;
+    reg->di->u.ti.table_len = sizeof(struct unw_debug_frame_list) / sizeof(unw_word_t);
+    reg->di->u.ti.table_data = (unw_word_t*)reg->debug_frame_list;
+    _U_dyn_register(reg->di);
+    // printf("Registered JIT unwind from %p to %p\n", code_start, (char*)code_start + code_size);
+    return reg;
+}
+
 // Compiles executor in-place. Don't forget to call _PyJIT_Free later!
 int
 _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], size_t length)
@@ -522,6 +633,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     group->emit(code, data, debug, executor, NULL, &state);
     // XXX: This is probably wrong:
     __register_frame(debug + sizeof(uint32_t) + *(uint32_t *)debug);
+    register_jit_unwind((void*)code, group->code_size, debug);
     code += group->code_size;
     data += group->data_size;
     debug += group->debug_size;
@@ -532,6 +644,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
         group->emit(code, data, debug, executor, instruction, &state);
         // XXX: This is probably wrong:
         __register_frame(debug + sizeof(uint32_t) + *(uint32_t *)debug);
+        register_jit_unwind((void*)code, group->code_size, debug);
         code += group->code_size;
         data += group->data_size;
         debug += group->debug_size;
@@ -541,6 +654,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     group->emit(code, data, debug, executor, NULL, &state);
     // XXX: This is probably wrong:
     __register_frame(debug + sizeof(uint32_t) + *(uint32_t *)debug);
+    register_jit_unwind((void*)code, group->code_size, debug);
     code += group->code_size;
     data += group->data_size;
     debug += group->debug_size;
