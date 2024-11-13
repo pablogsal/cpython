@@ -66,6 +66,15 @@ class _Target(typing.Generic[_S, _R]):
                 for line in output.splitlines()
                 if not line.isspace()
             )
+        # XXX: "--unwind-info" on other platforms?
+        args = ["--dwarf=frames", f"{path}"]
+        output = await _llvm.maybe_run("llvm-objdump", args, echo=self.verbose)
+        if output is not None:
+            group.debug.disassembly.extend(
+                line.expandtabs().strip()
+                for line in output.splitlines()
+                if not line.isspace()
+            )
         args = [
             "--elf-output-style=JSON",
             "--expand-relocs",
@@ -122,10 +131,6 @@ class _Target(typing.Generic[_S, _R]):
             f"-I{CPYTHON / 'Tools' / 'jit'}",
             "-O3",
             "-c",
-            # This debug info isn't necessary, and bloats out the JIT'ed code.
-            # We *may* be able to re-enable this, process it, and JIT it for a
-            # nicer debugging experience... but that needs a lot more research:
-            "-fno-asynchronous-unwind-tables",
             # Don't call built-in functions that we can't find or patch:
             "-fno-builtin",
             # Emit relaxable 64-bit calls/jumps, so we don't have to worry about
@@ -305,9 +310,11 @@ class _ELF(
             value, base = group.symbols[section["Info"]]
             if value is _stencils.HoleValue.CODE:
                 stencil = group.code
-            else:
-                assert value is _stencils.HoleValue.DATA
+            elif value is _stencils.HoleValue.DATA:
                 stencil = group.data
+            else:
+                assert value is _stencils.HoleValue.DEBUG
+                stencil = group.debug
             for wrapped_relocation in section["Relocations"]:
                 relocation = wrapped_relocation["Relocation"]
                 hole = self._handle_relocation(base, relocation, stencil.body)
@@ -329,6 +336,12 @@ class _ELF(
                 name = name.removeprefix(self.prefix)
                 group.symbols[name] = value, offset
             stencil.body.extend(section["SectionData"]["Bytes"])
+            assert not section["Relocations"]
+        elif section_type == "SHT_X86_64_UNWIND":
+            assert "SHF_ALLOC" in flags
+            assert not section["Symbols"]
+            group.symbols[section["Index"]] = _stencils.HoleValue.DEBUG, 0
+            group.debug.body.extend(section["SectionData"]["Bytes"])
             assert not section["Relocations"]
         else:
             assert section_type in {

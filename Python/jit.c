@@ -461,6 +461,9 @@ combine_symbol_mask(const symbol_mask src, symbol_mask dest)
     }
 }
 
+extern void __register_frame(const void *);
+extern void __deregister_frame(const void *);
+
 // Compiles executor in-place. Don't forget to call _PyJIT_Free later!
 int
 _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], size_t length)
@@ -469,10 +472,12 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     // Loop once to find the total compiled size:
     size_t code_size = 0;
     size_t data_size = 0;
+    size_t debug_size = 0;
     jit_state state = {0};
     group = &shim;
     code_size += group->code_size;
     data_size += group->data_size;
+    debug_size += group->debug_size;
     combine_symbol_mask(group->trampoline_mask, state.trampolines.mask);
     for (size_t i = 0; i < length; i++) {
         const _PyUOpInstruction *instruction = &trace[i];
@@ -480,11 +485,13 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
         state.instruction_starts[i] = code_size;
         code_size += group->code_size;
         data_size += group->data_size;
+        debug_size += group->debug_size;
         combine_symbol_mask(group->trampoline_mask, state.trampolines.mask);
     }
     group = &stencil_groups[_FATAL_ERROR];
     code_size += group->code_size;
     data_size += group->data_size;
+    debug_size += group->debug_size;
     combine_symbol_mask(group->trampoline_mask, state.trampolines.mask);
     // Calculate the size of the trampolines required by the whole trace
     for (size_t i = 0; i < Py_ARRAY_LENGTH(state.trampolines.mask); i++) {
@@ -493,8 +500,8 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     // Round up to the nearest page:
     size_t page_size = get_page_size();
     assert((page_size & (page_size - 1)) == 0);
-    size_t padding = page_size - ((code_size + data_size + state.trampolines.size) & (page_size - 1));
-    size_t total_size = code_size + data_size + state.trampolines.size + padding;
+    size_t padding = page_size - ((code_size + data_size + debug_size + state.trampolines.size) & (page_size - 1));
+    size_t total_size = code_size + data_size + debug_size + state.trampolines.size + padding;
     unsigned char *memory = jit_alloc(total_size);
     if (memory == NULL) {
         return -1;
@@ -506,29 +513,40 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     // Loop again to emit the code:
     unsigned char *code = memory;
     unsigned char *data = memory + code_size;
-    state.trampolines.mem = memory + code_size + data_size;
+    unsigned char *debug = memory + code_size + data_size;
+    state.trampolines.mem = memory + code_size + data_size + debug_size;
     // Compile the shim, which handles converting between the native
     // calling convention and the calling convention used by jitted code
     // (which may be different for efficiency reasons).
     group = &shim;
-    group->emit(code, data, executor, NULL, &state);
+    group->emit(code, data, debug, executor, NULL, &state);
+    // XXX: This is probably wrong:
+    __register_frame(debug);
     code += group->code_size;
     data += group->data_size;
+    debug += group->debug_size;
     assert(trace[0].opcode == _START_EXECUTOR);
     for (size_t i = 0; i < length; i++) {
         const _PyUOpInstruction *instruction = &trace[i];
         group = &stencil_groups[instruction->opcode];
-        group->emit(code, data, executor, instruction, &state);
+        group->emit(code, data, debug, executor, instruction, &state);
+        // XXX: This is probably wrong:
+        __register_frame(debug);
         code += group->code_size;
         data += group->data_size;
+        debug += group->debug_size;
     }
     // Protect against accidental buffer overrun into data:
     group = &stencil_groups[_FATAL_ERROR];
-    group->emit(code, data, executor, NULL, &state);
+    group->emit(code, data, debug, executor, NULL, &state);
+    // XXX: This is probably wrong:
+    __register_frame(debug);
     code += group->code_size;
     data += group->data_size;
+    debug += group->debug_size;
     assert(code == memory + code_size);
     assert(data == memory + code_size + data_size);
+    assert(debug == memory + code_size + data_size + debug_size);
     if (mark_executable(memory, total_size)) {
         jit_free(memory, total_size);
         return -1;
