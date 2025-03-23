@@ -110,11 +110,11 @@ module _pdb
 /*[clinic end generated code: output=da39a3ee5e6b4b0d input=7fb1cf2618bcf972]*/
 
 #if defined(__APPLE__) && TARGET_OS_OSX
-static uint64_t
+static uintptr_t
 return_section_address(
     const char* section,
     mach_port_t proc_ref,
-    uint64_t base,
+    uintptr_t base,
     void* map
 ) {
     struct mach_header_64* hdr = (struct mach_header_64*)map;
@@ -128,7 +128,7 @@ return_section_address(
     mach_vm_address_t address = (mach_vm_address_t)base;
     vm_region_basic_info_data_64_t r_info;
     mach_port_t object_name;
-    uint64_t vmaddr = 0;
+    uintptr_t vmaddr = 0;
 
     for (int i = 0; cmd_cnt < 2 && i < ncmds; i++) {
         if (cmd->cmd == LC_SEGMENT_64 && strcmp(cmd->segname, "__TEXT") == 0) {
@@ -174,8 +174,8 @@ return_section_address(
     return 0;
 }
 
-static uint64_t
-search_section_in_file(const char* secname, char* path, uint64_t base, mach_vm_size_t size, mach_port_t proc_ref)
+static uintptr_t
+search_section_in_file(const char* secname, char* path, uintptr_t base, mach_vm_size_t size, mach_port_t proc_ref)
 {
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
@@ -197,7 +197,7 @@ search_section_in_file(const char* secname, char* path, uint64_t base, mach_vm_s
         return 0;
     }
 
-    uint64_t result = 0;
+    uintptr_t result = 0;
 
     struct mach_header_64* hdr = (struct mach_header_64*)map;
     switch (hdr->magic) {
@@ -237,7 +237,7 @@ pid_to_task(pid_t pid)
     return task;
 }
 
-static uint64_t
+static uintptr_t
 search_map_for_section(proc_handle_t *handle, const char* secname, const char* substr) {
     mach_vm_address_t address = 0;
     mach_vm_size_t size = 0;
@@ -299,7 +299,7 @@ search_map_for_section(proc_handle_t *handle, const char* secname, const char* s
 #endif // (__APPLE__ && TARGET_OS_OSX)
 
 #ifdef __linux__
-static uint64_t
+static uintptr_t
 find_map_start_address(proc_handle_t *handle, char* result_filename, const char* map)
 {
     char maps_file_path[64];
@@ -315,7 +315,7 @@ find_map_start_address(proc_handle_t *handle, char* result_filename, const char*
 
     char line[256];
     char map_filename[PATH_MAX];
-    uint64_t result_address = 0;
+    uintptr_t result_address = 0;
     while (fgets(line, sizeof(line), maps_file) != NULL) {
         unsigned long start_address = 0;
         sscanf(line, "%lx-%*x %*s %*s %*s %*s %s", &start_address, map_filename);
@@ -343,17 +343,17 @@ find_map_start_address(proc_handle_t *handle, char* result_filename, const char*
     return result_address;
 }
 
-static uint64_t
+static uintptr_t
 search_map_for_section(proc_handle_t *handle, const char* secname, const char* map)
 {
     char elf_file[256];
-    uint64_t start_address = find_map_start_address(handle, elf_file, map);
+    uintptr_t start_address = find_map_start_address(handle, elf_file, map);
 
     if (start_address == 0) {
         return 0;
     }
 
-    uint64_t result = 0;
+    uintptr_t result = 0;
     void* file_memory = NULL;
 
     int fd = open(elf_file, O_RDONLY);
@@ -403,9 +403,9 @@ search_map_for_section(proc_handle_t *handle, const char* secname, const char* m
     }
 
     if (section != NULL && first_load_segment != NULL) {
-        uint64_t elf_load_addr = first_load_segment->p_vaddr
+        uintptr_t elf_load_addr = first_load_segment->p_vaddr
                                   - (first_load_segment->p_vaddr % first_load_segment->p_align);
-        result = start_address + (uint64_t)section->sh_addr - elf_load_addr;
+        result = start_address + (uintptr_t)section->sh_addr - elf_load_addr;
     }
 
 exit:
@@ -494,9 +494,9 @@ cleanup:
     return result;
 }
 
-static uint64_t
+static uintptr_t
 search_map_for_section(proc_handle_t *handle, const char* secname, const char* substr) {
-    uint64_t result = 0;
+    uintptr_t result = 0;
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, handle->pid);
     if (hSnapshot == INVALID_HANDLE_VALUE) {
         PyErr_SetFromWindowsErr(0);
@@ -534,7 +534,7 @@ search_map_for_section(proc_handle_t *handle, const char* secname, const char* s
 #endif // MS_WINDOWS
 
 // Get the PyRuntime section address for any platform
-static uint64_t
+static uintptr_t
 get_py_runtime(proc_handle_t *handle)
 {
 #ifdef MS_WINDOWS
@@ -627,7 +627,7 @@ read_memory(proc_handle_t *handle, uint64_t remote_address, size_t len, void* ds
 
 // Platform-independent memory write function
 static Py_ssize_t
-write_memory(proc_handle_t *handle, uint64_t remote_address, size_t len, const void* src)
+write_memory(proc_handle_t *handle, uintptr_t remote_address, size_t len, const void* src)
 {
 #ifdef MS_WINDOWS
     SIZE_T bytesWritten;
@@ -696,7 +696,7 @@ write_memory(proc_handle_t *handle, uint64_t remote_address, size_t len, const v
 static int
 read_offsets(
     proc_handle_t *handle,
-    uint64_t *runtime_start_address,
+    uintptr_t *runtime_start_address,
     _Py_DebugOffsets* debug_offsets
 ) {
     *runtime_start_address = get_py_runtime(handle);
@@ -739,7 +739,7 @@ _PySysRemoteDebug_SendExec(int pid, int tid, const char *debugger_script_path)
         return -1;
     }
 
-    uint64_t runtime_start_address;
+    uintptr_t runtime_start_address;
     struct _Py_DebugOffsets local_debug_offsets;
     
     if (read_offsets(&handle, &runtime_start_address, &local_debug_offsets)) {
@@ -747,9 +747,9 @@ _PySysRemoteDebug_SendExec(int pid, int tid, const char *debugger_script_path)
         return -1;
     }
 
-    uint64_t interpreter_state_list_head = local_debug_offsets.runtime_state.interpreters_head;
+    uintptr_t interpreter_state_list_head = local_debug_offsets.runtime_state.interpreters_head;
 
-    uint64_t address_of_interpreter_state;
+    uintptr_t address_of_interpreter_state;
     Py_ssize_t bytes = read_memory(
             &handle,
             runtime_start_address + interpreter_state_list_head,
@@ -783,7 +783,7 @@ _PySysRemoteDebug_SendExec(int pid, int tid, const char *debugger_script_path)
         return -1;
     }
 
-    uint64_t address_of_thread;
+    uintptr_t address_of_thread;
     pid_t this_tid = 0;
     
     if (tid != 0) {
@@ -860,7 +860,7 @@ _PySysRemoteDebug_SendExec(int pid, int tid, const char *debugger_script_path)
     }
 
     if (debugger_script_path != NULL) {
-        uint64_t debugger_script_path_addr = (
+        uintptr_t debugger_script_path_addr = (
                 address_of_thread +
                 local_debug_offsets.debugger_support.remote_debugger_support +
                 local_debug_offsets.debugger_support.debugger_script_path);
@@ -876,7 +876,7 @@ _PySysRemoteDebug_SendExec(int pid, int tid, const char *debugger_script_path)
     }
 
     int pending_call = 1;
-    uint64_t debugger_pending_call_addr = (
+    uintptr_t debugger_pending_call_addr = (
             address_of_thread +
             local_debug_offsets.debugger_support.remote_debugger_support +
             local_debug_offsets.debugger_support.debugger_pending_call);
