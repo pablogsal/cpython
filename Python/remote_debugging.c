@@ -860,16 +860,6 @@ send_exec_to_proc_handle(proc_handle_t *handle, int tid, const char *debugger_sc
     }
 
     uintptr_t eval_breaker;
-    if (0 != read_memory(
-            handle,
-            thread_state_addr + debug_offsets.debugger_support.eval_breaker,
-            sizeof(uintptr_t),
-            &eval_breaker))
-    {
-        return -1;
-    }
-
-    eval_breaker |= _PY_EVAL_PLEASE_STOP_BIT;
 
     // Ensure our path is not too long
     if (debug_offsets.debugger_support.debugger_script_path_size <= strlen(debugger_script_path)) {
@@ -905,15 +895,60 @@ send_exec_to_proc_handle(proc_handle_t *handle, int tid, const char *debugger_sc
         return -1;
     }
 
-    if (0 != write_memory(
+#ifdef WORDS_BIG_ENDIAN
+    // In big-endian, the lowest byte is at the highest memory address
+    uintptr_t offset = sizeof(uintptr_t) - 1;
+    unsigned char byte_value;
+    
+    // Read the current byte at the right position
+    if (0 != read_memory(
             handle,
-            thread_state_addr + (uintptr_t)debug_offsets.debugger_support.eval_breaker,
-            sizeof(uintptr_t),
-            &eval_breaker))
-
+            thread_state_addr + (uintptr_t)debug_offsets.debugger_support.eval_breaker + offset,
+            sizeof(unsigned char),
+            &byte_value))
     {
         return -1;
     }
+    
+    // Set the bit in this byte
+    byte_value |= (unsigned char)_PY_EVAL_PLEASE_STOP_BIT;
+    
+    // Write back just this byte
+    if (0 != write_memory(
+            handle,
+            thread_state_addr + (uintptr_t)debug_offsets.debugger_support.eval_breaker + offset,
+            sizeof(unsigned char),
+            &byte_value))
+    {
+        return -1;
+    }
+#else
+    // In little-endian, the lowest byte is at the lowest memory address
+    unsigned char byte_value;
+    
+    // Read the current lowest byte
+    if (0 != read_memory(
+            handle,
+            thread_state_addr + (uintptr_t)debug_offsets.debugger_support.eval_breaker,
+            sizeof(unsigned char),
+            &byte_value))
+    {
+        return -1;
+    }
+    
+    // Set the bit in this byte
+    byte_value |= (unsigned char)_PY_EVAL_PLEASE_STOP_BIT;
+    
+    // Write back just this byte
+    if (0 != write_memory(
+            handle,
+            thread_state_addr + (uintptr_t)debug_offsets.debugger_support.eval_breaker,
+            sizeof(unsigned char),
+            &byte_value))
+    {
+        return -1;
+    }
+#endif
 
     return 0;
 }
