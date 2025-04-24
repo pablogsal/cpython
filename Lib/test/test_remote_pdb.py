@@ -328,6 +328,7 @@ class PdbConnectTestCase(unittest.TestCase):
             if not data:
                 break
             msg = json.loads(data.decode())
+            print(msg)
             messages.append(msg)
             if 'prompt' in msg:
                 break
@@ -482,27 +483,37 @@ class PdbConnectTestCase(unittest.TestCase):
 
         with process:
 
-            # Skip initial messages until we get to the prompt
-            self._read_until_prompt(client_file)
+            try:
 
-            # Continue execution
-            self._send_command(client_file, "c")
+                # Skip initial messages until we get to the prompt
+                self._read_until_prompt(client_file)
 
-            # Send keyboard interrupt signal
-            self._send_command(client_file, json.dumps({"signal": "INT"}))
-            self._send_interrupt(process.pid)
-            messages = self._read_until_prompt(client_file)
+                # Continue execution
+                self._send_command(client_file, "c")
 
-            # Verify we got the keyboard interrupt message
-            interrupt_msg = next(msg['message'] for msg in messages if 'message' in msg)
-            self.assertIn("bar()", interrupt_msg)
+                # Send keyboard interrupt signal
+                self._send_interrupt(process.pid)
+                messages = self._read_until_prompt(client_file)
+                print(messages)
+                print(process.stdout.readline())
+                print(process.returncode)
 
-            # Continue to end
-            self._send_command(client_file, "iterations = 0")
-            self._send_command(client_file, "c")
-            stdout, _ = process.communicate(timeout=5)
-            self.assertIn("Function returned: 42", stdout)
-            self.assertEqual(process.returncode, 0)
+                # Verify we got the keyboard interrupt message
+                interrupt_msg = next(msg['message'] for msg in messages if 'message' in msg)
+                self.assertIn("bar()", interrupt_msg)
+
+                # Continue to end
+                self._send_command(client_file, "iterations = 0")
+                self._send_command(client_file, "c")
+                stdout, _ = process.communicate(timeout=5)
+                self.assertIn("Function returned: 42", stdout)
+                self.assertEqual(process.returncode, 0)
+            
+            except Exception as e:
+                stdout, stderr = process.communicate(timeout=5)
+                print(stderr)
+                print(stdout)
+                raise e from None
 
     def test_handle_eof(self):
         """Test that EOF signal properly exits the debugger."""
