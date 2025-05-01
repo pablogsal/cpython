@@ -162,9 +162,9 @@ class TestGetStackTrace(unittest.TestCase):
                     ["c5", "c4", "c3", "c2"],
                     "c2_root",
                     [
-                        [["main"], root_task, []],
-                        [["c1"], "sub_main_1", [[["main"], root_task, []]]],
-                        [["c1"], "sub_main_2", [[["main"], root_task, []]]],
+                        [['_aexit', '__aexit__', "main"], root_task, []],
+                        [["c1"], "sub_main_1", [[['_aexit', '__aexit__', "main"], root_task, []]]],
+                        [["c1"], "sub_main_2", [[['_aexit', '__aexit__', "main"], root_task, []]]],
                     ],
                 ]
                 self.assertEqual(stack_trace, expected_stack_trace)
@@ -346,7 +346,7 @@ class TestGetStackTrace(unittest.TestCase):
             stack_trace[2].sort(key=lambda x: x[1])
 
             expected_stack_trace =  [
-                ['deep', 'c1', 'run_one_coro'], 'Task-2', [[['main'], 'Task-1', []]]
+                ['deep', 'c1', 'run_one_coro'], 'Task-2', [[['staggered_race', 'main'], 'Task-1', []]]
             ]
             self.assertEqual(stack_trace, expected_stack_trace)
 
@@ -456,11 +456,13 @@ class TestGetStackTrace(unittest.TestCase):
                 self.assertGreaterEqual(len(entries), 1000)
                 # the first three tasks stem from the code structure
                 self.assertIn(('Task-1', []), entries)
-                self.assertIn(('server task', [[['main'], 'Task-1', []]]), entries)
-                self.assertIn(('echo client spam', [[['main'], 'Task-1', []]]), entries)
+                self.assertIn(('server task', [[['_aexit', '__aexit__', 'main'], 'Task-1', []]]), entries)
+                self.assertIn(('echo client spam', [[['_aexit', '__aexit__', 'main'], 'Task-1', []]]), entries)
                 # the final task will have some random number, but it should for
                 # sure be one of the echo client spam horde
-                self.assertEqual([[['echo_client_spam'], 'echo client spam', [[['main'], 'Task-1', []]]]], entries[-1][1])
+                self.assertEqual(
+                    [[['_aexit', '__aexit__', 'echo_client_spam'], 'echo client spam', [[['_aexit', '__aexit__', 'main'], 'Task-1', []]]]],
+                    entries[-1][1])
             except PermissionError:
                 self.skipTest(
                     "Insufficient permissions to read the stack trace")

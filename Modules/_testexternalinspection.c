@@ -586,14 +586,16 @@ read_char(pid_t pid, uintptr_t address, char *result)
 }
 
 static int
-read_int(pid_t pid, uintptr_t address, int *result)
+read_sized_int(pid_t pid, uintptr_t address, void *result, size_t size)
 {
-    int bytes_read = read_memory(pid, address, sizeof(int), result);
+    int bytes_read = read_memory(pid, address, size, result);
     if (bytes_read < 0) {
         return -1;
     }
     return 0;
 }
+
+
 
 static int
 read_unsigned_long(pid_t pid, uintptr_t address, unsigned long *result)
@@ -810,11 +812,13 @@ parse_coro_chain(
     }
     Py_DECREF(name);
 
-    int gi_frame_state;
-    err = read_int(
+    int8_t gi_frame_state;
+    err = read_sized_int(
         pid,
         coro_address + offsets->gen_object.gi_frame_state,
-        &gi_frame_state);
+        &gi_frame_state,
+        sizeof(int8_t)
+    );
     if (err) {
         return -1;
     }
