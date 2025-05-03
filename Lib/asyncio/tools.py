@@ -1,3 +1,5 @@
+"""Tool to analyse asyncio tasks running in a python process."""
+
 import argparse
 from dataclasses import dataclass
 from collections import defaultdict
@@ -47,10 +49,6 @@ def _build_tree(id2name, awaits):
         bucket[frame_name] = node_key
         return node_key
 
-    # touch every task so it’s present even if it awaits nobody
-    for tid in id2name:
-        children[(NodeType.TASK, tid)]
-
     # lay down parent ➜ …frames… ➜ child paths
     for parent_id, stack, child_id in awaits:
         cur = (NodeType.TASK, parent_id)
@@ -70,7 +68,6 @@ def _roots(id2label, children):
 # ─── detect cycles in the task-to-task graph ───────────────────────
 def _task_graph(awaits):
     """Return {parent_task_id: {child_task_id, …}, …}."""
-    from collections import defaultdict
     g = defaultdict(set)
     for parent_id, _stack, child_id in awaits:
         g[parent_id].add(child_id)
@@ -84,30 +81,30 @@ def _find_cycles(graph):
     Returns a list of cycles (each cycle is a list of task-ids) or an
     empty list if the graph is acyclic.
     """
-    WHITE, GREY, BLACK = 0, 1, 2
-    color = defaultdict(lambda: WHITE)
+    white, grey, black = 0, 1, 2
+    color = defaultdict(lambda: white)
     path, cycles = [], []
 
     def dfs(v):
-        color[v] = GREY
+        color[v] = grey
         path.append(v)
         for w in graph.get(v, ()):
-            if color[w] == WHITE:
+            if color[w] == white:
                 dfs(w)
-            elif color[w] == GREY:            # back-edge → cycle!
+            elif color[w] == grey:            # back-edge → cycle!
                 i = path.index(w)
                 cycles.append(path[i:] + [w])  # make a copy
-        color[v] = BLACK
+        color[v] = black
         path.pop()
 
     for v in list(graph):
-        if color[v] == WHITE:
+        if color[v] == white:
             dfs(v)
     return cycles
 
 
 # ─── PRINT TREE FUNCTION ───────────────────────────────────────
-def print_async_tree(result, task_emoji="(T)", cor_emoji="", printer=print):
+def print_async_tree(result, task_emoji="(T)", cor_emoji=""):
     """
     Pretty-print the async call tree produced by `get_all_async_stacks()`,
     prefixing tasks with *task_emoji* and coroutine frames with *cor_emoji*.
@@ -133,14 +130,11 @@ def print_async_tree(result, task_emoji="(T)", cor_emoji="", printer=print):
             render(kid, new_pref, i == len(kids) - 1, buf)
         return buf
 
-    result = []
-    for r, root in enumerate(_roots(labels, children)):
-        result.append(render(root))
-    return result
+    return [render(root) for root in _roots(labels, children)]
 
 
 def build_task_table(result):
-    id2name, awaits = _index(result)
+    id2name, _ = _index(result)
     table = []
     for tid, tasks in result:
         for task_id, task_name, awaited in tasks:
@@ -170,6 +164,7 @@ def build_task_table(result):
                 )
 
     return table
+
 
 def _print_cycle_exception(exception: CycleFoundException):
     print("ERROR: await-graph contains cycles – cannot print a tree!", file=sys.stderr)
@@ -201,8 +196,8 @@ if __name__ == "__main__":
         try:
             result = print_async_tree(tasks)
         except CycleFoundException as e:
-           _print_cycle_exception(e)
-           sys.exit(1)
+            _print_cycle_exception(e)
+            sys.exit(1)
 
         for tree in result:
             print("\n".join(tree))
@@ -211,7 +206,8 @@ if __name__ == "__main__":
         table = build_task_table(tasks)
         # Print the table in a simple tabular format
         print(
-            f"{'tid':<10} {'task id':<20} {'task name':<20} {'coroutine chain':<50} {'awaiter name':<20} {'awaiter id':<15}"
+            f"{'tid':<10} {'task id':<20} {'task name':<20} {'coroutine chain':<50} "
+            f"{'awaiter name':<20} {'awaiter id':<15}"
         )
         print("-" * 135)
         for row in table:
