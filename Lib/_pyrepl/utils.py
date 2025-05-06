@@ -96,7 +96,7 @@ def gen_colors(buffer: str) -> Iterator[ColorSpan]:
         line_lengths[i] += line_lengths[i-1]
 
     sio.seek(0)
-    gen = tokenize.generate_tokens(sio.readline)
+    gen = tokenize._generate_tokens_from_c_tokenizer(sio.readline, extra_tokens=True, incomplete_input=True)
     last_emitted: ColorSpan | None = None
     try:
         for color in gen_colors_from_token_stream(gen, line_lengths):
@@ -106,6 +106,10 @@ def gen_colors(buffer: str) -> Iterator[ColorSpan]:
         yield from recover_unterminated_string(
             te, line_lengths, last_emitted, buffer
         )
+    except _IncompleteInputError as te:
+        yield from recover_unterminated_string(
+            te, line_lengths, last_emitted, buffer, incomplete_input=True
+        )
 
 
 def recover_unterminated_string(
@@ -113,23 +117,18 @@ def recover_unterminated_string(
     line_lengths: list[int],
     last_emitted: ColorSpan | None,
     buffer: str,
+    incomplete_input: bool = False,
 ) -> Iterator[ColorSpan]:
     msg, loc = exc.args
     if loc is None:
         return
 
-    line_no, column = loc
+    if incomplete_input:
+        _, line_no, column, *_ = loc
+    else:
+        line_no, column = loc
 
-    if msg.startswith(
-        (
-            "unterminated string literal",
-            "unterminated f-string literal",
-            "unterminated t-string literal",
-            "EOF in multi-line string",
-            "unterminated triple-quoted f-string literal",
-            "unterminated triple-quoted t-string literal",
-        )
-    ):
+    if incomplete_input:
         start = line_lengths[line_no - 1] + column - 1
         end = line_lengths[-1] - 1
 

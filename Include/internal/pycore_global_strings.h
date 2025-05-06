@@ -500,6 +500,7 @@ struct _Py_global_strings {
         STRUCT_FOR_ID(importlib)
         STRUCT_FOR_ID(in_fd)
         STRUCT_FOR_ID(incoming)
+        STRUCT_FOR_ID(incomplete_input)
         STRUCT_FOR_ID(index)
         STRUCT_FOR_ID(indexgroup)
         STRUCT_FOR_ID(inf)

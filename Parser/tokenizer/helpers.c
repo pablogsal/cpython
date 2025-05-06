@@ -1,6 +1,7 @@
 #include "Python.h"
 #include "errcode.h"
 #include "pycore_token.h"
+#include "pycore_pyerrors.h"
 
 #include "../lexer/state.h"
 
@@ -8,9 +9,8 @@
 /* ############## ERRORS ############## */
 
 static int
-_syntaxerror_range(struct tok_state *tok, const char *format,
-                   int col_offset, int end_col_offset,
-                   va_list vargs)
+_syntaxerror_range(struct tok_state *tok, int raise_incomplete_input, const char *format,
+                   int col_offset, int end_col_offset, va_list vargs)
 {
     // In release builds, we don't want to overwrite a previous error, but in debug builds we
     // want to fail if we are not doing it so we can fix it.
@@ -50,7 +50,11 @@ _syntaxerror_range(struct tok_state *tok, const char *format,
     args = Py_BuildValue("(O(OiiNii))", errmsg, tok->filename, tok->lineno,
                          col_offset, errtext, tok->lineno, end_col_offset);
     if (args) {
-        PyErr_SetObject(PyExc_SyntaxError, args);
+        if (tok->incomplete_input && raise_incomplete_input) {
+            PyErr_SetObject(PyExc_IncompleteInputError, args);
+        } else {
+            PyErr_SetObject(PyExc_SyntaxError, args);
+        }
         Py_DECREF(args);
     }
 
@@ -66,7 +70,18 @@ _PyTokenizer_syntaxerror(struct tok_state *tok, const char *format, ...)
     // This errors are cleaned on startup. Todo: Fix it.
     va_list vargs;
     va_start(vargs, format);
-    int ret = _syntaxerror_range(tok, format, -1, -1, vargs);
+    int ret = _syntaxerror_range(tok, 0, format, -1, -1, vargs);
+    va_end(vargs);
+    return ret;
+}
+
+int
+_PyTokenizer_unterminated_syntaxerror(struct tok_state *tok, const char *format, ...)
+{
+    // This errors are cleaned on startup. Todo: Fix it.
+    va_list vargs;
+    va_start(vargs, format);
+    int ret = _syntaxerror_range(tok, 1, format, -1, -1, vargs);
     va_end(vargs);
     return ret;
 }
@@ -78,7 +93,7 @@ _PyTokenizer_syntaxerror_known_range(struct tok_state *tok,
 {
     va_list vargs;
     va_start(vargs, format);
-    int ret = _syntaxerror_range(tok, format, col_offset, end_col_offset, vargs);
+    int ret = _syntaxerror_range(tok, 0, format, col_offset, end_col_offset, vargs);
     va_end(vargs);
     return ret;
 }

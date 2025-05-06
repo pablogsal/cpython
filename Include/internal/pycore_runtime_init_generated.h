@@ -1007,6 +1007,7 @@ extern "C" {
     INIT_ID(importlib), \
     INIT_ID(in_fd), \
     INIT_ID(incoming), \
+    INIT_ID(incomplete_input), \
     INIT_ID(index), \
     INIT_ID(indexgroup), \
     INIT_ID(inf), \

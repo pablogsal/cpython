@@ -1142,7 +1142,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
                 }
 
                 if (quote_size == 3) {
-                    _PyTokenizer_syntaxerror(tok, "unterminated triple-quoted string literal"
+                    _PyTokenizer_unterminated_syntaxerror(tok, "unterminated triple-quoted string literal"
                                      " (detected at line %d)", start);
                     if (c != '\n') {
                         tok->done = E_EOFS;
@@ -1151,14 +1151,14 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
                 }
                 else {
                     if (has_escaped_quote) {
-                        _PyTokenizer_syntaxerror(
+                        _PyTokenizer_unterminated_syntaxerror(
                             tok,
                             "unterminated string literal (detected at line %d); "
                             "perhaps you escaped the end quote?",
                             start
                         );
                     } else {
-                        _PyTokenizer_syntaxerror(
+                        _PyTokenizer_unterminated_syntaxerror(
                             tok, "unterminated string literal (detected at line %d)", start
                         );
                     }
@@ -1446,7 +1446,7 @@ f_string_middle:
             tok->lineno = the_current_tok->first_line;
 
             if (current_tok->quote_size == 3) {
-                _PyTokenizer_syntaxerror(tok,
+                _PyTokenizer_unterminated_syntaxerror(tok,
                                     "unterminated triple-quoted %c-string literal"
                                     " (detected at line %d)",
                                     TOK_GET_STRING_PREFIX(tok), start);
@@ -1456,7 +1456,7 @@ f_string_middle:
                 return MAKE_TOKEN(ERRORTOKEN);
             }
             else {
-                return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok,
+                return MAKE_TOKEN(_PyTokenizer_unterminated_syntaxerror(tok,
                                     "unterminated %c-string literal (detected at"
                                     " line %d)", TOK_GET_STRING_PREFIX(tok), start));
             }

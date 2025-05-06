@@ -10,6 +10,7 @@
             tok->col_offset = 0;
 
 int _PyTokenizer_syntaxerror(struct tok_state *tok, const char *format, ...);
+int _PyTokenizer_unterminated_syntaxerror(struct tok_state *tok, const char *format, ...);
 int _PyTokenizer_syntaxerror_known_range(struct tok_state *tok, int col_offset, int end_col_offset, const char *format, ...);
 int _PyTokenizer_indenterror(struct tok_state *tok);
 int _PyTokenizer_warn_invalid_escape_sequence(struct tok_state *tok, int first_invalid_escape_char);

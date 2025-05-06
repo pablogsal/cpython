@@ -131,6 +131,7 @@ struct tok_state {
     int tok_extra_tokens;
     int comment_newline;
     int implicit_newline;
+    int incomplete_input;
 #ifdef Py_DEBUG
     int debug;
 #endif

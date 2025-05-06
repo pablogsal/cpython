@@ -572,12 +572,12 @@ def _transform_msg(msg):
         return "EOF in multi-line string"
     return msg
 
-def _generate_tokens_from_c_tokenizer(source, encoding=None, extra_tokens=False):
+def _generate_tokens_from_c_tokenizer(source, encoding=None, extra_tokens=False, incomplete_input=False):
     """Tokenize a source reading Python code as unicode strings using the internal C tokenizer"""
     if encoding is None:
-        it = _tokenize.TokenizerIter(source, extra_tokens=extra_tokens)
+        it = _tokenize.TokenizerIter(source, extra_tokens=extra_tokens, incomplete_input=incomplete_input)
     else:
-        it = _tokenize.TokenizerIter(source, encoding=encoding, extra_tokens=extra_tokens)
+        it = _tokenize.TokenizerIter(source, encoding=encoding, extra_tokens=extra_tokens, incomplete_input=incomplete_input)
     try:
         for info in it:
             yield TokenInfo._make(info)
@@ -586,6 +586,8 @@ def _generate_tokens_from_c_tokenizer(source, encoding=None, extra_tokens=False)
             raise e from None
         msg = _transform_msg(e.msg)
         raise TokenError(msg, (e.lineno, e.offset)) from None
+    except _IncompleteInputError:
+        raise
 
 
 if __name__ == "__main__":

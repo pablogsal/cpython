@@ -50,12 +50,14 @@ _tokenizer.tokenizeriter.__new__ as tokenizeriter_new
     *
     extra_tokens: bool
     encoding: str(c_default="NULL") = 'utf-8'
+    incomplete_input: bool = False
 [clinic start generated code]*/
 
 static PyObject *
 tokenizeriter_new_impl(PyTypeObject *type, PyObject *readline,
-                       int extra_tokens, const char *encoding)
-/*[clinic end generated code: output=7501a1211683ce16 input=f7dddf8a613ae8bd]*/
+                       int extra_tokens, const char *encoding,
+                       int incomplete_input)
+/*[clinic end generated code: output=e72ebb8037a120b7 input=c5e19a57c7bebeb6]*/
 {
     tokenizeriterobject *self = (tokenizeriterobject *)type->tp_alloc(type, 0);
     if (self == NULL) {
@@ -75,6 +77,7 @@ tokenizeriter_new_impl(PyTypeObject *type, PyObject *readline,
         self->tok->tok_extra_tokens = 1;
     }
     self->done = 0;
+    self->tok->incomplete_input = incomplete_input;
 
     self->last_line = NULL;
     self->byte_col_offset_diff = 0;
