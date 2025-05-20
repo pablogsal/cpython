@@ -76,16 +76,22 @@ extern "C" {
 // Define a platform-independent process handle structure
 typedef struct {
     pid_t pid;
-#ifdef MS_WINDOWS
+#if defined(__APPLE__)
+    mach_port_t task;
+#elif defined(MS_WINDOWS)
     HANDLE hProcess;
 #endif
 } proc_handle_t;
+
+static mach_port_t pid_to_task(pid_t pid);
 
 // Initialize the process handle
 static int
 _Py_RemoteDebug_InitProcHandle(proc_handle_t *handle, pid_t pid) {
     handle->pid = pid;
-#ifdef MS_WINDOWS
+#if defined(__APPLE__)
+    handle->task = pid_to_task(handle->pid);
+#elif defined(MS_WINDOWS)
     handle->hProcess = OpenProcess(
         PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION,
         FALSE, pid);
@@ -755,7 +761,7 @@ _Py_RemoteDebug_ReadRemoteMemory(proc_handle_t *handle, uintptr_t remote_address
 #elif defined(__APPLE__) && TARGET_OS_OSX
     Py_ssize_t result = -1;
     kern_return_t kr = mach_vm_read_overwrite(
-        pid_to_task(handle->pid),
+        handle->task,
         (mach_vm_address_t)remote_address,
         len,
         (mach_vm_address_t)dst,

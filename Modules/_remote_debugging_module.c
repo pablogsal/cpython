@@ -23,6 +23,7 @@
 #    define HAVE_PROCESS_VM_READV 0
 #endif
 
+#include <mach/mach_time.h>
 struct _Py_AsyncioModuleDebugOffsets {
     struct _asyncio_task_object {
         uint64_t size;
@@ -905,6 +906,8 @@ read_instruction_ptr(proc_handle_t *handle, struct _Py_DebugOffsets *offsets,
     );
 }
 
+static PyObject* cache = NULL;
+
 static int
 parse_code_object(proc_handle_t *handle,
                   PyObject **result,
@@ -914,6 +917,26 @@ parse_code_object(proc_handle_t *handle,
                   uintptr_t *previous_frame)
 {
     uintptr_t addr_func_name, addr_file_name, addr_linetable, instruction_ptr;
+
+    if (cache == NULL) {
+        cache = PyDict_New();
+        if (cache == NULL) {
+            return -1;
+        }
+    }
+
+    PyObject* addr_py = PyLong_FromLongLong(address);
+    if (addr_py == NULL) {
+        return -1;
+    }
+
+    PyObject* maybe_result = PyDict_GetItem(cache, addr_py);
+    if (maybe_result != NULL) {
+        Py_CLEAR(addr_py);
+        Py_INCREF(maybe_result);
+        *result = maybe_result;
+        return 0;
+    }
 
     if (read_remote_pointer(handle, address + offsets->code_object.qualname, &addr_func_name, "No function name found") < 0 ||
         read_remote_pointer(handle, address + offsets->code_object.filename, &addr_file_name, "No file name found") < 0 ||
@@ -971,10 +994,136 @@ parse_code_object(proc_handle_t *handle,
     PyTuple_SET_ITEM(result_tuple, 0, py_func_name);  // steals ref
     PyTuple_SET_ITEM(result_tuple, 1, py_file_name);  // steals ref
     PyTuple_SET_ITEM(result_tuple, 2, py_line);       // steals ref
+    
+    if(PyDict_SetItem(cache, addr_py, result_tuple) < 0) {
+        return -1;
+    }
 
     *result = result_tuple;
     return 0;
 }
+
+typedef struct {
+    uintptr_t remote_addr;
+    size_t size;
+    size_t top;
+    void *local_copy;
+} StackChunkInfo;
+
+typedef struct {
+    StackChunkInfo *chunks;
+    size_t count;
+} StackChunkList;
+
+
+static int
+copy_stack_chunks(proc_handle_t *handle,
+                  uintptr_t tstate_addr,
+                  const _Py_DebugOffsets *offsets,
+                  StackChunkList *out_chunks)
+{
+    uintptr_t chunk_addr;
+    if (read_ptr(handle,
+                 tstate_addr + offsets->thread_state.datastack_chunk,
+                 &chunk_addr)) {
+        return -1;
+    }
+
+    size_t max_chunks = 16; // Increase as needed
+    StackChunkInfo *chunks = PyMem_RawMalloc(max_chunks * sizeof(StackChunkInfo));
+    if (!chunks) {
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    size_t count = 0;
+    while (chunk_addr != 0) {
+        size_t chunk_header_size = sizeof(uintptr_t) + 2 * sizeof(size_t);
+        size_t size;
+        if (read_sized_int(handle, chunk_addr + sizeof(void *), &size, sizeof(size_t))) {
+            goto error;
+        }
+
+        void *buffer = PyMem_RawMalloc(size);
+        if (!buffer) {
+            PyErr_NoMemory();
+            goto error;
+        }
+
+        if (_Py_RemoteDebug_ReadRemoteMemory(handle, chunk_addr, size, buffer) < 0) {
+            PyMem_RawFree(buffer);
+            goto error;
+        }
+
+        if (count >= max_chunks) {
+            max_chunks *= 2;
+            StackChunkInfo *new_chunks = PyMem_RawRealloc(chunks, max_chunks * sizeof(StackChunkInfo));
+            if (!new_chunks) {
+                PyErr_NoMemory();
+                goto error;
+            }
+            chunks = new_chunks;
+        }
+
+        size_t top;
+        memcpy(&top, (char *)buffer + sizeof(void *) + sizeof(size_t), sizeof(size_t));
+
+        chunks[count++] = (StackChunkInfo){chunk_addr, size, top, buffer};
+
+        memcpy(&chunk_addr, buffer, sizeof(uintptr_t));
+    }
+
+    out_chunks->chunks = chunks;
+    out_chunks->count = count;
+    return 0;
+
+error:
+    for (size_t i = 0; i < count; ++i) {
+        PyMem_RawFree(chunks[i].local_copy);
+    }
+    PyMem_RawFree(chunks);
+    return -1;
+}
+
+static void *
+find_frame_in_chunks(StackChunkList *chunks, uintptr_t remote_ptr)
+{
+    for (size_t i = 0; i < chunks->count; ++i) {
+        uintptr_t base = chunks->chunks[i].remote_addr + offsetof(_PyStackChunk, data);
+        size_t payload = chunks->chunks[i].size - offsetof(_PyStackChunk, data);
+
+        if (remote_ptr >= base && remote_ptr < base + payload) {
+            return (char *)chunks->chunks[i].local_copy + (remote_ptr - chunks->chunks[i].remote_addr);
+        }
+    }
+    return NULL;
+}
+
+static int
+parse_frame_from_chunks(
+    proc_handle_t *handle,
+    PyObject **result,
+    struct _Py_DebugOffsets *offsets,
+    uintptr_t address,
+    uintptr_t *previous_frame,
+    StackChunkList *chunks
+) {
+    void *frame_ptr = find_frame_in_chunks(chunks, address);
+    if (!frame_ptr) {
+        return -1;
+    }
+
+    _PyInterpreterFrame *frame = (_PyInterpreterFrame *)frame_ptr;
+    *previous_frame = (uintptr_t)frame->previous;
+
+    if (frame->owner >= FRAME_OWNED_BY_INTERPRETER || !frame->f_executable.bits) {
+        return 0;
+    }
+
+    return parse_code_object(
+        handle, result, offsets, frame->f_executable.bits, address, previous_frame);
+}
+
 
 static int
 parse_frame_object(
@@ -984,43 +1133,58 @@ parse_frame_object(
     uintptr_t address,
     uintptr_t* previous_frame
 ) {
-    int err;
+    // int err;
+
+    _PyInterpreterFrame frame;
 
     Py_ssize_t bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
         handle,
-        address + offsets->interpreter_frame.previous,
-        sizeof(void*),
-        previous_frame
+        address,
+        offsets->interpreter_frame.size,
+        &frame
     );
     if (bytes_read < 0) {
         return -1;
     }
 
-    char owner;
-    if (read_char(handle, address + offsets->interpreter_frame.owner, &owner)) {
-        return -1;
-    }
 
-    if (owner >= FRAME_OWNED_BY_INTERPRETER) {
+    // Py_ssize_t bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    //     handle,
+    //     address + offsets->interpreter_frame.previous,
+    //     sizeof(void*),
+    //     previous_frame
+    // );
+    // if (bytes_read < 0) {
+    //     return -1;
+    // }
+
+    *previous_frame = (uintptr_t)frame.previous;
+
+    // char owner;
+    // if (read_char(handle, address + offsets->interpreter_frame.owner, &owner)) {
+    //     return -1;
+    // }
+
+    if (frame.owner >= FRAME_OWNED_BY_INTERPRETER) {
         return 0;
     }
 
-    uintptr_t address_of_code_object;
-    err = read_py_ptr(
-        handle,
-        address + offsets->interpreter_frame.executable,
-        &address_of_code_object
-    );
-    if (err) {
-        return -1;
-    }
+    // uintptr_t address_of_code_object;
+    // err = read_py_ptr(
+    //     handle,
+    //     address + offsets->interpreter_frame.executable,
+    //     &address_of_code_object
+    // );
+    // if (err) {
+    //     return -1;
+    // }
 
-    if ((void*)address_of_code_object == NULL) {
+    if ((void*)frame.f_executable.bits == NULL) {
         return 0;
     }
 
     return parse_code_object(
-        handle, result, offsets, address_of_code_object, address, previous_frame);
+        handle, result, offsets, frame.f_executable.bits, address, previous_frame);
 }
 
 static int
@@ -1097,6 +1261,47 @@ read_async_debug(
     int result = _Py_RemoteDebug_ReadRemoteMemory(handle, async_debug_addr, size, async_debug);
     return result;
 }
+
+static int
+find_tstate(
+    proc_handle_t *handle,
+    uintptr_t runtime_start_address,
+    _Py_DebugOffsets* local_debug_offsets,
+    uintptr_t *tstate
+) {
+    uint64_t interpreter_state_list_head =
+        local_debug_offsets->runtime_state.interpreters_head;
+
+    uintptr_t address_of_interpreter_state;
+    int bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+            handle,
+            runtime_start_address + interpreter_state_list_head,
+            sizeof(void*),
+            &address_of_interpreter_state);
+    if (bytes_read < 0) {
+        return -1;
+    }
+
+    if (address_of_interpreter_state == 0) {
+        PyErr_SetString(PyExc_RuntimeError, "No interpreter state found");
+        return -1;
+    }
+
+    uintptr_t address_of_thread;
+    bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+            handle,
+            address_of_interpreter_state +
+                local_debug_offsets->interpreter_state.threads_main,
+            sizeof(void*),
+            &address_of_thread);
+    if (bytes_read < 0) {
+        return -1;
+    }
+
+    *tstate = address_of_thread;
+    return 0;
+}
+
 
 static int
 find_running_frame(
@@ -1533,45 +1738,81 @@ get_stack_trace(PyObject* self, PyObject* args)
         goto result_err;
     }
 
-    uintptr_t address_of_current_frame;
-    if (find_running_frame(
-        handle, runtime_start_address, &local_debug_offsets,
-        &address_of_current_frame)
-    ) {
-        goto result_err;
-    }
+    uintptr_t tstate_addr;
+    find_tstate(handle, runtime_start_address, &local_debug_offsets, &tstate_addr);
 
-    result = PyList_New(0);
-    if (result == NULL) {
-        goto result_err;
-    }
+    mach_timebase_info_data_t timebase;
+    mach_timebase_info(&timebase);
+    for (;;) {
 
-    while ((void*)address_of_current_frame != NULL) {
-        PyObject* frame_info = NULL;
-        if (parse_frame_object(
-                    handle,
-                    &frame_info,
-                    &local_debug_offsets,
-                    address_of_current_frame,
-                    &address_of_current_frame)
-            < 0)
-        {
-            Py_CLEAR(result);
+        // Start time
+        uint64_t start = mach_absolute_time();
+
+        uintptr_t address_of_current_frame;
+        if (find_running_frame(
+            handle, runtime_start_address, &local_debug_offsets,
+            &address_of_current_frame)
+        ) {
             goto result_err;
         }
 
-        if (!frame_info) {
-            continue;
-        }
-
-        if (PyList_Append(result, frame_info) == -1) {
-            Py_CLEAR(result);
+        result = PyList_New(0);
+        if (result == NULL) {
             goto result_err;
         }
 
-        Py_DECREF(frame_info);
-        frame_info = NULL;
+        StackChunkList stack_chunks = {0};
+        if (copy_stack_chunks(handle, tstate_addr, &local_debug_offsets, &stack_chunks) < 0) {
+            goto result_err;
+        }
 
+        while ((void*)address_of_current_frame != NULL) {
+            PyObject* frame_info = NULL;
+            if (parse_frame_from_chunks(handle, &frame_info, &local_debug_offsets,
+                                address_of_current_frame, &address_of_current_frame,
+                                &stack_chunks) < 0) {
+                if (parse_frame_object(
+                            handle,
+                            &frame_info,
+                            &local_debug_offsets,
+                            address_of_current_frame,
+                            &address_of_current_frame)
+                    < 0)
+                {
+                    Py_CLEAR(result);
+                    goto result_err;
+                }
+            }
+
+            if (!frame_info) {
+                continue;
+            }
+
+            if (PyList_Append(result, frame_info) == -1) {
+                Py_CLEAR(result);
+                goto result_err;
+            }
+
+            Py_DECREF(frame_info);
+            frame_info = NULL;
+
+        }
+
+        // Free chunk memory
+        for (size_t i = 0; i < stack_chunks.count; ++i) {
+            PyMem_RawFree(stack_chunks.chunks[i].local_copy);
+        }
+        PyMem_RawFree(stack_chunks.chunks);
+
+        uint64_t end = mach_absolute_time();
+
+        uint64_t elapsed = end - start;
+        double elapsed_ns = (double)elapsed * timebase.numer / timebase.denom;
+        double elapsed_sec = elapsed_ns * 1e-9;
+
+        // Compute and print frequency
+        double frequency = 1 / elapsed_sec;
+        printf("Frequency: %.2f Hz\n", frequency);
     }
 
 result_err:
