@@ -84,7 +84,7 @@ _Py_RemoteDebug_GetAsyncioDebugAddress(proc_handle_t* handle)
 static inline int
 read_ptr(proc_handle_t *handle, uintptr_t address, uintptr_t *ptr_addr)
 {
-    int result = _Py_RemoteDebug_ReadRemoteMemory(handle, address, sizeof(void*), ptr_addr);
+    int result = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, sizeof(void*), ptr_addr);
     if (result < 0) {
         return -1;
     }
@@ -94,7 +94,7 @@ read_ptr(proc_handle_t *handle, uintptr_t address, uintptr_t *ptr_addr)
 static inline int
 read_Py_ssize_t(proc_handle_t *handle, uintptr_t address, Py_ssize_t *size)
 {
-    int result = _Py_RemoteDebug_ReadRemoteMemory(handle, address, sizeof(Py_ssize_t), size);
+    int result = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, sizeof(Py_ssize_t), size);
     if (result < 0) {
         return -1;
     }
@@ -114,7 +114,7 @@ read_py_ptr(proc_handle_t *handle, uintptr_t address, uintptr_t *ptr_addr)
 static int
 read_char(proc_handle_t *handle, uintptr_t address, char *result)
 {
-    int res = _Py_RemoteDebug_ReadRemoteMemory(handle, address, sizeof(char), result);
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, sizeof(char), result);
     if (res < 0) {
         return -1;
     }
@@ -124,7 +124,7 @@ read_char(proc_handle_t *handle, uintptr_t address, char *result)
 static int
 read_sized_int(proc_handle_t *handle, uintptr_t address, void *result, size_t size)
 {
-    int res = _Py_RemoteDebug_ReadRemoteMemory(handle, address, size, result);
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, size, result);
     if (res < 0) {
         return -1;
     }
@@ -134,7 +134,7 @@ read_sized_int(proc_handle_t *handle, uintptr_t address, void *result, size_t si
 static int
 read_unsigned_long(proc_handle_t *handle, uintptr_t address, unsigned long *result)
 {
-    int res = _Py_RemoteDebug_ReadRemoteMemory(handle, address, sizeof(unsigned long), result);
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, sizeof(unsigned long), result);
     if (res < 0) {
         return -1;
     }
@@ -144,7 +144,7 @@ read_unsigned_long(proc_handle_t *handle, uintptr_t address, unsigned long *resu
 static int
 read_pyobj(proc_handle_t *handle, uintptr_t address, PyObject *ptr_addr)
 {
-    int res = _Py_RemoteDebug_ReadRemoteMemory(handle, address, sizeof(PyObject), ptr_addr);
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, sizeof(PyObject), ptr_addr);
     if (res < 0) {
         return -1;
     }
@@ -162,7 +162,7 @@ read_py_str(
     char *buf = NULL;
 
     Py_ssize_t len;
-    int res = _Py_RemoteDebug_ReadRemoteMemory(
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle,
         address + debug_offsets->unicode_object.length,
         sizeof(Py_ssize_t),
@@ -179,7 +179,7 @@ read_py_str(
     }
 
     size_t offset = debug_offsets->unicode_object.asciiobject_size;
-    res = _Py_RemoteDebug_ReadRemoteMemory(handle, address + offset, len, buf);
+    res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address + offset, len, buf);
     if (res < 0) {
         goto err;
     }
@@ -211,7 +211,7 @@ read_py_bytes(
     char *buf = NULL;
 
     Py_ssize_t len;
-    int res = _Py_RemoteDebug_ReadRemoteMemory(
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle,
         address + debug_offsets->bytes_object.ob_size,
         sizeof(Py_ssize_t),
@@ -228,7 +228,7 @@ read_py_bytes(
     }
 
     size_t offset = debug_offsets->bytes_object.ob_sval;
-    res = _Py_RemoteDebug_ReadRemoteMemory(handle, address + offset, len, buf);
+    res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address + offset, len, buf);
     if (res < 0) {
         goto err;
     }
@@ -260,7 +260,7 @@ read_py_long(proc_handle_t *handle, _Py_DebugOffsets* offsets, uintptr_t address
     Py_ssize_t size;
     uintptr_t lv_tag;
 
-    int bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle, address + offsets->long_object.lv_tag,
         sizeof(uintptr_t),
         &lv_tag);
@@ -281,7 +281,7 @@ read_py_long(proc_handle_t *handle, _Py_DebugOffsets* offsets, uintptr_t address
         return -1;
     }
 
-    bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle,
         address + offsets->long_object.ob_digit,
         sizeof(digit) * size,
@@ -881,7 +881,7 @@ parse_linetable(const uintptr_t addrq, const char* linetable, int firstlineno, L
 static int
 read_remote_pointer(proc_handle_t *handle, uintptr_t address, uintptr_t *out_ptr, const char *error_message)
 {
-    int bytes_read = _Py_RemoteDebug_ReadRemoteMemory(handle, address, sizeof(void *), out_ptr);
+    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, sizeof(void *), out_ptr);
     if (bytes_read < 0) {
         return -1;
     }
@@ -906,7 +906,7 @@ read_instruction_ptr(proc_handle_t *handle, struct _Py_DebugOffsets *offsets,
     );
 }
 
-static PyObject* cache = NULL;
+static _Py_hashtable_t *code_object_cache = NULL;
 
 static int
 parse_code_object(proc_handle_t *handle,
@@ -918,23 +918,21 @@ parse_code_object(proc_handle_t *handle,
 {
     uintptr_t addr_func_name, addr_file_name, addr_linetable, instruction_ptr;
 
-    if (cache == NULL) {
-        cache = PyDict_New();
-        if (cache == NULL) {
+    if (code_object_cache == NULL) {
+        code_object_cache = _Py_hashtable_new(
+            _Py_hashtable_hash_ptr,
+            _Py_hashtable_compare_direct);
+        if (code_object_cache == NULL) {
+            PyErr_NoMemory();
             return -1;
         }
     }
 
-    PyObject* addr_py = PyLong_FromLongLong(address);
-    if (addr_py == NULL) {
-        return -1;
-    }
-
-    PyObject* maybe_result = PyDict_GetItem(cache, addr_py);
-    if (maybe_result != NULL) {
-        Py_CLEAR(addr_py);
-        Py_INCREF(maybe_result);
-        *result = maybe_result;
+    void *key = (void *)address;
+    PyObject *cached = (PyObject *)_Py_hashtable_get(code_object_cache, key);
+    if (cached != NULL) {
+        Py_INCREF(cached);
+        *result = cached;
         return 0;
     }
 
@@ -946,7 +944,7 @@ parse_code_object(proc_handle_t *handle,
     }
 
     int firstlineno;
-    if (_Py_RemoteDebug_ReadRemoteMemory(handle,
+    if (_Py_RemoteDebug_PagedReadRemoteMemory(handle,
                                          address + offsets->code_object.firstlineno,
                                          sizeof(int),
                                          &firstlineno) < 0) {
@@ -963,7 +961,7 @@ parse_code_object(proc_handle_t *handle,
 
     LocationInfo info;
     parse_linetable(addrq, PyBytes_AS_STRING(py_linetable), firstlineno, &info);
-    Py_DECREF(py_linetable);  // Done with linetable
+    Py_DECREF(py_linetable);
 
     PyObject *py_line = PyLong_FromLong(info.lineno);
     if (!py_line) {
@@ -994,11 +992,14 @@ parse_code_object(proc_handle_t *handle,
     PyTuple_SET_ITEM(result_tuple, 0, py_func_name);  // steals ref
     PyTuple_SET_ITEM(result_tuple, 1, py_file_name);  // steals ref
     PyTuple_SET_ITEM(result_tuple, 2, py_line);       // steals ref
-    
-    if(PyDict_SetItem(cache, addr_py, result_tuple) < 0) {
+
+    if (_Py_hashtable_set(code_object_cache, key, result_tuple) < 0) {
+        Py_DECREF(result_tuple);
+        PyErr_NoMemory();
         return -1;
     }
 
+    Py_INCREF(result_tuple);  // returned to caller
     *result = result_tuple;
     return 0;
 }
@@ -1029,7 +1030,7 @@ copy_stack_chunks(proc_handle_t *handle,
         return -1;
     }
 
-    size_t max_chunks = 16; // Increase as needed
+    size_t max_chunks = 16;
     StackChunkInfo *chunks = PyMem_RawMalloc(max_chunks * sizeof(StackChunkInfo));
     if (!chunks) {
         PyErr_NoMemory();
@@ -1050,7 +1051,7 @@ copy_stack_chunks(proc_handle_t *handle,
             goto error;
         }
 
-        if (_Py_RemoteDebug_ReadRemoteMemory(handle, chunk_addr, size, buffer) < 0) {
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(handle, chunk_addr, size, buffer) < 0) {
             PyMem_RawFree(buffer);
             goto error;
         }
@@ -1137,7 +1138,7 @@ parse_frame_object(
 
     _PyInterpreterFrame frame;
 
-    Py_ssize_t bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    Py_ssize_t bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle,
         address,
         offsets->interpreter_frame.size,
@@ -1148,7 +1149,7 @@ parse_frame_object(
     }
 
 
-    // Py_ssize_t bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    // Py_ssize_t bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
     //     handle,
     //     address + offsets->interpreter_frame.previous,
     //     sizeof(void*),
@@ -1198,7 +1199,7 @@ parse_async_frame_object(
 ) {
     int err;
 
-    Py_ssize_t bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    Py_ssize_t bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle,
         address + offsets->interpreter_frame.previous,
         sizeof(void*),
@@ -1209,7 +1210,7 @@ parse_async_frame_object(
     }
 
     char owner;
-    bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle, address + offsets->interpreter_frame.owner, sizeof(char), &owner);
     if (bytes_read < 0) {
         return -1;
@@ -1258,7 +1259,7 @@ read_async_debug(
     }
 
     size_t size = sizeof(struct _Py_AsyncioModuleDebugOffsets);
-    int result = _Py_RemoteDebug_ReadRemoteMemory(handle, async_debug_addr, size, async_debug);
+    int result = _Py_RemoteDebug_PagedReadRemoteMemory(handle, async_debug_addr, size, async_debug);
     return result;
 }
 
@@ -1273,7 +1274,7 @@ find_tstate(
         local_debug_offsets->runtime_state.interpreters_head;
 
     uintptr_t address_of_interpreter_state;
-    int bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
             runtime_start_address + interpreter_state_list_head,
             sizeof(void*),
@@ -1288,7 +1289,7 @@ find_tstate(
     }
 
     uintptr_t address_of_thread;
-    bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
             address_of_interpreter_state +
                 local_debug_offsets->interpreter_state.threads_main,
@@ -1314,7 +1315,7 @@ find_running_frame(
         local_debug_offsets->runtime_state.interpreters_head;
 
     uintptr_t address_of_interpreter_state;
-    int bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
             runtime_start_address + interpreter_state_list_head,
             sizeof(void*),
@@ -1329,7 +1330,7 @@ find_running_frame(
     }
 
     uintptr_t address_of_thread;
-    bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
             address_of_interpreter_state +
                 local_debug_offsets->interpreter_state.threads_main,
@@ -1369,7 +1370,7 @@ find_running_task(
         local_debug_offsets->runtime_state.interpreters_head;
 
     uintptr_t address_of_interpreter_state;
-    int bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
             runtime_start_address + interpreter_state_list_head,
             sizeof(void*),
@@ -1384,7 +1385,7 @@ find_running_task(
     }
 
     uintptr_t address_of_thread;
-    bytes_read = _Py_RemoteDebug_ReadRemoteMemory(
+    bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
             address_of_interpreter_state +
                 local_debug_offsets->interpreter_state.threads_head,
@@ -1436,7 +1437,7 @@ append_awaited_by_for_thread(
 ) {
     struct llist_node task_node;
 
-    if (0 > _Py_RemoteDebug_ReadRemoteMemory(
+    if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                 handle,
                 head_addr,
                 sizeof(task_node),
@@ -1509,7 +1510,7 @@ append_awaited_by_for_thread(
         }
 
         // onto the next one...
-        if (0 > _Py_RemoteDebug_ReadRemoteMemory(
+        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                     handle,
                     (uintptr_t)task_node.next,
                     sizeof(task_node),
@@ -1624,7 +1625,7 @@ get_all_awaited_by(PyObject* self, PyObject* args)
         local_debug_offsets.runtime_state.interpreters_head;
 
     uintptr_t interpreter_state_addr;
-    if (0 > _Py_RemoteDebug_ReadRemoteMemory(
+    if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                 handle,
                 runtime_start_addr + interpreter_state_list_head,
                 sizeof(void*),
@@ -1635,7 +1636,7 @@ get_all_awaited_by(PyObject* self, PyObject* args)
 
     uintptr_t thread_state_addr;
     unsigned long tid = 0;
-    if (0 > _Py_RemoteDebug_ReadRemoteMemory(
+    if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                 handle,
                 interpreter_state_addr
                 + local_debug_offsets.interpreter_state.threads_head,
@@ -1647,7 +1648,7 @@ get_all_awaited_by(PyObject* self, PyObject* args)
 
     uintptr_t head_addr;
     while (thread_state_addr != 0) {
-        if (0 > _Py_RemoteDebug_ReadRemoteMemory(
+        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                     handle,
                     thread_state_addr
                     + local_debug_offsets.thread_state.native_thread_id,
@@ -1666,7 +1667,7 @@ get_all_awaited_by(PyObject* self, PyObject* args)
             goto result_err;
         }
 
-        if (0 > _Py_RemoteDebug_ReadRemoteMemory(
+        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                     handle,
                     thread_state_addr + local_debug_offsets.thread_state.next,
                     sizeof(void*),
@@ -1749,10 +1750,11 @@ get_stack_trace(PyObject* self, PyObject* args)
         uint64_t start = mach_absolute_time();
 
         uintptr_t address_of_current_frame;
-        if (find_running_frame(
-            handle, runtime_start_address, &local_debug_offsets,
-            &address_of_current_frame)
-        ) {
+        int err = read_ptr(
+            handle,
+            tstate_addr + local_debug_offsets.thread_state.current_frame,
+            &address_of_current_frame);
+        if (err) {
             goto result_err;
         }
 

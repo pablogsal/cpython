@@ -230,6 +230,7 @@ static void* unix_mmap(void* addr, size_t size, size_t try_alignment, int protec
   #endif
   void* p = NULL;
   const int fd = unix_mmap_fd();
+  printf("fd = %d\n", fd);
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
   if (_mi_os_has_overcommit()) {
     flags |= MAP_NORESERVE;

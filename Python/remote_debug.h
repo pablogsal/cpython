@@ -73,6 +73,21 @@ extern "C" {
 #    define HAVE_PROCESS_VM_READV 0
 #endif
 
+static inline size_t
+get_page_size(void) {
+    static size_t page_size = 0;
+    if (page_size == 0) {
+        page_size = (size_t)getpagesize();
+    }
+    return page_size;
+}
+
+typedef struct page_cache_entry {
+    uintptr_t page_addr;  // page-aligned base address
+    uint8_t *data;
+    struct page_cache_entry *next;
+} page_cache_entry_t;
+
 // Define a platform-independent process handle structure
 typedef struct {
     pid_t pid;
@@ -81,6 +96,7 @@ typedef struct {
 #elif defined(MS_WINDOWS)
     HANDLE hProcess;
 #endif
+    page_cache_entry_t *cache_head;
 } proc_handle_t;
 
 static mach_port_t pid_to_task(pid_t pid);
@@ -100,6 +116,7 @@ _Py_RemoteDebug_InitProcHandle(proc_handle_t *handle, pid_t pid) {
         return -1;
     }
 #endif
+    handle->cache_head = NULL;
     return 0;
 }
 
@@ -113,6 +130,15 @@ _Py_RemoteDebug_CleanupProcHandle(proc_handle_t *handle) {
     }
 #endif
     handle->pid = 0;
+
+    page_cache_entry_t *entry = handle->cache_head;
+    while (entry) {
+        page_cache_entry_t *next = entry->next;
+        PyMem_RawFree(entry->data);
+        PyMem_RawFree(entry);
+        entry = next;
+    }
+    handle->cache_head = NULL;
 }
 
 #if defined(__APPLE__) && TARGET_OS_OSX
@@ -784,6 +810,57 @@ _Py_RemoteDebug_ReadRemoteMemory(proc_handle_t *handle, uintptr_t remote_address
 #else
     Py_UNREACHABLE();
 #endif
+}
+
+int
+_Py_RemoteDebug_PagedReadRemoteMemory(proc_handle_t *handle, uintptr_t addr, size_t size, void *out)
+{
+    size_t page_size = get_page_size();
+    uintptr_t page_base = addr & ~(page_size - 1);
+    size_t offset_in_page = addr - page_base;
+
+    if (offset_in_page + size > page_size) {
+        // spanning multiple pages — fallback for now
+        return _Py_RemoteDebug_ReadRemoteMemory(handle, addr, size, out);
+    }
+
+    // Check cache
+    page_cache_entry_t *entry = handle->cache_head;
+    while (entry) {
+        if (entry->page_addr == page_base) {
+            memcpy(out, entry->data + offset_in_page, size);
+            return 0;
+        }
+        entry = entry->next;
+    }
+
+    // Not cached: allocate struct and data buffer
+    page_cache_entry_t *new_entry = PyMem_RawMalloc(sizeof(page_cache_entry_t));
+    if (!new_entry) {
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    new_entry->data = PyMem_RawMalloc(page_size);
+    if (!new_entry->data) {
+        PyMem_RawFree(new_entry);
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    new_entry->page_addr = page_base;
+    if (_Py_RemoteDebug_ReadRemoteMemory(handle, page_base, page_size, new_entry->data) < 0) {
+        PyMem_RawFree(new_entry->data);
+        PyMem_RawFree(new_entry);
+        return -1;
+    }
+
+    // Add to cache
+    new_entry->next = handle->cache_head;
+    handle->cache_head = new_entry;
+
+    memcpy(out, new_entry->data + offset_in_page, size);
+    return 0;
 }
 
 static int
