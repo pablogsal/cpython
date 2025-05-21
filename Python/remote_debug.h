@@ -812,6 +812,19 @@ _Py_RemoteDebug_ReadRemoteMemory(proc_handle_t *handle, uintptr_t remote_address
 #endif
 }
 
+void
+_Py_RemoteDebug_ClearCache(proc_handle_t *handle)
+{
+    page_cache_entry_t *entry = handle->cache_head;
+    while (entry) {
+        page_cache_entry_t *next = entry->next;
+        PyMem_RawFree(entry->data);
+        PyMem_RawFree(entry);
+        entry = next;
+    }
+    handle->cache_head = NULL;
+}
+
 int
 _Py_RemoteDebug_PagedReadRemoteMemory(proc_handle_t *handle, uintptr_t addr, size_t size, void *out)
 {

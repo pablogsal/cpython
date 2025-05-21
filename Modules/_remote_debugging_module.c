@@ -23,7 +23,45 @@
 #    define HAVE_PROCESS_VM_READV 0
 #endif
 
-#include <mach/mach_time.h>
+typedef struct {
+    PyObject_HEAD
+    proc_handle_t handle;
+    uintptr_t runtime_start_address;
+    struct _Py_DebugOffsets debug_offsets;
+    uintptr_t tstate_addr;
+} RemoteUnwinderObject;
+
+#include "clinic/_remote_debugging_module.c.h"
+
+
+/*[clinic input]
+module _remote_debugging
+[clinic start generated code]*/
+/*[clinic end generated code: output=da39a3ee5e6b4b0d input=5f507d5b2e76a7f7]*/
+
+/*[clinic input]
+class _remote_debugging.RemoteUnwinder "RemoteUnwinderObject *" "&RemoteUnwinder_Type"
+[clinic start generated code]*/
+/*[clinic end generated code: output=da39a3ee5e6b4b0d input=55f164d8803318be]*/
+
+typedef struct {
+    /* Types */
+    PyTypeObject *RemoteDebugging_Type;
+} RemoteDebuggingState;
+
+static inline RemoteDebuggingState *
+RemoteDebugging_GetState(PyObject *module)
+{
+    void *state = _PyModule_GetState(module);
+    assert(state != NULL);
+    return (RemoteDebuggingState *)state;
+}
+
+static inline int
+RemoteDebugging_InitState(RemoteDebuggingState *st)
+{
+    return 0;
+}
 struct _Py_AsyncioModuleDebugOffsets {
     struct _asyncio_task_object {
         uint64_t size;
@@ -1039,7 +1077,6 @@ copy_stack_chunks(proc_handle_t *handle,
 
     size_t count = 0;
     while (chunk_addr != 0) {
-        size_t chunk_header_size = sizeof(uintptr_t) + 2 * sizeof(size_t);
         size_t size;
         if (read_sized_int(handle, chunk_addr + sizeof(void *), &size, sizeof(size_t))) {
             goto error;
@@ -1700,6 +1737,108 @@ result_err:
     return NULL;
 }
 
+/*[clinic input]
+_remote_debugging.RemoteUnwinder.__init__
+    pid: int
+[clinic start generated code]*/
+
+static int
+_remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
+                                               int pid)
+/*[clinic end generated code: output=112ca6e1c82b77e6 input=2b41765ef325e88e]*/
+{
+    if (_Py_RemoteDebug_InitProcHandle(&self->handle, pid) < 0) {
+        Py_DECREF(self);
+        return -1;
+    }
+
+    self->runtime_start_address = _Py_RemoteDebug_GetPyRuntimeAddress(&self->handle);
+    if (self->runtime_start_address == 0) {
+        return -1;
+    }
+
+    if (_Py_RemoteDebug_ReadDebugOffsets(&self->handle,
+                                         &self->runtime_start_address,
+                                         &self->debug_offsets) < 0)
+    {
+        return -1;
+    }
+
+    if (find_tstate(&self->handle, self->runtime_start_address,
+                    &self->debug_offsets, &self->tstate_addr) < 0)
+    {
+        return -1;
+    }
+
+    return 0;
+}
+
+/*[clinic input]
+@critical_section
+_remote_debugging.RemoteUnwinder.get_stack_trace
+
+Blah blah blah
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self)
+/*[clinic end generated code: output=666192b90c69d567 input=2195b971885992a5]*/
+{
+    PyObject* result = NULL;
+    uintptr_t frame_addr;
+
+    if (read_ptr(&self->handle,
+                 self->tstate_addr + self->debug_offsets.thread_state.current_frame,
+                 &frame_addr))
+    {
+        return NULL;
+    }
+
+    result = PyList_New(0);
+    if (!result) {
+        return NULL;
+    }
+
+    StackChunkList chunks = {0};
+    if (copy_stack_chunks(&self->handle, self->tstate_addr,
+                          &self->debug_offsets, &chunks) < 0)
+    {
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    while ((void*)frame_addr != NULL) {
+        PyObject *frame = NULL;
+        if (parse_frame_from_chunks(&self->handle, &frame,
+                                    &self->debug_offsets,
+                                    frame_addr, &frame_addr,
+                                    &chunks) < 0)
+        {
+            if (parse_frame_object(&self->handle, &frame,
+                                   &self->debug_offsets,
+                                   frame_addr, &frame_addr) < 0)
+            {
+                Py_DECREF(result);
+                result = NULL;
+                break;
+            }
+        }
+
+        if (frame) {
+            PyList_Append(result, frame);
+            Py_DECREF(frame);
+        }
+    }
+
+    for (size_t i = 0; i < chunks.count; ++i) {
+        PyMem_RawFree(chunks.chunks[i].local_copy);
+    }
+    PyMem_RawFree(chunks.chunks);
+    _Py_RemoteDebug_ClearCache(&self->handle);
+
+    return result;
+}
+
 static PyObject*
 get_stack_trace(PyObject* self, PyObject* args)
 {
@@ -1742,80 +1881,62 @@ get_stack_trace(PyObject* self, PyObject* args)
     uintptr_t tstate_addr;
     find_tstate(handle, runtime_start_address, &local_debug_offsets, &tstate_addr);
 
-    mach_timebase_info_data_t timebase;
-    mach_timebase_info(&timebase);
-    for (;;) {
+    uintptr_t address_of_current_frame;
+    int err = read_ptr(
+        handle,
+        tstate_addr + local_debug_offsets.thread_state.current_frame,
+        &address_of_current_frame);
+    if (err) {
+        goto result_err;
+    }
 
-        // Start time
-        uint64_t start = mach_absolute_time();
+    result = PyList_New(0);
+    if (result == NULL) {
+        goto result_err;
+    }
 
-        uintptr_t address_of_current_frame;
-        int err = read_ptr(
-            handle,
-            tstate_addr + local_debug_offsets.thread_state.current_frame,
-            &address_of_current_frame);
-        if (err) {
-            goto result_err;
-        }
+    StackChunkList stack_chunks = {0};
+    if (copy_stack_chunks(handle, tstate_addr, &local_debug_offsets, &stack_chunks) < 0) {
+        goto result_err;
+    }
 
-        result = PyList_New(0);
-        if (result == NULL) {
-            goto result_err;
-        }
-
-        StackChunkList stack_chunks = {0};
-        if (copy_stack_chunks(handle, tstate_addr, &local_debug_offsets, &stack_chunks) < 0) {
-            goto result_err;
-        }
-
-        while ((void*)address_of_current_frame != NULL) {
-            PyObject* frame_info = NULL;
-            if (parse_frame_from_chunks(handle, &frame_info, &local_debug_offsets,
-                                address_of_current_frame, &address_of_current_frame,
-                                &stack_chunks) < 0) {
-                if (parse_frame_object(
-                            handle,
-                            &frame_info,
-                            &local_debug_offsets,
-                            address_of_current_frame,
-                            &address_of_current_frame)
-                    < 0)
-                {
-                    Py_CLEAR(result);
-                    goto result_err;
-                }
-            }
-
-            if (!frame_info) {
-                continue;
-            }
-
-            if (PyList_Append(result, frame_info) == -1) {
+    while ((void*)address_of_current_frame != NULL) {
+        PyObject* frame_info = NULL;
+        if (parse_frame_from_chunks(handle, &frame_info, &local_debug_offsets,
+                            address_of_current_frame, &address_of_current_frame,
+                            &stack_chunks) < 0) {
+            if (parse_frame_object(
+                        handle,
+                        &frame_info,
+                        &local_debug_offsets,
+                        address_of_current_frame,
+                        &address_of_current_frame)
+                < 0)
+            {
                 Py_CLEAR(result);
                 goto result_err;
             }
-
-            Py_DECREF(frame_info);
-            frame_info = NULL;
-
         }
 
-        // Free chunk memory
-        for (size_t i = 0; i < stack_chunks.count; ++i) {
-            PyMem_RawFree(stack_chunks.chunks[i].local_copy);
+        if (!frame_info) {
+            continue;
         }
-        PyMem_RawFree(stack_chunks.chunks);
 
-        uint64_t end = mach_absolute_time();
+        if (PyList_Append(result, frame_info) == -1) {
+            Py_CLEAR(result);
+            goto result_err;
+        }
 
-        uint64_t elapsed = end - start;
-        double elapsed_ns = (double)elapsed * timebase.numer / timebase.denom;
-        double elapsed_sec = elapsed_ns * 1e-9;
+        Py_DECREF(frame_info);
+        frame_info = NULL;
 
-        // Compute and print frequency
-        double frequency = 1 / elapsed_sec;
-        printf("Frequency: %.2f Hz\n", frequency);
     }
+
+    // Free chunk memory
+    for (size_t i = 0; i < stack_chunks.count; ++i) {
+        PyMem_RawFree(stack_chunks.chunks[i].local_copy);
+    }
+    PyMem_RawFree(stack_chunks.chunks);
 
 result_err:
     _Py_RemoteDebug_CleanupProcHandle(handle);
@@ -2005,8 +2126,94 @@ result_err:
     return NULL;
 }
 
+static PyMethodDef RemoteUnwinder_methods[] = {
+    _REMOTE_DEBUGGING_REMOTEUNWINDER_GET_STACK_TRACE_METHODDEF
+    {NULL, NULL}
+};
 
-static PyMethodDef methods[] = {
+static void
+RemoteUnwinder_dealloc(RemoteUnwinderObject *self)
+{
+    _Py_RemoteDebug_ClearCache(&self->handle);
+    _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+    PyObject_GC_Del(self);
+}
+
+static PyType_Slot RemoteUnwinder_slots[] = {
+    {Py_tp_doc, (void *)"RemoteUnwinder(pid): Inspect stack of a remote Python process."},
+    {Py_tp_methods, RemoteUnwinder_methods},
+    {Py_tp_init, _remote_debugging_RemoteUnwinder___init__},
+    {Py_tp_dealloc, RemoteUnwinder_dealloc},
+    {0, NULL}
+};
+
+static PyType_Spec RemoteUnwinder_spec = {
+    .name = "_remote_debugging.RemoteUnwinder",
+    .basicsize = sizeof(RemoteUnwinderObject),
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = RemoteUnwinder_slots,
+};
+
+static int
+_remote_debugging_exec(PyObject *m)
+{
+    RemoteDebuggingState *st = RemoteDebugging_GetState(m);
+#define CREATE_TYPE(mod, type, spec)                                        \
+    do {                                                                    \
+        type = (PyTypeObject *)PyType_FromMetaclass(NULL, mod, spec, NULL); \
+        if (type == NULL) {                                                 \
+            return -1;                                                      \
+        }                                                                   \
+    } while (0)
+
+    CREATE_TYPE(m, st->RemoteDebugging_Type, &RemoteUnwinder_spec);
+
+   if (PyModule_AddType(m, st->RemoteDebugging_Type) < 0) {
+        return -1;
+    }
+#ifdef Py_GIL_DISABLED
+    PyUnstable_Module_SetGIL(mod, Py_MOD_GIL_NOT_USED);
+#endif
+    int rc = PyModule_AddIntConstant(m, "PROCESS_VM_READV_SUPPORTED", HAVE_PROCESS_VM_READV);
+    if (rc < 0) {
+        return -1;
+    }
+    if (RemoteDebugging_InitState(st) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int
+remote_debugging_traverse(PyObject *mod, visitproc visit, void *arg)
+{
+    RemoteDebuggingState *state = RemoteDebugging_GetState(mod);
+    Py_VISIT(state->RemoteDebugging_Type);
+    return 0;
+}
+
+static int
+remote_debugging_clear(PyObject *mod)
+{
+    RemoteDebuggingState *state = RemoteDebugging_GetState(mod);
+    Py_CLEAR(state->RemoteDebugging_Type);
+    return 0;
+}
+
+static void
+remote_debugging_free(void *mod)
+{
+    (void)remote_debugging_clear((PyObject *)mod);
+}
+
+static PyModuleDef_Slot remote_debugging_slots[] = {
+    {Py_mod_exec, _remote_debugging_exec},
+    {Py_mod_multiple_interpreters, Py_MOD_PER_INTERPRETER_GIL_SUPPORTED},
+    {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+    {0, NULL},
+};
+
+static PyMethodDef remote_debugging_methods[] = {
     {"get_stack_trace", get_stack_trace, METH_VARARGS,
         "Get the Python stack from a given pid"},
     {"get_async_stack_trace", get_async_stack_trace, METH_VARARGS,
@@ -2016,28 +2223,20 @@ static PyMethodDef methods[] = {
     {NULL, NULL, 0, NULL},
 };
 
-static struct PyModuleDef module = {
-    .m_base = PyModuleDef_HEAD_INIT,
+static struct PyModuleDef remote_debugging_module = {
+    PyModuleDef_HEAD_INIT,
     .m_name = "_remote_debugging",
-    .m_size = -1,
-    .m_methods = methods,
+    .m_size = sizeof(RemoteDebuggingState),
+    .m_methods = remote_debugging_methods,
+    .m_slots = remote_debugging_slots,
+    .m_traverse = remote_debugging_traverse,
+    .m_clear = remote_debugging_clear,
+    .m_free = remote_debugging_free,
 };
 
 PyMODINIT_FUNC
 PyInit__remote_debugging(void)
 {
-    PyObject* mod = PyModule_Create(&module);
-    if (mod == NULL) {
-        return NULL;
-    }
-#ifdef Py_GIL_DISABLED
-    PyUnstable_Module_SetGIL(mod, Py_MOD_GIL_NOT_USED);
-#endif
-    int rc = PyModule_AddIntConstant(
-        mod, "PROCESS_VM_READV_SUPPORTED", HAVE_PROCESS_VM_READV);
-    if (rc < 0) {
-        Py_DECREF(mod);
-        return NULL;
-    }
-    return mod;
+    return PyModuleDef_Init(&remote_debugging_module);
+
 }
