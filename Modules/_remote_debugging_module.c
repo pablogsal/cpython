@@ -1243,8 +1243,6 @@ parse_frame_object(
         return 0;
     }
 
-    printf("onwer: %d\n", frame.owner);
-
     if ((void*)frame.f_executable.bits == NULL) {
         return 0;
     }
@@ -1968,6 +1966,8 @@ static PyObject *
 _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self)
 /*[clinic end generated code: output=666192b90c69d567 input=aa504416483c9467]*/
 {
+    PyObject* result = NULL;
+
     // Check the code object generatiom
     uint64_t code_object_generation = 0;
     if (_Py_RemoteDebug_PagedReadRemoteMemory(
@@ -1981,7 +1981,6 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
         self->code_object_generation = code_object_generation;
         _Py_hashtable_clear(self->code_object_cache);
     }
-
 
     uintptr_t current_tstate;
     if (self->tstate_addr == 0) {
@@ -1997,7 +1996,7 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
         current_tstate = self->tstate_addr;
     }
 
-    PyObject* result = PyList_New(0);
+    result = PyList_New(0);
     if (!result) {
         goto exit;
     }
@@ -2240,9 +2239,12 @@ static PyMethodDef RemoteUnwinder_methods[] = {
 static void
 RemoteUnwinder_dealloc(RemoteUnwinderObject *self)
 {
+    PyTypeObject *tp = Py_TYPE(self);
+    _Py_hashtable_destroy(self->code_object_cache);
     _Py_RemoteDebug_ClearCache(&self->handle);
     _Py_RemoteDebug_CleanupProcHandle(&self->handle);
     PyObject_Del(self);
+    Py_DECREF(tp);
 }
 
 static PyType_Slot RemoteUnwinder_slots[] = {
