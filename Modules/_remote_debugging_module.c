@@ -28,21 +28,36 @@ typedef struct {
     proc_handle_t handle;
     uintptr_t runtime_start_address;
     struct _Py_DebugOffsets debug_offsets;
+    uintptr_t interpreter_addr;
     uintptr_t tstate_addr;
+    uint64_t code_object_generation;
+    _Py_hashtable_t *code_object_cache;
 } RemoteUnwinderObject;
 
 #include "clinic/_remote_debugging_module.c.h"
 
+typedef struct {
+    PyObject *func_name;
+    PyObject *file_name;
+    int first_lineno;
+    PyObject *linetable;  // bytes
+    uintptr_t addr_code_adaptive;
+} CachedCodeMetadata;
+
+static void
+cached_code_metadata_destroy(void *ptr)
+{
+    CachedCodeMetadata *meta = (CachedCodeMetadata *)ptr;
+    Py_DECREF(meta->func_name);
+    Py_DECREF(meta->file_name);
+    Py_DECREF(meta->linetable);
+    PyMem_RawFree(meta);
+}
 
 /*[clinic input]
 module _remote_debugging
 [clinic start generated code]*/
 /*[clinic end generated code: output=da39a3ee5e6b4b0d input=5f507d5b2e76a7f7]*/
-
-/*[clinic input]
-class _remote_debugging.RemoteUnwinder "RemoteUnwinderObject *" "&RemoteUnwinder_Type"
-[clinic start generated code]*/
-/*[clinic end generated code: output=da39a3ee5e6b4b0d input=55f164d8803318be]*/
 
 typedef struct {
     /* Types */
@@ -192,7 +207,7 @@ read_pyobj(proc_handle_t *handle, uintptr_t address, PyObject *ptr_addr)
 static PyObject *
 read_py_str(
     proc_handle_t *handle,
-    _Py_DebugOffsets* debug_offsets,
+    const _Py_DebugOffsets* debug_offsets,
     uintptr_t address,
     Py_ssize_t max_len
 ) {
@@ -208,6 +223,12 @@ read_py_str(
     );
     if (res < 0) {
         goto err;
+    }
+
+    if (len < 0 || len > max_len) {
+        PyErr_Format(PyExc_RuntimeError,
+                     "Invalid string length (%zd) at 0x%lx", len, address);
+        return NULL;
     }
 
     buf = (char *)PyMem_RawMalloc(len+1);
@@ -242,8 +263,9 @@ err:
 static PyObject *
 read_py_bytes(
     proc_handle_t *handle,
-    _Py_DebugOffsets* debug_offsets,
-    uintptr_t address
+    const _Py_DebugOffsets* debug_offsets,
+    uintptr_t address,
+    Py_ssize_t max_len
 ) {
     PyObject *result = NULL;
     char *buf = NULL;
@@ -257,6 +279,12 @@ read_py_bytes(
     );
     if (res < 0) {
         goto err;
+    }
+
+    if (len < 0 || len > max_len) {
+        PyErr_Format(PyExc_RuntimeError,
+                     "Invalid string length (%zd) at 0x%lx", len, address);
+        return NULL;
     }
 
     buf = (char *)PyMem_RawMalloc(len+1);
@@ -291,7 +319,7 @@ err:
 
 
 static long
-read_py_long(proc_handle_t *handle, _Py_DebugOffsets* offsets, uintptr_t address)
+read_py_long(proc_handle_t *handle, const _Py_DebugOffsets* offsets, uintptr_t address)
 {
     unsigned int shift = PYLONG_BITS_IN_DIGIT;
 
@@ -352,8 +380,8 @@ error:
 static PyObject *
 parse_task_name(
     proc_handle_t *handle,
-    _Py_DebugOffsets* offsets,
-    struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    const _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
     uintptr_t task_address
 ) {
     uintptr_t task_name_addr;
@@ -411,18 +439,20 @@ static int
 parse_frame_object(
     proc_handle_t *handle,
     PyObject** result,
-    struct _Py_DebugOffsets* offsets,
+    const struct _Py_DebugOffsets* offsets,
     uintptr_t address,
-    uintptr_t* previous_frame
+    uintptr_t* previous_frame,
+    _Py_hashtable_t *code_object_cache
 );
 
 static int
 parse_coro_chain(
     proc_handle_t *handle,
-    struct _Py_DebugOffsets* offsets,
-    struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
     uintptr_t coro_address,
-    PyObject *render_to
+    PyObject *render_to,
+    _Py_hashtable_t *code_object_cache
 ) {
     assert((void*)coro_address != NULL);
 
@@ -442,7 +472,7 @@ parse_coro_chain(
                 &name,
                 offsets,
                 coro_address + offsets->gen_object.gi_iframe,
-                &prev_frame)
+                &prev_frame, code_object_cache)
         < 0)
     {
         return -1;
@@ -529,7 +559,8 @@ parse_coro_chain(
                         offsets,
                         async_offsets,
                         gi_await_addr,
-                        render_to
+                        render_to,
+                        code_object_cache
                     );
                     if (err) {
                         return -1;
@@ -547,22 +578,24 @@ parse_coro_chain(
 static int
 parse_task_awaited_by(
     proc_handle_t *handle,
-    struct _Py_DebugOffsets* offsets,
-    struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
     uintptr_t task_address,
     PyObject *awaited_by,
-    int recurse_task
+    int recurse_task,
+    _Py_hashtable_t *code_object_cache
 );
 
 
 static int
 parse_task(
     proc_handle_t *handle,
-    struct _Py_DebugOffsets* offsets,
-    struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
     uintptr_t task_address,
     PyObject *render_to,
-    int recurse_task
+    int recurse_task,
+    _Py_hashtable_t *code_object_cache
 ) {
     char is_task;
     int err = read_char(
@@ -621,7 +654,8 @@ parse_task(
                 offsets,
                 async_offsets,
                 coro_addr,
-                call_stack
+                call_stack,
+                code_object_cache
             );
             if (err) {
                 goto err;
@@ -650,7 +684,7 @@ parse_task(
         Py_DECREF(awaited_by);
 
         if (parse_task_awaited_by(handle, offsets, async_offsets,
-                                task_address, awaited_by, 1)
+                                task_address, awaited_by, 1, code_object_cache)
         ) {
             goto err;
         }
@@ -667,11 +701,12 @@ err:
 static int
 parse_tasks_in_set(
     proc_handle_t *handle,
-    struct _Py_DebugOffsets* offsets,
-    struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
     uintptr_t set_addr,
     PyObject *awaited_by,
-    int recurse_task
+    int recurse_task,
+    _Py_hashtable_t *code_object_cache
 ) {
     uintptr_t set_obj;
     if (read_py_ptr(
@@ -733,7 +768,8 @@ parse_tasks_in_set(
                     async_offsets,
                     key_addr,
                     awaited_by,
-                    recurse_task
+                    recurse_task,
+                    code_object_cache
                 )
                 ) {
                     return -1;
@@ -755,11 +791,12 @@ parse_tasks_in_set(
 static int
 parse_task_awaited_by(
     proc_handle_t *handle,
-    struct _Py_DebugOffsets* offsets,
-    struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
     uintptr_t task_address,
     PyObject *awaited_by,
-    int recurse_task
+    int recurse_task,
+    _Py_hashtable_t *code_object_cache
 ) {
     uintptr_t task_ab_addr;
     int err = read_py_ptr(
@@ -790,7 +827,8 @@ parse_task_awaited_by(
             async_offsets,
             task_address + async_offsets->asyncio_task_object.task_awaited_by,
             awaited_by,
-            recurse_task
+            recurse_task,
+            code_object_cache
         )
          ) {
             return -1;
@@ -811,7 +849,8 @@ parse_task_awaited_by(
             async_offsets,
             sub_task,
             awaited_by,
-            recurse_task
+            recurse_task,
+            code_object_cache
         )
         ) {
             return -1;
@@ -902,7 +941,9 @@ parse_linetable(const uintptr_t addrq, const char* linetable, int firstlineno, L
             }
             default: {
                 uint8_t second_byte = *(ptr++);
-                assert((second_byte & 128) == 0);
+                if ((second_byte & 128) != 0) {
+                    return false;
+                }
                 info->column = code << 3 | (second_byte >> 4);
                 info->end_column = info->column + (second_byte & 15);
                 break;
@@ -933,7 +974,7 @@ read_remote_pointer(proc_handle_t *handle, uintptr_t address, uintptr_t *out_ptr
 }
 
 static int
-read_instruction_ptr(proc_handle_t *handle, struct _Py_DebugOffsets *offsets,
+read_instruction_ptr(proc_handle_t *handle, const struct _Py_DebugOffsets *offsets,
                      uintptr_t current_frame, uintptr_t *instruction_ptr)
 {
     return read_remote_pointer(
@@ -944,108 +985,108 @@ read_instruction_ptr(proc_handle_t *handle, struct _Py_DebugOffsets *offsets,
     );
 }
 
-static _Py_hashtable_t *code_object_cache = NULL;
-
 static int
 parse_code_object(proc_handle_t *handle,
                   PyObject **result,
-                  struct _Py_DebugOffsets *offsets,
+                  const struct _Py_DebugOffsets *offsets,
                   uintptr_t address,
                   uintptr_t current_frame,
-                  uintptr_t *previous_frame)
+                  uintptr_t *previous_frame,
+                  _Py_hashtable_t *code_object_cache)
 {
-    uintptr_t addr_func_name, addr_file_name, addr_linetable, instruction_ptr;
+    void *key = (void *)address;
+    CachedCodeMetadata *meta = NULL;
 
-    if (code_object_cache == NULL) {
-        code_object_cache = _Py_hashtable_new(
-            _Py_hashtable_hash_ptr,
-            _Py_hashtable_compare_direct);
-        if (code_object_cache == NULL) {
-            PyErr_NoMemory();
+    if (code_object_cache != NULL) {
+        meta = _Py_hashtable_get(code_object_cache, key);
+    }
+
+    if (meta == NULL) {
+        PyCodeObject code_object;
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(
+                handle, address, offsets->code_object.size, &code_object) < 0)
+        {
             return -1;
         }
-    }
 
-    void *key = (void *)address;
-    PyObject *cached = (PyObject *)_Py_hashtable_get(code_object_cache, key);
-    if (cached != NULL) {
-        Py_INCREF(cached);
-        *result = cached;
-        return 0;
-    }
+        PyObject *func = read_py_str(handle, offsets, (uintptr_t)code_object.co_qualname, 1024);
+        if (!func) {
+            return -1;
+        }
 
-    if (read_remote_pointer(handle, address + offsets->code_object.qualname, &addr_func_name, "No function name found") < 0 ||
-        read_remote_pointer(handle, address + offsets->code_object.filename, &addr_file_name, "No file name found") < 0 ||
-        read_remote_pointer(handle, address + offsets->code_object.linetable, &addr_linetable, "No linetable found") < 0 ||
-        read_instruction_ptr(handle, offsets, current_frame, &instruction_ptr) < 0) {
+        PyObject *file = read_py_str(handle, offsets, (uintptr_t)code_object.co_filename, 1024);
+        if (!file) {
+            Py_DECREF(func);
+            return -1;
+        }
+
+        PyObject *linetable = read_py_bytes(handle, offsets, (uintptr_t)code_object.co_linetable, 4096);
+        if (!linetable) {
+            Py_DECREF(func);
+            Py_DECREF(file);
+            return -1;
+        }
+
+        meta = PyMem_RawMalloc(sizeof(CachedCodeMetadata));
+        if (!meta) {
+            Py_DECREF(func);
+            Py_DECREF(file);
+            Py_DECREF(linetable);
+            return -1;
+        }
+
+        meta->func_name = func;
+        meta->file_name = file;
+        meta->linetable = linetable;
+        meta->first_lineno = code_object.co_firstlineno;
+        meta->addr_code_adaptive = address + offsets->code_object.co_code_adaptive;
+
+        if (code_object_cache && _Py_hashtable_set(code_object_cache, key, meta) < 0)
+        {
+            cached_code_metadata_destroy(meta);
+            return -1;
+        }
+    } 
+
+    // Instruction pointer for the current frame
+    uintptr_t ip = 0;
+    if (read_instruction_ptr(handle, offsets, current_frame, &ip) < 0) {
         return -1;
     }
 
-    int firstlineno;
-    if (_Py_RemoteDebug_PagedReadRemoteMemory(handle,
-                                         address + offsets->code_object.firstlineno,
-                                         sizeof(int),
-                                         &firstlineno) < 0) {
+    ptrdiff_t addrq = (uint16_t *)ip - (uint16_t *)meta->addr_code_adaptive;
+
+    LocationInfo info = {0};
+    bool ok = parse_linetable(addrq, PyBytes_AS_STRING(meta->linetable),
+                              meta->first_lineno, &info);
+    if (!ok) {
+        info.lineno = -1;
+    }
+
+    PyObject *lineno = PyLong_FromLong(info.lineno);
+    if (!lineno) {
         return -1;
     }
 
-    PyObject *py_linetable = read_py_bytes(handle, offsets, addr_linetable);
-    if (!py_linetable) {
+    PyObject *tuple = PyTuple_New(3);
+    if (!tuple) {
+        Py_DECREF(lineno);
         return -1;
     }
 
-    uintptr_t addr_code_adaptive = address + offsets->code_object.co_code_adaptive;
-    ptrdiff_t addrq = (uint16_t *)instruction_ptr - (uint16_t *)addr_code_adaptive;
+    Py_INCREF(meta->func_name);
+    Py_INCREF(meta->file_name);
+    PyTuple_SET_ITEM(tuple, 0, meta->func_name);
+    PyTuple_SET_ITEM(tuple, 1, meta->file_name);
+    PyTuple_SET_ITEM(tuple, 2, lineno);
 
-    LocationInfo info;
-    parse_linetable(addrq, PyBytes_AS_STRING(py_linetable), firstlineno, &info);
-    Py_DECREF(py_linetable);
-
-    PyObject *py_line = PyLong_FromLong(info.lineno);
-    if (!py_line) {
-        return -1;
-    }
-
-    PyObject *py_func_name = read_py_str(handle, offsets, addr_func_name, 256);
-    if (!py_func_name) {
-        Py_DECREF(py_line);
-        return -1;
-    }
-
-    PyObject *py_file_name = read_py_str(handle, offsets, addr_file_name, 256);
-    if (!py_file_name) {
-        Py_DECREF(py_line);
-        Py_DECREF(py_func_name);
-        return -1;
-    }
-
-    PyObject *result_tuple = PyTuple_New(3);
-    if (!result_tuple) {
-        Py_DECREF(py_line);
-        Py_DECREF(py_func_name);
-        Py_DECREF(py_file_name);
-        return -1;
-    }
-
-    PyTuple_SET_ITEM(result_tuple, 0, py_func_name);  // steals ref
-    PyTuple_SET_ITEM(result_tuple, 1, py_file_name);  // steals ref
-    PyTuple_SET_ITEM(result_tuple, 2, py_line);       // steals ref
-
-    if (_Py_hashtable_set(code_object_cache, key, result_tuple) < 0) {
-        Py_DECREF(result_tuple);
-        PyErr_NoMemory();
-        return -1;
-    }
-
-    Py_INCREF(result_tuple);  // returned to caller
-    *result = result_tuple;
+    *result = tuple;
     return 0;
 }
 
 typedef struct {
     uintptr_t remote_addr;
     size_t size;
-    size_t top;
     void *local_copy;
 } StackChunkInfo;
 
@@ -1053,7 +1094,6 @@ typedef struct {
     StackChunkInfo *chunks;
     size_t count;
 } StackChunkList;
-
 
 static int
 copy_stack_chunks(proc_handle_t *handle,
@@ -1077,23 +1117,39 @@ copy_stack_chunks(proc_handle_t *handle,
 
     size_t count = 0;
     while (chunk_addr != 0) {
-        size_t size;
-        if (read_sized_int(handle, chunk_addr + sizeof(void *), &size, sizeof(size_t))) {
-            goto error;
-        }
 
-        void *buffer = PyMem_RawMalloc(size);
-        if (!buffer) {
+        // Asume the chunk has the default size
+        size_t current_size = _PY_DATA_STACK_CHUNK_SIZE;
+
+        _PyStackChunk* this_chunk = PyMem_RawMalloc(current_size);
+        if (!this_chunk) {
             PyErr_NoMemory();
             goto error;
         }
 
-        if (_Py_RemoteDebug_PagedReadRemoteMemory(handle, chunk_addr, size, buffer) < 0) {
-            PyMem_RawFree(buffer);
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(handle, chunk_addr, current_size, this_chunk) < 0) {
+            PyMem_RawFree(this_chunk);
             goto error;
         }
 
-        if (count >= max_chunks) {
+        // Check the actual size of the chunk
+        size_t size = this_chunk->size;
+
+        if (size != current_size) {
+            current_size = size;
+            this_chunk = PyMem_RawRealloc(this_chunk, current_size);
+            if (!this_chunk) {
+                PyMem_RawFree(this_chunk);
+                PyErr_NoMemory();
+                goto error;
+            }
+            if (_Py_RemoteDebug_PagedReadRemoteMemory(handle, chunk_addr, current_size, this_chunk) < 0) {
+                PyMem_RawFree(this_chunk);
+                goto error;
+            }
+        }
+
+       if (count >= max_chunks) {
             max_chunks *= 2;
             StackChunkInfo *new_chunks = PyMem_RawRealloc(chunks, max_chunks * sizeof(StackChunkInfo));
             if (!new_chunks) {
@@ -1103,12 +1159,8 @@ copy_stack_chunks(proc_handle_t *handle,
             chunks = new_chunks;
         }
 
-        size_t top;
-        memcpy(&top, (char *)buffer + sizeof(void *) + sizeof(size_t), sizeof(size_t));
-
-        chunks[count++] = (StackChunkInfo){chunk_addr, size, top, buffer};
-
-        memcpy(&chunk_addr, buffer, sizeof(uintptr_t));
+        chunks[count++] = (StackChunkInfo){chunk_addr, size, this_chunk};
+        chunk_addr = (uintptr_t)(this_chunk->previous);
     }
 
     out_chunks->chunks = chunks;
@@ -1141,10 +1193,11 @@ static int
 parse_frame_from_chunks(
     proc_handle_t *handle,
     PyObject **result,
-    struct _Py_DebugOffsets *offsets,
+    const struct _Py_DebugOffsets *offsets,
     uintptr_t address,
     uintptr_t *previous_frame,
-    StackChunkList *chunks
+    StackChunkList *chunks,
+    _Py_hashtable_t *code_object_cache
 ) {
     void *frame_ptr = find_frame_in_chunks(chunks, address);
     if (!frame_ptr) {
@@ -1159,7 +1212,7 @@ parse_frame_from_chunks(
     }
 
     return parse_code_object(
-        handle, result, offsets, frame->f_executable.bits, address, previous_frame);
+        handle, result, offsets, frame->f_executable.bits, address, previous_frame, code_object_cache);
 }
 
 
@@ -1167,12 +1220,11 @@ static int
 parse_frame_object(
     proc_handle_t *handle,
     PyObject** result,
-    struct _Py_DebugOffsets* offsets,
+    const struct _Py_DebugOffsets* offsets,
     uintptr_t address,
-    uintptr_t* previous_frame
+    uintptr_t* previous_frame,
+    _Py_hashtable_t *code_object_cache
 ) {
-    // int err;
-
     _PyInterpreterFrame frame;
 
     Py_ssize_t bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
@@ -1185,54 +1237,31 @@ parse_frame_object(
         return -1;
     }
 
-
-    // Py_ssize_t bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
-    //     handle,
-    //     address + offsets->interpreter_frame.previous,
-    //     sizeof(void*),
-    //     previous_frame
-    // );
-    // if (bytes_read < 0) {
-    //     return -1;
-    // }
-
     *previous_frame = (uintptr_t)frame.previous;
-
-    // char owner;
-    // if (read_char(handle, address + offsets->interpreter_frame.owner, &owner)) {
-    //     return -1;
-    // }
 
     if (frame.owner >= FRAME_OWNED_BY_INTERPRETER) {
         return 0;
     }
 
-    // uintptr_t address_of_code_object;
-    // err = read_py_ptr(
-    //     handle,
-    //     address + offsets->interpreter_frame.executable,
-    //     &address_of_code_object
-    // );
-    // if (err) {
-    //     return -1;
-    // }
+    printf("onwer: %d\n", frame.owner);
 
     if ((void*)frame.f_executable.bits == NULL) {
         return 0;
     }
 
     return parse_code_object(
-        handle, result, offsets, frame.f_executable.bits, address, previous_frame);
+        handle, result, offsets, frame.f_executable.bits, address, previous_frame, code_object_cache);
 }
 
 static int
 parse_async_frame_object(
     proc_handle_t *handle,
     PyObject** result,
-    struct _Py_DebugOffsets* offsets,
+    const struct _Py_DebugOffsets* offsets,
     uintptr_t address,
     uintptr_t* previous_frame,
-    uintptr_t* code_object
+    uintptr_t* code_object,
+    _Py_hashtable_t *code_object_cache
 ) {
     int err;
 
@@ -1278,7 +1307,7 @@ parse_async_frame_object(
     }
 
     if (parse_code_object(
-        handle, result, offsets, *code_object, address, previous_frame)) {
+        handle, result, offsets, *code_object, address, previous_frame, code_object_cache)) {
         return -1;
     }
 
@@ -1301,10 +1330,12 @@ read_async_debug(
 }
 
 static int
-find_tstate(
+populate_initial_state_data(
+    int all_threads,
     proc_handle_t *handle,
     uintptr_t runtime_start_address,
-    _Py_DebugOffsets* local_debug_offsets,
+    const _Py_DebugOffsets* local_debug_offsets,
+    uintptr_t *interpreter_state,
     uintptr_t *tstate
 ) {
     uint64_t interpreter_state_list_head =
@@ -1325,18 +1356,24 @@ find_tstate(
         return -1;
     }
 
-    uintptr_t address_of_thread;
-    bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
+    *interpreter_state = address_of_interpreter_state;
+
+    if (all_threads) {
+        *tstate = 0;
+        return 0;
+    }
+
+    uintptr_t address_of_thread = address_of_interpreter_state +
+                    local_debug_offsets->interpreter_state.threads_main;
+
+    if (_Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
-            address_of_interpreter_state +
-                local_debug_offsets->interpreter_state.threads_main,
+            address_of_thread,
             sizeof(void*),
-            &address_of_thread);
-    if (bytes_read < 0) {
+            tstate) < 0) {
         return -1;
     }
 
-    *tstate = address_of_thread;
     return 0;
 }
 
@@ -1345,7 +1382,7 @@ static int
 find_running_frame(
     proc_handle_t *handle,
     uintptr_t runtime_start_address,
-    _Py_DebugOffsets* local_debug_offsets,
+    const _Py_DebugOffsets* local_debug_offsets,
     uintptr_t *frame
 ) {
     uint64_t interpreter_state_list_head =
@@ -1397,7 +1434,7 @@ static int
 find_running_task(
     proc_handle_t *handle,
     uintptr_t runtime_start_address,
-    _Py_DebugOffsets *local_debug_offsets,
+    const _Py_DebugOffsets *local_debug_offsets,
     struct _Py_AsyncioModuleDebugOffsets *async_offsets,
     uintptr_t *running_task_addr
 ) {
@@ -1468,9 +1505,10 @@ static int
 append_awaited_by_for_thread(
     proc_handle_t *handle,
     uintptr_t head_addr,
-    struct _Py_DebugOffsets *debug_offsets,
-    struct _Py_AsyncioModuleDebugOffsets *async_offsets,
-    PyObject *result
+    const struct _Py_DebugOffsets *debug_offsets,
+    const struct _Py_AsyncioModuleDebugOffsets *async_offsets,
+    PyObject *result,
+    _Py_hashtable_t *code_object_cache
 ) {
     struct llist_node task_node;
 
@@ -1541,7 +1579,7 @@ append_awaited_by_for_thread(
         Py_DECREF(result_item);
 
         if (parse_task_awaited_by(handle, debug_offsets, async_offsets,
-                                  task_addr, current_awaited_by, 0))
+                                  task_addr, current_awaited_by, 0, code_object_cache))
         {
             return -1;
         }
@@ -1565,8 +1603,9 @@ append_awaited_by(
     proc_handle_t *handle,
     unsigned long tid,
     uintptr_t head_addr,
-    struct _Py_DebugOffsets *debug_offsets,
-    struct _Py_AsyncioModuleDebugOffsets *async_offsets,
+    const struct _Py_DebugOffsets *debug_offsets,
+    const struct _Py_AsyncioModuleDebugOffsets *async_offsets,
+    _Py_hashtable_t *code_object_cache,
     PyObject *result)
 {
     PyObject *tid_py = PyLong_FromUnsignedLong(tid);
@@ -1600,7 +1639,8 @@ append_awaited_by(
             head_addr,
             debug_offsets,
             async_offsets,
-            awaited_by_for_thread))
+            awaited_by_for_thread,
+            code_object_cache))
     {
         return -1;
     }
@@ -1608,8 +1648,15 @@ append_awaited_by(
     return 0;
 }
 
-static PyObject*
-get_all_awaited_by(PyObject* self, PyObject* args)
+/*[clinic input]
+_remote_debugging.get_all_awaited_by
+    pid: int
+Get all tasks and their awaited_by from a given pid
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_get_all_awaited_by_impl(PyObject *module, int pid)
+/*[clinic end generated code: output=327d67d6f5492c97 input=3ab97592cfcbf599]*/
 {
 #if (!defined(__linux__) && !defined(__APPLE__))  && !defined(MS_WINDOWS) || \
     (defined(__linux__) && !HAVE_PROCESS_VM_READV)
@@ -1619,17 +1666,23 @@ get_all_awaited_by(PyObject* self, PyObject* args)
     return NULL;
 #endif
 
-    int pid;
-    if (!PyArg_ParseTuple(args, "i", &pid)) {
-        return NULL;
-    }
-
     proc_handle_t the_handle;
     proc_handle_t *handle = &the_handle;
     if (_Py_RemoteDebug_InitProcHandle(handle, pid) < 0) {
         return 0;
     }
 
+    _Py_hashtable_t *code_object_cache = _Py_hashtable_new_full(
+        _Py_hashtable_hash_ptr,
+        _Py_hashtable_compare_direct,
+        NULL,  // keys are stable pointers, don't destroy
+        cached_code_metadata_destroy,
+        NULL
+    );
+    if (code_object_cache == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
     PyObject *result = NULL;
 
     uintptr_t runtime_start_addr = _Py_RemoteDebug_GetPyRuntimeAddress(handle);
@@ -1699,7 +1752,7 @@ get_all_awaited_by(PyObject* self, PyObject* args)
             + local_async_debug.asyncio_thread_state.asyncio_tasks_head;
 
         if (append_awaited_by(handle, tid, head_addr, &local_debug_offsets,
-                              &local_async_debug, result))
+                              &local_async_debug, code_object_cache, result))
         {
             goto result_err;
         }
@@ -1723,32 +1776,42 @@ get_all_awaited_by(PyObject* self, PyObject* args)
     // per-interpreter task list.  It's unlikely we'll find anything here, but
     // interesting for debugging.
     if (append_awaited_by(handle, 0, head_addr, &local_debug_offsets,
-                        &local_async_debug, result))
+                        &local_async_debug, code_object_cache, result))
     {
         goto result_err;
     }
 
+    _Py_hashtable_destroy(code_object_cache);
     _Py_RemoteDebug_CleanupProcHandle(handle);
     return result;
 
 result_err:
+    _Py_hashtable_destroy(code_object_cache);
     Py_XDECREF(result);
     _Py_RemoteDebug_CleanupProcHandle(handle);
     return NULL;
 }
 
 /*[clinic input]
+class _remote_debugging.RemoteUnwinder "RemoteUnwinderObject *" "&RemoteUnwinder_Type"
+[clinic start generated code]*/
+/*[clinic end generated code: output=da39a3ee5e6b4b0d input=55f164d8803318be]*/
+
+/*[clinic input]
 _remote_debugging.RemoteUnwinder.__init__
     pid: int
+    *
+    all_threads: bool = False
+
+Something
 [clinic start generated code]*/
 
 static int
 _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
-                                               int pid)
-/*[clinic end generated code: output=112ca6e1c82b77e6 input=2b41765ef325e88e]*/
+                                               int pid, int all_threads)
+/*[clinic end generated code: output=b8027cb247092081 input=1076d886433b1988]*/
 {
     if (_Py_RemoteDebug_InitProcHandle(&self->handle, pid) < 0) {
-        Py_DECREF(self);
         return -1;
     }
 
@@ -1764,187 +1827,220 @@ _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
         return -1;
     }
 
-    if (find_tstate(&self->handle, self->runtime_start_address,
-                    &self->debug_offsets, &self->tstate_addr) < 0)
+    if (populate_initial_state_data(all_threads, &self->handle, self->runtime_start_address,
+                    &self->debug_offsets, &self->interpreter_addr ,&self->tstate_addr) < 0)
     {
         return -1;
     }
 
+    self->code_object_cache = _Py_hashtable_new_full(
+        _Py_hashtable_hash_ptr,
+        _Py_hashtable_compare_direct,
+        NULL,  // keys are stable pointers, don't destroy
+        cached_code_metadata_destroy,
+        NULL
+    );
+    if (self->code_object_cache == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
     return 0;
 }
 
-/*[clinic input]
-@critical_section
-_remote_debugging.RemoteUnwinder.get_stack_trace
-
-Blah blah blah
-[clinic start generated code]*/
-
-static PyObject *
-_remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self)
-/*[clinic end generated code: output=666192b90c69d567 input=2195b971885992a5]*/
-{
-    PyObject* result = NULL;
-    uintptr_t frame_addr;
-
-    if (read_ptr(&self->handle,
-                 self->tstate_addr + self->debug_offsets.thread_state.current_frame,
-                 &frame_addr))
-    {
+static PyObject*
+unwind_stack_for_thread(
+    proc_handle_t *handle,
+    uintptr_t *current_tstate,
+    const _Py_DebugOffsets *offsets,
+    _Py_hashtable_t *code_object_cache
+) {
+    PyThreadState ts;
+    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
+        handle,
+        *current_tstate,
+        offsets->thread_state.size,
+        &ts);
+    if (bytes_read < 0) {
         return NULL;
     }
 
-    result = PyList_New(0);
-    if (!result) {
+    uintptr_t frame_addr = (uintptr_t)ts.current_frame;
+    uintptr_t prev_frame_addr = 0;
+
+    PyObject* frame_info = PyList_New(0);
+    if (!frame_info) {
         return NULL;
     }
 
     StackChunkList chunks = {0};
-    if (copy_stack_chunks(&self->handle, self->tstate_addr,
-                          &self->debug_offsets, &chunks) < 0)
+    if (copy_stack_chunks(handle, *current_tstate, offsets, &chunks) < 0)
     {
-        Py_DECREF(result);
+        Py_DECREF(frame_info);
         return NULL;
     }
 
+    const size_t MAX_FRAMES = 1024;
+    size_t frame_count = 0;
+
     while ((void*)frame_addr != NULL) {
         PyObject *frame = NULL;
-        if (parse_frame_from_chunks(&self->handle, &frame,
-                                    &self->debug_offsets,
-                                    frame_addr, &frame_addr,
-                                    &chunks) < 0)
+        uintptr_t next_frame_addr = 0;
+
+        if (++frame_count > MAX_FRAMES) {
+            PyErr_SetString(PyExc_RuntimeError, "Too many stack frames (possible infinite loop)");
+            goto error;
+        }
+
+        if (parse_frame_from_chunks(handle, &frame,
+                                    offsets, frame_addr, &next_frame_addr,
+                                    &chunks, code_object_cache) < 0)
         {
-            if (parse_frame_object(&self->handle, &frame,
-                                   &self->debug_offsets,
-                                   frame_addr, &frame_addr) < 0)
+            PyErr_Clear();
+            if (parse_frame_object(handle, &frame,
+                                offsets, frame_addr, &next_frame_addr,
+                                code_object_cache) < 0)
             {
-                Py_DECREF(result);
-                result = NULL;
-                break;
+                goto error;
             }
         }
 
-        if (frame) {
-            PyList_Append(result, frame);
-            Py_DECREF(frame);
+        if (!frame) {
+            break;
         }
+
+        if (prev_frame_addr && frame_addr != prev_frame_addr) {
+            PyErr_Format(PyExc_RuntimeError,
+                        "Broken frame chain: expected frame at 0x%lx, got 0x%lx",
+                        prev_frame_addr, frame_addr);
+            Py_DECREF(frame);
+            goto error;
+        }
+
+        if (PyList_Append(frame_info, frame) == 1) {
+            Py_DECREF(frame);
+            goto error;
+        }
+        Py_DECREF(frame);
+
+        prev_frame_addr = next_frame_addr;
+        frame_addr = next_frame_addr;
     }
 
     for (size_t i = 0; i < chunks.count; ++i) {
         PyMem_RawFree(chunks.chunks[i].local_copy);
     }
     PyMem_RawFree(chunks.chunks);
-    _Py_RemoteDebug_ClearCache(&self->handle);
 
-    return result;
-}
+    *current_tstate = (uintptr_t)ts.next;
 
-static PyObject*
-get_stack_trace(PyObject* self, PyObject* args)
-{
-#if (!defined(__linux__) && !defined(__APPLE__))  && !defined(MS_WINDOWS) || \
-    (defined(__linux__) && !HAVE_PROCESS_VM_READV)
-    PyErr_SetString(
-        PyExc_RuntimeError,
-        "get_stack_trace is not supported on this platform");
-    return NULL;
-#endif
+    PyObject* thread_id = PyLong_FromLongLong(ts.native_thread_id);
+    if (thread_id == NULL) {
+        Py_DECREF(frame_info);
+    }
 
-    int pid;
-    if (!PyArg_ParseTuple(args, "i", &pid)) {
+    PyObject* result = PyTuple_New(2);
+    if (result == NULL) {
+        Py_DECREF(frame_info);
+        Py_DECREF(thread_id);
         return NULL;
     }
 
-    proc_handle_t the_handle;
-    proc_handle_t *handle = &the_handle;
-    if (_Py_RemoteDebug_InitProcHandle(handle, pid) < 0) {
-        return 0;
+    PyTuple_SET_ITEM(result, 0, thread_id);
+    PyTuple_SET_ITEM(result, 1, frame_info);
+
+    return result;
+error:
+    Py_XDECREF(frame_info);
+    for (size_t i = 0; i < chunks.count; ++i) {
+        PyMem_RawFree(chunks.chunks[i].local_copy);
+    }
+    PyMem_RawFree(chunks.chunks);
+    return NULL;
+}
+
+/*[clinic input]
+@critical_section
+_remote_debugging.RemoteUnwinder.get_stack_trace
+Blah blah blah
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self)
+/*[clinic end generated code: output=666192b90c69d567 input=aa504416483c9467]*/
+{
+    // Check the code object generatiom
+    uint64_t code_object_generation = 0;
+    if (_Py_RemoteDebug_PagedReadRemoteMemory(
+        &self->handle, 
+        self->interpreter_addr+self->debug_offsets.interpreter_state.code_object_generation, 
+        sizeof(uint64_t), &code_object_generation) < 0) {
+        goto exit;
     }
 
-    PyObject* result = NULL;
+    if (code_object_generation != self->code_object_generation) {
+        self->code_object_generation = code_object_generation;
+        _Py_hashtable_clear(self->code_object_cache);
+    }
 
-    uintptr_t runtime_start_address = _Py_RemoteDebug_GetPyRuntimeAddress(handle);
-    if (runtime_start_address == 0) {
-        if (!PyErr_Occurred()) {
-            PyErr_SetString(
-                PyExc_RuntimeError, "Failed to get .PyRuntime address");
+
+    uintptr_t current_tstate;
+    if (self->tstate_addr == 0) {
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(
+                &self->handle,
+                self->interpreter_addr +
+                    self->debug_offsets.interpreter_state.threads_head,
+                sizeof(void*),
+                &current_tstate) < 0) {
+            goto exit;
         }
-        goto result_err;
-    }
-    struct _Py_DebugOffsets local_debug_offsets;
-
-    if (_Py_RemoteDebug_ReadDebugOffsets(handle, &runtime_start_address, &local_debug_offsets)) {
-        chain_exceptions(PyExc_RuntimeError, "Failed to read debug offsets");
-        goto result_err;
+    } else {
+        current_tstate = self->tstate_addr;
     }
 
-    uintptr_t tstate_addr;
-    find_tstate(handle, runtime_start_address, &local_debug_offsets, &tstate_addr);
-
-    uintptr_t address_of_current_frame;
-    int err = read_ptr(
-        handle,
-        tstate_addr + local_debug_offsets.thread_state.current_frame,
-        &address_of_current_frame);
-    if (err) {
-        goto result_err;
+    PyObject* result = PyList_New(0);
+    if (!result) {
+        goto exit;
     }
 
-    result = PyList_New(0);
-    if (result == NULL) {
-        goto result_err;
-    }
-
-    StackChunkList stack_chunks = {0};
-    if (copy_stack_chunks(handle, tstate_addr, &local_debug_offsets, &stack_chunks) < 0) {
-        goto result_err;
-    }
-
-    while ((void*)address_of_current_frame != NULL) {
-        PyObject* frame_info = NULL;
-        if (parse_frame_from_chunks(handle, &frame_info, &local_debug_offsets,
-                            address_of_current_frame, &address_of_current_frame,
-                            &stack_chunks) < 0) {
-            if (parse_frame_object(
-                        handle,
-                        &frame_info,
-                        &local_debug_offsets,
-                        address_of_current_frame,
-                        &address_of_current_frame)
-                < 0)
-            {
-                Py_CLEAR(result);
-                goto result_err;
-            }
-        }
-
+    while (current_tstate != 0) {
+        PyObject* frame_info = unwind_stack_for_thread(&self->handle, 
+                                                       &current_tstate, &self->debug_offsets,
+                                                       self->code_object_cache);
         if (!frame_info) {
-            continue;
+            Py_CLEAR(result);
+            goto exit;
         }
 
         if (PyList_Append(result, frame_info) == -1) {
+            Py_DECREF(frame_info);
             Py_CLEAR(result);
-            goto result_err;
+            goto exit;
         }
-
         Py_DECREF(frame_info);
-        frame_info = NULL;
 
+        // We are targeting a single tstate, break here
+        if (self->tstate_addr) {
+            break;
+        }
     }
 
-    // Free chunk memory
-    for (size_t i = 0; i < stack_chunks.count; ++i) {
-        PyMem_RawFree(stack_chunks.chunks[i].local_copy);
+exit:
+   _Py_RemoteDebug_ClearCache(&self->handle);
+    if (PyErr_Occurred() && result != NULL) {
+        __builtin_trap();
     }
-    PyMem_RawFree(stack_chunks.chunks);
-
-result_err:
-    _Py_RemoteDebug_CleanupProcHandle(handle);
     return result;
 }
 
-static PyObject*
-get_async_stack_trace(PyObject* self, PyObject* args)
+/*[clinic input]
+_remote_debugging.get_async_stack_trace
+    pid: int
+Get the asyncio stack from a given pid
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_get_async_stack_trace_impl(PyObject *module, int pid)
+/*[clinic end generated code: output=81f4b0012d347aca input=7684fc95166dbb02]*/
 {
 #if (!defined(__linux__) && !defined(__APPLE__))  && !defined(MS_WINDOWS) || \
     (defined(__linux__) && !HAVE_PROCESS_VM_READV)
@@ -1953,11 +2049,6 @@ get_async_stack_trace(PyObject* self, PyObject* args)
         "get_stack_trace is not supported on this platform");
     return NULL;
 #endif
-    int pid;
-
-    if (!PyArg_ParseTuple(args, "i", &pid)) {
-        return NULL;
-    }
 
     proc_handle_t the_handle;
     proc_handle_t *handle = &the_handle;
@@ -1966,7 +2057,19 @@ get_async_stack_trace(PyObject* self, PyObject* args)
     }
 
     PyObject *result = NULL;
-
+    _Py_hashtable_t *code_object_cache = _Py_hashtable_new_full(
+        _Py_hashtable_hash_ptr,
+        _Py_hashtable_compare_direct,
+        NULL,  // keys are stable pointers, don't destroy
+        cached_code_metadata_destroy,
+        NULL
+    );
+ 
+    if (code_object_cache == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+ 
     uintptr_t runtime_start_address = _Py_RemoteDebug_GetPyRuntimeAddress(handle);
     if (runtime_start_address == 0) {
         if (!PyErr_Occurred()) {
@@ -2064,7 +2167,8 @@ get_async_stack_trace(PyObject* self, PyObject* args)
             &local_debug_offsets,
             address_of_current_frame,
             &address_of_current_frame,
-            &address_of_code_object
+            &address_of_code_object,
+            code_object_cache
         );
 
         if (res < 0) {
@@ -2112,15 +2216,17 @@ get_async_stack_trace(PyObject* self, PyObject* args)
 
     if (parse_task_awaited_by(
         handle, &local_debug_offsets, &local_async_debug,
-        running_task_addr, awaited_by, 1)
+        running_task_addr, awaited_by, 1, code_object_cache)
     ) {
         goto result_err;
     }
 
+    _Py_hashtable_destroy(code_object_cache);
     _Py_RemoteDebug_CleanupProcHandle(handle);
     return result;
 
 result_err:
+    _Py_hashtable_destroy(code_object_cache);
     _Py_RemoteDebug_CleanupProcHandle(handle);
     Py_XDECREF(result);
     return NULL;
@@ -2136,7 +2242,7 @@ RemoteUnwinder_dealloc(RemoteUnwinderObject *self)
 {
     _Py_RemoteDebug_ClearCache(&self->handle);
     _Py_RemoteDebug_CleanupProcHandle(&self->handle);
-    PyObject_GC_Del(self);
+    PyObject_Del(self);
 }
 
 static PyType_Slot RemoteUnwinder_slots[] = {
@@ -2214,12 +2320,8 @@ static PyModuleDef_Slot remote_debugging_slots[] = {
 };
 
 static PyMethodDef remote_debugging_methods[] = {
-    {"get_stack_trace", get_stack_trace, METH_VARARGS,
-        "Get the Python stack from a given pid"},
-    {"get_async_stack_trace", get_async_stack_trace, METH_VARARGS,
-        "Get the asyncio stack from a given pid"},
-    {"get_all_awaited_by", get_all_awaited_by, METH_VARARGS,
-        "Get all tasks and their awaited_by from a given pid"},
+    _REMOTE_DEBUGGING_GET_ASYNC_STACK_TRACE_METHODDEF
+    _REMOTE_DEBUGGING_GET_ALL_AWAITED_BY_METHODDEF
     {NULL, NULL, 0, NULL},
 };
 

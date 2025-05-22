@@ -4018,6 +4018,7 @@ _PyErr_NoMemory(PyThreadState *tstate)
     if (err != NULL) {
         _PyErr_SetRaisedException(tstate, err);
     }
+    __builtin_trap();
     return NULL;
 }
 
