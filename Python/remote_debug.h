@@ -121,7 +121,9 @@ _Py_RemoteDebug_ClearCache(proc_handle_t *handle)
     }
 }
 
+#if defined(__APPLE__) && TARGET_OS_OSX
 static mach_port_t pid_to_task(pid_t pid);
+#endif
 
 // Initialize the process handle
 static int
