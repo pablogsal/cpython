@@ -70,6 +70,67 @@ exit:
     return return_value;
 }
 
+PyDoc_STRVAR(_remote_debugging_get_async_stack_trace__doc__,
+"get_async_stack_trace($module, /, pid)\n"
+"--\n"
+"\n"
+"Get the asyncio stack from a given pid");
+
+#define _REMOTE_DEBUGGING_GET_ASYNC_STACK_TRACE_METHODDEF    \
+    {"get_async_stack_trace", _PyCFunction_CAST(_remote_debugging_get_async_stack_trace), METH_FASTCALL|METH_KEYWORDS, _remote_debugging_get_async_stack_trace__doc__},
+
+static PyObject *
+_remote_debugging_get_async_stack_trace_impl(PyObject *module, int pid);
+
+static PyObject *
+_remote_debugging_get_async_stack_trace(PyObject *module, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
+{
+    PyObject *return_value = NULL;
+    #if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
+
+    #define NUM_KEYWORDS 1
+    static struct {
+        PyGC_Head _this_is_not_used;
+        PyObject_VAR_HEAD
+        Py_hash_t ob_hash;
+        PyObject *ob_item[NUM_KEYWORDS];
+    } _kwtuple = {
+        .ob_base = PyVarObject_HEAD_INIT(&PyTuple_Type, NUM_KEYWORDS)
+        .ob_hash = -1,
+        .ob_item = { &_Py_ID(pid), },
+    };
+    #undef NUM_KEYWORDS
+    #define KWTUPLE (&_kwtuple.ob_base.ob_base)
+
+    #else  // !Py_BUILD_CORE
+    #  define KWTUPLE NULL
+    #endif  // !Py_BUILD_CORE
+
+    static const char * const _keywords[] = {"pid", NULL};
+    static _PyArg_Parser _parser = {
+        .keywords = _keywords,
+        .fname = "get_async_stack_trace",
+        .kwtuple = KWTUPLE,
+    };
+    #undef KWTUPLE
+    PyObject *argsbuf[1];
+    int pid;
+
+    args = _PyArg_UnpackKeywords(args, nargs, NULL, kwnames, &_parser,
+            /*minpos*/ 1, /*maxpos*/ 1, /*minkw*/ 0, /*varpos*/ 0, argsbuf);
+    if (!args) {
+        goto exit;
+    }
+    pid = PyLong_AsInt(args[0]);
+    if (pid == -1 && PyErr_Occurred()) {
+        goto exit;
+    }
+    return_value = _remote_debugging_get_async_stack_trace_impl(module, pid);
+
+exit:
+    return return_value;
+}
+
 PyDoc_STRVAR(_remote_debugging_RemoteUnwinder___init____doc__,
 "RemoteUnwinder(pid, *, all_threads=False)\n"
 "--\n"
@@ -164,65 +225,4 @@ _remote_debugging_RemoteUnwinder_get_stack_trace(PyObject *self, PyObject *Py_UN
 
     return return_value;
 }
-
-PyDoc_STRVAR(_remote_debugging_get_async_stack_trace__doc__,
-"get_async_stack_trace($module, /, pid)\n"
-"--\n"
-"\n"
-"Get the asyncio stack from a given pid");
-
-#define _REMOTE_DEBUGGING_GET_ASYNC_STACK_TRACE_METHODDEF    \
-    {"get_async_stack_trace", _PyCFunction_CAST(_remote_debugging_get_async_stack_trace), METH_FASTCALL|METH_KEYWORDS, _remote_debugging_get_async_stack_trace__doc__},
-
-static PyObject *
-_remote_debugging_get_async_stack_trace_impl(PyObject *module, int pid);
-
-static PyObject *
-_remote_debugging_get_async_stack_trace(PyObject *module, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
-{
-    PyObject *return_value = NULL;
-    #if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
-
-    #define NUM_KEYWORDS 1
-    static struct {
-        PyGC_Head _this_is_not_used;
-        PyObject_VAR_HEAD
-        Py_hash_t ob_hash;
-        PyObject *ob_item[NUM_KEYWORDS];
-    } _kwtuple = {
-        .ob_base = PyVarObject_HEAD_INIT(&PyTuple_Type, NUM_KEYWORDS)
-        .ob_hash = -1,
-        .ob_item = { &_Py_ID(pid), },
-    };
-    #undef NUM_KEYWORDS
-    #define KWTUPLE (&_kwtuple.ob_base.ob_base)
-
-    #else  // !Py_BUILD_CORE
-    #  define KWTUPLE NULL
-    #endif  // !Py_BUILD_CORE
-
-    static const char * const _keywords[] = {"pid", NULL};
-    static _PyArg_Parser _parser = {
-        .keywords = _keywords,
-        .fname = "get_async_stack_trace",
-        .kwtuple = KWTUPLE,
-    };
-    #undef KWTUPLE
-    PyObject *argsbuf[1];
-    int pid;
-
-    args = _PyArg_UnpackKeywords(args, nargs, NULL, kwnames, &_parser,
-            /*minpos*/ 1, /*maxpos*/ 1, /*minkw*/ 0, /*varpos*/ 0, argsbuf);
-    if (!args) {
-        goto exit;
-    }
-    pid = PyLong_AsInt(args[0]);
-    if (pid == -1 && PyErr_Occurred()) {
-        goto exit;
-    }
-    return_value = _remote_debugging_get_async_stack_trace_impl(module, pid);
-
-exit:
-    return return_value;
-}
-/*[clinic end generated code: output=1f82319f17b8b3ab input=a9049054013a1b77]*/
+/*[clinic end generated code: output=76ba18dff7f1ef2b input=a9049054013a1b77]*/
