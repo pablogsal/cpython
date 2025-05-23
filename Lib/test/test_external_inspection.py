@@ -18,8 +18,6 @@ PROCESS_VM_READV_SUPPORTED = False
 try:
     from _remote_debugging import PROCESS_VM_READV_SUPPORTED
     from _remote_debugging import RemoteUnwinder
-    from _remote_debugging import get_async_stack_trace
-    from _remote_debugging import get_all_awaited_by
 except ImportError:
     raise unittest.SkipTest("Test only runs when _remote_debugging is available")
 
@@ -37,6 +35,14 @@ skip_if_not_supported = unittest.skipIf(
 def get_stack_trace(pid):
     unwinder = RemoteUnwinder(pid, all_threads=True)
     return unwinder.get_stack_trace()
+
+def get_async_stack_trace(pid):
+    unwinder = RemoteUnwinder(pid)
+    return unwinder.get_async_stack_trace()
+
+def get_all_awaited_by(pid):
+    unwinder = RemoteUnwinder(pid)
+    return unwinder.get_all_awaited_by()
 
 class TestGetStackTrace(unittest.TestCase):
 

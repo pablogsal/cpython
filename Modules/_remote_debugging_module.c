@@ -40,71 +40,6 @@
  * TYPE DEFINITIONS AND STRUCTURES
  * ============================================================================ */
 
-typedef struct {
-    PyObject_HEAD
-    proc_handle_t handle;
-    uintptr_t runtime_start_address;
-    struct _Py_DebugOffsets debug_offsets;
-    uintptr_t interpreter_addr;
-    uintptr_t tstate_addr;
-    uint64_t code_object_generation;
-    _Py_hashtable_t *code_object_cache;
-} RemoteUnwinderObject;
-
-typedef struct {
-    PyObject *func_name;
-    PyObject *file_name;
-    int first_lineno;
-    PyObject *linetable;  // bytes
-    uintptr_t addr_code_adaptive;
-} CachedCodeMetadata;
-
-typedef struct {
-    /* Types */
-    PyTypeObject *RemoteDebugging_Type;
-} RemoteDebuggingState;
-
-typedef struct
-{
-    int lineno;
-    int end_lineno;
-    int column;
-    int end_column;
-} LocationInfo;
-
-typedef struct {
-    uintptr_t remote_addr;
-    size_t size;
-    void *local_copy;
-} StackChunkInfo;
-
-typedef struct {
-    StackChunkInfo *chunks;
-    size_t count;
-} StackChunkList;
-
-struct _Py_AsyncioModuleDebugOffsets {
-    struct _asyncio_task_object {
-        uint64_t size;
-        uint64_t task_name;
-        uint64_t task_awaited_by;
-        uint64_t task_is_task;
-        uint64_t task_awaited_by_is_set;
-        uint64_t task_coro;
-        uint64_t task_node;
-    } asyncio_task_object;
-    struct _asyncio_interpreter_state {
-        uint64_t size;
-        uint64_t asyncio_tasks_head;
-    } asyncio_interpreter_state;
-    struct _asyncio_thread_state {
-        uint64_t size;
-        uint64_t asyncio_running_loop;
-        uint64_t asyncio_running_task;
-        uint64_t asyncio_tasks_head;
-    } asyncio_thread_state;
-};
-
 // Copied from Modules/_asynciomodule.c because it's not exported
 
 typedef enum {
@@ -156,6 +91,73 @@ typedef struct TaskObj {
     uintptr_t task_tid;
 #endif
 } TaskObj;
+
+struct _Py_AsyncioModuleDebugOffsets {
+    struct _asyncio_task_object {
+        uint64_t size;
+        uint64_t task_name;
+        uint64_t task_awaited_by;
+        uint64_t task_is_task;
+        uint64_t task_awaited_by_is_set;
+        uint64_t task_coro;
+        uint64_t task_node;
+    } asyncio_task_object;
+    struct _asyncio_interpreter_state {
+        uint64_t size;
+        uint64_t asyncio_tasks_head;
+    } asyncio_interpreter_state;
+    struct _asyncio_thread_state {
+        uint64_t size;
+        uint64_t asyncio_running_loop;
+        uint64_t asyncio_running_task;
+        uint64_t asyncio_tasks_head;
+    } asyncio_thread_state;
+};
+
+typedef struct {
+    PyObject_HEAD
+    proc_handle_t handle;
+    uintptr_t runtime_start_address;
+    struct _Py_DebugOffsets debug_offsets;
+    int async_debug_offsets_available;
+    struct _Py_AsyncioModuleDebugOffsets async_debug_offsets;
+    uintptr_t interpreter_addr;
+    uintptr_t tstate_addr;
+    uint64_t code_object_generation;
+    _Py_hashtable_t *code_object_cache;
+} RemoteUnwinderObject;
+
+typedef struct {
+    PyObject *func_name;
+    PyObject *file_name;
+    int first_lineno;
+    PyObject *linetable;  // bytes
+    uintptr_t addr_code_adaptive;
+} CachedCodeMetadata;
+
+typedef struct {
+    /* Types */
+    PyTypeObject *RemoteDebugging_Type;
+} RemoteDebuggingState;
+
+typedef struct
+{
+    int lineno;
+    int end_lineno;
+    int column;
+    int end_column;
+} LocationInfo;
+
+typedef struct {
+    uintptr_t remote_addr;
+    size_t size;
+    void *local_copy;
+} StackChunkInfo;
+
+typedef struct {
+    StackChunkInfo *chunks;
+    size_t count;
+} StackChunkList;
 
 #include "clinic/_remote_debugging_module.c.h"
 
@@ -525,15 +527,33 @@ _Py_RemoteDebug_GetAsyncioDebugAddress(proc_handle_t* handle)
 #ifdef MS_WINDOWS
     // On Windows, search for asyncio debug in executable or DLL
     address = search_windows_map_for_section(handle, "AsyncioD", L"_asyncio");
+    if (address == 0) {
+        // Error out: 'python' substring covers both executable and DLL
+        PyObject *exc = PyErr_GetRaisedException();
+        PyErr_SetString(PyExc_RuntimeError, "Failed to find the AsyncioDebug section in the process.");
+        _PyErr_ChainExceptions1(exc);
+    }
 #elif defined(__linux__)
     // On Linux, search for asyncio debug in executable or DLL
     address = search_linux_map_for_section(handle, "AsyncioDebug", "_asyncio.cpython");
+    if (address == 0) {
+        // Error out: 'python' substring covers both executable and DLL
+        PyObject *exc = PyErr_GetRaisedException();
+        PyErr_SetString(PyExc_RuntimeError, "Failed to find the AsyncioDebug section in the process.");
+        _PyErr_ChainExceptions1(exc);
+    }
 #elif defined(__APPLE__) && TARGET_OS_OSX
     // On macOS, try libpython first, then fall back to python
     address = search_map_for_section(handle, "AsyncioDebug", "_asyncio.cpython");
     if (address == 0) {
         PyErr_Clear();
         address = search_map_for_section(handle, "AsyncioDebug", "_asyncio.cpython");
+    }
+    if (address == 0) {
+        // Error out: 'python' substring covers both executable and DLL
+        PyObject *exc = PyErr_GetRaisedException();
+        PyErr_SetString(PyExc_RuntimeError, "Failed to find the AsyncioDebug section in the process.");
+        _PyErr_ChainExceptions1(exc);
     }
 #else
     Py_UNREACHABLE();
@@ -2198,7 +2218,7 @@ _remote_debugging_get_async_stack_trace_impl(PyObject *module, int pid)
         }
 
         if (PyList_Append(calls, frame_info) == -1) {
-            Py_DECREF(calls);
+            Py_DECREF(frame_info);
             goto result_err;
         }
 
@@ -2256,7 +2276,6 @@ result_err:
 /*[clinic input]
 class _remote_debugging.RemoteUnwinder "RemoteUnwinderObject *" "&RemoteUnwinder_Type"
 [clinic start generated code]*/
-
 /*[clinic end generated code: output=da39a3ee5e6b4b0d input=55f164d8803318be]*/
 
 /*[clinic input]
@@ -2287,6 +2306,14 @@ _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
                                          &self->debug_offsets) < 0)
     {
         return -1;
+    }
+
+    // Try to read async debug offsets, but don't fail if they're not available
+    self->async_debug_offsets_available = 1;
+    if (read_async_debug(&self->handle, &self->async_debug_offsets) < 0) {
+        PyErr_Clear();
+        memset(&self->async_debug_offsets, 0, sizeof(self->async_debug_offsets));
+        self->async_debug_offsets_available = 0;
     }
 
     if (populate_initial_state_data(all_threads, &self->handle, self->runtime_start_address,
@@ -2378,14 +2405,254 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
 
 exit:
    _Py_RemoteDebug_ClearCache(&self->handle);
-    if (PyErr_Occurred() && result != NULL) {
-        __builtin_trap();
-    }
     return result;
+}
+
+/*[clinic input]
+@critical_section
+_remote_debugging.RemoteUnwinder.get_all_awaited_by
+Get all tasks and their awaited_by from the remote process
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_RemoteUnwinder_get_all_awaited_by_impl(RemoteUnwinderObject *self)
+/*[clinic end generated code: output=6a49cd345e8aec53 input=40a62dc4725b295e]*/
+{
+    if (!self->async_debug_offsets_available) {
+        PyErr_SetString(PyExc_RuntimeError, "AsyncioDebug section not available");
+        return NULL;
+    }
+
+    PyObject *result = PyList_New(0);
+    if (result == NULL) {
+        goto result_err;
+    }
+
+    uintptr_t thread_state_addr;
+    unsigned long tid = 0;
+    if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
+                &self->handle,
+                self->interpreter_addr
+                + self->debug_offsets.interpreter_state.threads_main,
+                sizeof(void*),
+                &thread_state_addr))
+    {
+        goto result_err;
+    }
+
+    uintptr_t head_addr;
+    while (thread_state_addr != 0) {
+        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
+                    &self->handle,
+                    thread_state_addr
+                    + self->debug_offsets.thread_state.native_thread_id,
+                    sizeof(tid),
+                    &tid))
+        {
+            goto result_err;
+        }
+
+        head_addr = thread_state_addr
+            + self->async_debug_offsets.asyncio_thread_state.asyncio_tasks_head;
+
+        if (append_awaited_by(&self->handle, tid, head_addr, &self->debug_offsets,
+                              &self->async_debug_offsets, self->code_object_cache, result))
+        {
+            goto result_err;
+        }
+
+        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
+                    &self->handle,
+                    thread_state_addr + self->debug_offsets.thread_state.next,
+                    sizeof(void*),
+                    &thread_state_addr))
+        {
+            goto result_err;
+        }
+    }
+
+    head_addr = self->interpreter_addr
+        + self->async_debug_offsets.asyncio_interpreter_state.asyncio_tasks_head;
+
+    // On top of a per-thread task lists used by default by asyncio to avoid
+    // contention, there is also a fallback per-interpreter list of tasks;
+    // any tasks still pending when a thread is destroyed will be moved to the
+    // per-interpreter task list.  It's unlikely we'll find anything here, but
+    // interesting for debugging.
+    if (append_awaited_by(&self->handle, 0, head_addr, &self->debug_offsets,
+                        &self->async_debug_offsets, self->code_object_cache, result))
+    {
+        goto result_err;
+    }
+
+    _Py_RemoteDebug_ClearCache(&self->handle);
+    return result;
+
+result_err:
+    _Py_RemoteDebug_ClearCache(&self->handle);
+    Py_XDECREF(result);
+    return NULL;
+}
+
+/*[clinic input]
+@critical_section
+_remote_debugging.RemoteUnwinder.get_async_stack_trace
+Get the asyncio stack from the remote process
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_RemoteUnwinder_get_async_stack_trace_impl(RemoteUnwinderObject *self)
+/*[clinic end generated code: output=6433d52b55e87bbe input=a94e61c351cc4eed]*/
+{
+
+    if (!self->async_debug_offsets_available) {
+        PyErr_SetString(PyExc_RuntimeError, "AsyncioDebug section not available");
+        return NULL;
+    }
+
+    PyObject *result = PyList_New(1);
+    if (result == NULL) {
+        goto result_err;
+    }
+    PyObject* calls = PyList_New(0);
+    if (calls == NULL) {
+        goto result_err;
+    }
+    if (PyList_SetItem(result, 0, calls)) { /* steals ref to 'calls' */
+        Py_DECREF(calls);
+        goto result_err;
+    }
+
+    uintptr_t running_task_addr = (uintptr_t)NULL;
+    if (find_running_task(
+        &self->handle, self->runtime_start_address, &self->debug_offsets, &self->async_debug_offsets,
+        &running_task_addr)
+    ) {
+        chain_exceptions(PyExc_RuntimeError, "Failed to find running task");
+        goto result_err;
+    }
+
+    if ((void*)running_task_addr == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "No running task found");
+        goto result_err;
+    }
+
+    uintptr_t running_coro_addr;
+    if (read_py_ptr(
+        &self->handle,
+        running_task_addr + self->async_debug_offsets.asyncio_task_object.task_coro,
+        &running_coro_addr
+    )) {
+        chain_exceptions(PyExc_RuntimeError, "Failed to read running task coro");
+        goto result_err;
+    }
+
+    if ((void*)running_coro_addr == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Running task coro is NULL");
+        goto result_err;
+    }
+
+    // note: genobject's gi_iframe is an embedded struct so the address to
+    // the offset leads directly to its first field: f_executable
+    uintptr_t address_of_running_task_code_obj;
+    if (read_py_ptr(
+        &self->handle,
+        running_coro_addr + self->debug_offsets.gen_object.gi_iframe,
+        &address_of_running_task_code_obj
+    )) {
+        goto result_err;
+    }
+
+    if ((void*)address_of_running_task_code_obj == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Running task code object is NULL");
+        goto result_err;
+    }
+
+    uintptr_t address_of_current_frame;
+    if (find_running_frame(
+        &self->handle, self->runtime_start_address, &self->debug_offsets,
+        &address_of_current_frame)
+    ) {
+        chain_exceptions(PyExc_RuntimeError, "Failed to find running frame");
+        goto result_err;
+    }
+
+    uintptr_t address_of_code_object;
+    while ((void*)address_of_current_frame != NULL) {
+        PyObject* frame_info = NULL;
+        int res = parse_async_frame_object(
+            &self->handle,
+            &frame_info,
+            &self->debug_offsets,
+            address_of_current_frame,
+            &address_of_current_frame,
+            &address_of_code_object,
+            self->code_object_cache
+        );
+
+        if (res < 0) {
+            chain_exceptions(PyExc_RuntimeError, "Failed to parse async frame object");
+            goto result_err;
+        }
+
+        if (!frame_info) {
+            continue;
+        }
+
+        if (PyList_Append(calls, frame_info) == -1) {
+            Py_DECREF(frame_info);
+            goto result_err;
+        }
+
+        Py_DECREF(frame_info);
+        frame_info = NULL;
+
+        if (address_of_code_object == address_of_running_task_code_obj) {
+            break;
+        }
+    }
+
+    PyObject *tn = parse_task_name(
+        &self->handle, &self->debug_offsets, &self->async_debug_offsets, running_task_addr);
+    if (tn == NULL) {
+        goto result_err;
+    }
+    if (PyList_Append(result, tn)) {
+        Py_DECREF(tn);
+        goto result_err;
+    }
+    Py_DECREF(tn);
+
+    PyObject* awaited_by = PyList_New(0);
+    if (awaited_by == NULL) {
+        goto result_err;
+    }
+    if (PyList_Append(result, awaited_by)) {
+        Py_DECREF(awaited_by);
+        goto result_err;
+    }
+    Py_DECREF(awaited_by);
+
+    if (parse_task_awaited_by(
+        &self->handle, &self->debug_offsets, &self->async_debug_offsets,
+        running_task_addr, awaited_by, 1, self->code_object_cache)
+    ) {
+        goto result_err;
+    }
+
+    _Py_RemoteDebug_ClearCache(&self->handle);
+    return result;
+
+result_err:
+    _Py_RemoteDebug_ClearCache(&self->handle);
+    Py_XDECREF(result);
+    return NULL;
 }
 
 static PyMethodDef RemoteUnwinder_methods[] = {
     _REMOTE_DEBUGGING_REMOTEUNWINDER_GET_STACK_TRACE_METHODDEF
+    _REMOTE_DEBUGGING_REMOTEUNWINDER_GET_ALL_AWAITED_BY_METHODDEF
+    _REMOTE_DEBUGGING_REMOTEUNWINDER_GET_ASYNC_STACK_TRACE_METHODDEF
     {NULL, NULL}
 };
 
