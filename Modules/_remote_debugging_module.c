@@ -190,6 +190,25 @@ parse_task(
     _Py_hashtable_t *code_object_cache
 );
  
+static int
+parse_coro_chain(
+    proc_handle_t *handle,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    uintptr_t coro_address,
+    PyObject *render_to,
+    _Py_hashtable_t *code_object_cache
+);
+ 
+/* Forward declarations for task parsing functions */
+static int parse_frame_object(
+    proc_handle_t *handle,
+    PyObject** result,
+    const struct _Py_DebugOffsets* offsets,
+    uintptr_t address,
+    uintptr_t* previous_frame,
+    _Py_hashtable_t *code_object_cache
+);
 
 /* ============================================================================
  * UTILITY FUNCTIONS AND HELPERS
@@ -607,16 +626,6 @@ parse_task_name(
     );
 }
 
-/* Forward declarations for task parsing functions */
-static int parse_frame_object(
-    proc_handle_t *handle,
-    PyObject** result,
-    const struct _Py_DebugOffsets* offsets,
-    uintptr_t address,
-    uintptr_t* previous_frame,
-    _Py_hashtable_t *code_object_cache
-);
-
 static int parse_task_awaited_by(
     proc_handle_t *handle,
     const struct _Py_DebugOffsets* offsets,
@@ -678,6 +687,86 @@ static int parse_task_awaited_by(
 }
 
 static int
+handle_yield_from_frame(
+    proc_handle_t *handle,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    uintptr_t gi_iframe_addr,
+    uintptr_t gen_type_addr,
+    PyObject *render_to,
+    _Py_hashtable_t *code_object_cache
+) {
+    // Read the entire interpreter frame at once
+    _PyInterpreterFrame iframe;
+    int err = _Py_RemoteDebug_PagedReadRemoteMemory(
+        handle,
+        gi_iframe_addr,
+        offsets->interpreter_frame.size,
+        &iframe);
+    if (err < 0) {
+        return -1;
+    }
+    
+    if (iframe.owner != FRAME_OWNED_BY_GENERATOR) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "generator doesn't own its frame \\_o_/");
+        return -1;
+    }
+
+    uintptr_t stackpointer_addr = (uintptr_t)iframe.stackpointer;
+    stackpointer_addr &= ~Py_TAG_BITS;
+
+    if ((void*)stackpointer_addr != NULL) {
+        uintptr_t gi_await_addr;
+        err = read_py_ptr(
+            handle,
+            stackpointer_addr - sizeof(void*),
+            &gi_await_addr);
+        if (err) {
+            return -1;
+        }
+
+        if ((void*)gi_await_addr != NULL) {
+            uintptr_t gi_await_addr_type_addr;
+            err = read_ptr(
+                handle,
+                gi_await_addr + offsets->pyobject.ob_type,
+                &gi_await_addr_type_addr);
+            if (err) {
+                return -1;
+            }
+
+            if (gen_type_addr == gi_await_addr_type_addr) {
+                /* This needs an explanation. We always start with parsing
+                   native coroutine / generator frames. Ultimately they
+                   are awaiting on something. That something can be
+                   a native coroutine frame or... an iterator.
+                   If it's the latter -- we can't continue building
+                   our chain. So the condition to bail out of this is
+                   to do that when the type of the current coroutine
+                   doesn't match the type of whatever it points to
+                   in its cr_await.
+                */
+                err = parse_coro_chain(
+                    handle,
+                    offsets,
+                    async_offsets,
+                    gi_await_addr,
+                    render_to,
+                    code_object_cache
+                );
+                if (err) {
+                    return -1;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int
 parse_coro_chain(
     proc_handle_t *handle,
     const struct _Py_DebugOffsets* offsets,
@@ -724,76 +813,95 @@ parse_coro_chain(
     Py_DECREF(name);
 
     if (gen_object.gi_frame_state == FRAME_SUSPENDED_YIELD_FROM) {
-        // Read the entire interpreter frame at once
-        _PyInterpreterFrame iframe;
-        err = _Py_RemoteDebug_PagedReadRemoteMemory(
-            handle,
-            gi_iframe_addr,
-            offsets->interpreter_frame.size,
-            &iframe);
-        if (err < 0) {
-            return -1;
-        }
-        
-        if (iframe.owner != FRAME_OWNED_BY_GENERATOR) {
-            PyErr_SetString(
-                PyExc_RuntimeError,
-                "generator doesn't own its frame \\_o_/");
-            return -1;
-        }
-
-        uintptr_t stackpointer_addr = (uintptr_t)iframe.stackpointer;
-        stackpointer_addr &= ~Py_TAG_BITS;
-
-        if ((void*)stackpointer_addr != NULL) {
-            uintptr_t gi_await_addr;
-            err = read_py_ptr(
-                handle,
-                stackpointer_addr - sizeof(void*),
-                &gi_await_addr);
-            if (err) {
-                return -1;
-            }
-
-            if ((void*)gi_await_addr != NULL) {
-                uintptr_t gi_await_addr_type_addr;
-                int err = read_ptr(
-                    handle,
-                    gi_await_addr + offsets->pyobject.ob_type,
-                    &gi_await_addr_type_addr);
-                if (err) {
-                    return -1;
-                }
-
-                if (gen_type_addr == gi_await_addr_type_addr) {
-                    /* This needs an explanation. We always start with parsing
-                       native coroutine / generator frames. Ultimately they
-                       are awaiting on something. That something can be
-                       a native coroutine frame or... an iterator.
-                       If it's the latter -- we can't continue building
-                       our chain. So the condition to bail out of this is
-                       to do that when the type of the current coroutine
-                       doesn't match the type of whatever it points to
-                       in its cr_await.
-                    */
-                    err = parse_coro_chain(
-                        handle,
-                        offsets,
-                        async_offsets,
-                        gi_await_addr,
-                        render_to,
-                        code_object_cache
-                    );
-                    if (err) {
-                        return -1;
-                    }
-                }
-            }
-        }
-
+        return handle_yield_from_frame(
+            handle, offsets, async_offsets, gi_iframe_addr, 
+            gen_type_addr, render_to, code_object_cache);
     }
 
     return 0;
+}
+
+static PyObject *
+create_task_result(
+    proc_handle_t *handle,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    uintptr_t task_address,
+    int recurse_task,
+    _Py_hashtable_t *code_object_cache
+) {
+    PyObject* result = PyList_New(0);
+    if (result == NULL) {
+        return NULL;
+    }
+
+    PyObject *call_stack = PyList_New(0);
+    if (call_stack == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    if (PyList_Append(result, call_stack)) {
+        Py_DECREF(call_stack);
+        Py_DECREF(result);
+        return NULL;
+    }
+    /* we can operate on a borrowed one to simplify cleanup */
+    Py_DECREF(call_stack);
+
+    PyObject *tn = NULL;
+    if (recurse_task) {
+        tn = parse_task_name(
+            handle, offsets, async_offsets, task_address);
+    } else {
+        tn = PyLong_FromUnsignedLongLong(task_address);
+    }
+    if (tn == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    if (PyList_Append(result, tn)) {
+        Py_DECREF(tn);
+        Py_DECREF(result);
+        return NULL;
+    }
+    Py_DECREF(tn);
+
+    // Parse coroutine chain
+    TaskObj task_obj;
+    int err = _Py_RemoteDebug_PagedReadRemoteMemory(
+        handle,
+        task_address,
+        async_offsets->asyncio_task_object.size,
+        &task_obj);
+    if (err < 0) {
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    uintptr_t coro_addr = (uintptr_t)task_obj.task_coro;
+    coro_addr &= ~Py_TAG_BITS;
+
+    if ((void*)coro_addr != NULL) {
+        err = parse_coro_chain(
+            handle,
+            offsets,
+            async_offsets,
+            coro_addr,
+            call_stack,
+            code_object_cache
+        );
+        if (err) {
+            Py_DECREF(result);
+            return NULL;
+        }
+
+        if (PyList_Reverse(call_stack)) {
+            Py_DECREF(result);
+            return NULL;
+        }
+    }
+
+    return result;
 }
 
 static int
@@ -815,79 +923,35 @@ parse_task(
         return -1;
     }
 
-    PyObject* result = PyList_New(0);
-    if (result == NULL) {
-        return -1;
-    }
-
-    PyObject *call_stack = PyList_New(0);
-    if (call_stack == NULL) {
-        goto err;
-    }
-    if (PyList_Append(result, call_stack)) {
-        Py_DECREF(call_stack);
-        goto err;
-    }
-    /* we can operate on a borrowed one to simplify cleanup */
-    Py_DECREF(call_stack);
-
+    PyObject* result = NULL;
     if (is_task) {
-        PyObject *tn = NULL;
-        if (recurse_task) {
-            tn = parse_task_name(
-                handle, offsets, async_offsets, task_address);
-        } else {
-            tn = PyLong_FromUnsignedLongLong(task_address);
+        result = create_task_result(handle, offsets, async_offsets, 
+                                   task_address, recurse_task, code_object_cache);
+        if (!result) {
+            return -1;
         }
-        if (tn == NULL) {
-            goto err;
-        }
-        if (PyList_Append(result, tn)) {
-            Py_DECREF(tn);
-            goto err;
-        }
-        Py_DECREF(tn);
-
-        uintptr_t coro_addr;
-        err = read_py_ptr(
-            handle,
-            task_address + async_offsets->asyncio_task_object.task_coro,
-            &coro_addr);
-        if (err) {
-            goto err;
-        }
-
-        if ((void*)coro_addr != NULL) {
-            err = parse_coro_chain(
-                handle,
-                offsets,
-                async_offsets,
-                coro_addr,
-                call_stack,
-                code_object_cache
-            );
-            if (err) {
-                goto err;
-            }
-
-            if (PyList_Reverse(call_stack)) {
-                goto err;
-            }
+    } else {
+        result = PyList_New(0);
+        if (result == NULL) {
+            return -1;
         }
     }
 
     if (PyList_Append(render_to, result)) {
-        goto err;
+        Py_DECREF(result);
+        return -1;
     }
 
     if (recurse_task) {
         PyObject *awaited_by = PyList_New(0);
         if (awaited_by == NULL) {
-            goto err;
+            Py_DECREF(result);
+            return -1;
         }
         if (PyList_Append(result, awaited_by)) {
             Py_DECREF(awaited_by);
-            goto err;
+            Py_DECREF(result);
+            return -1;
         }
         /* we can operate on a borrowed one to simplify cleanup */
         Py_DECREF(awaited_by);
@@ -895,16 +959,53 @@ parse_task(
         if (parse_task_awaited_by(handle, offsets, async_offsets,
                                 task_address, awaited_by, 1, code_object_cache)
         ) {
-            goto err;
+            Py_DECREF(result);
+            return -1;
         }
     }
     Py_DECREF(result);
 
     return 0;
+}
 
-err:
-    Py_DECREF(result);
-    return -1;
+static int
+process_set_entry(
+    proc_handle_t *handle,
+    const struct _Py_DebugOffsets* offsets,
+    const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
+    uintptr_t table_ptr,
+    PyObject *awaited_by,
+    int recurse_task,
+    _Py_hashtable_t *code_object_cache
+) {
+    uintptr_t key_addr;
+    if (read_py_ptr(handle, table_ptr, &key_addr)) {
+        return -1;
+    }
+
+    if ((void*)key_addr != NULL) {
+        Py_ssize_t ref_cnt;
+        if (read_Py_ssize_t(handle, table_ptr, &ref_cnt)) {
+            return -1;
+        }
+
+        if (ref_cnt) {
+            // if 'ref_cnt=0' it's a set dummy marker
+            if (parse_task(
+                handle,
+                offsets,
+                async_offsets,
+                key_addr,
+                awaited_by,
+                recurse_task,
+                code_object_cache
+            )) {
+                return -1;
+            }
+            return 1; // Successfully processed a valid entry
+        }
+    }
+    return 0; // Entry was NULL or dummy marker
 }
 
 static int
@@ -934,38 +1035,16 @@ parse_tasks_in_set(
 
     Py_ssize_t i = 0;
     Py_ssize_t els = 0;
-    while (i < set_len) {
-        uintptr_t key_addr;
-        if (read_py_ptr(handle, table_ptr, &key_addr)) {
+    while (i < set_len && els < num_els) {
+        int result = process_set_entry(
+            handle, offsets, async_offsets, table_ptr,
+            awaited_by, recurse_task, code_object_cache);
+        
+        if (result < 0) {
             return -1;
         }
-
-        if ((void*)key_addr != NULL) {
-            Py_ssize_t ref_cnt;
-            if (read_Py_ssize_t(handle, table_ptr, &ref_cnt)) {
-                return -1;
-            }
-
-            if (ref_cnt) {
-                // if 'ref_cnt=0' it's a set dummy marker
-
-                if (parse_task(
-                    handle,
-                    offsets,
-                    async_offsets,
-                    key_addr,
-                    awaited_by,
-                    recurse_task,
-                    code_object_cache
-                )
-                ) {
-                    return -1;
-                }
-
-                if (++els == num_els) {
-                    break;
-                }
-            }
+        if (result > 0) {
+            els++;
         }
 
         table_ptr += sizeof(void*) * 2;
@@ -1907,7 +1986,7 @@ _remote_debugging_get_all_awaited_by_impl(PyObject *module, int pid)
     if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                 handle,
                 interpreter_state_addr
-                + local_debug_offsets.interpreter_state.threads_head,
+                + local_debug_offsets.interpreter_state.threads_main,
                 sizeof(void*),
                 &thread_state_addr))
     {
@@ -2177,6 +2256,7 @@ result_err:
 /*[clinic input]
 class _remote_debugging.RemoteUnwinder "RemoteUnwinderObject *" "&RemoteUnwinder_Type"
 [clinic start generated code]*/
+
 /*[clinic end generated code: output=da39a3ee5e6b4b0d input=55f164d8803318be]*/
 
 /*[clinic input]
