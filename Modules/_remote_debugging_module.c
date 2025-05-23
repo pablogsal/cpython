@@ -2263,9 +2263,13 @@ static void
 RemoteUnwinder_dealloc(RemoteUnwinderObject *self)
 {
     PyTypeObject *tp = Py_TYPE(self);
-    _Py_hashtable_destroy(self->code_object_cache);
-    _Py_RemoteDebug_ClearCache(&self->handle);
-    _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+    if (self->code_object_cache) {
+        _Py_hashtable_destroy(self->code_object_cache);
+    }
+    if (self->handle.pid != 0) {
+        _Py_RemoteDebug_ClearCache(&self->handle);
+        _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+    }
     PyObject_Del(self);
     Py_DECREF(tp);
 }
