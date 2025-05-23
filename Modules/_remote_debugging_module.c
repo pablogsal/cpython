@@ -105,6 +105,58 @@ struct _Py_AsyncioModuleDebugOffsets {
     } asyncio_thread_state;
 };
 
+// Copied from Modules/_asynciomodule.c because it's not exported
+
+typedef enum {
+    STATE_PENDING,
+    STATE_CANCELLED,
+    STATE_FINISHED
+} fut_state;
+
+#define FutureObj_HEAD(prefix)                                              \
+    PyObject_HEAD                                                           \
+    PyObject *prefix##_loop;                                                \
+    PyObject *prefix##_callback0;                                           \
+    PyObject *prefix##_context0;                                            \
+    PyObject *prefix##_callbacks;                                           \
+    PyObject *prefix##_exception;                                           \
+    PyObject *prefix##_exception_tb;                                        \
+    PyObject *prefix##_result;                                              \
+    PyObject *prefix##_source_tb;                                           \
+    PyObject *prefix##_cancel_msg;                                          \
+    PyObject *prefix##_cancelled_exc;                                       \
+    PyObject *prefix##_awaited_by;                                          \
+    fut_state prefix##_state;                                               \
+    /* Used by profilers to make traversing the stack from an external      \
+       process faster. */                                                   \
+    char prefix##_is_task;                                                  \
+    char prefix##_awaited_by_is_set;                                        \
+    /* These bitfields need to be at the end of the struct                  \
+       so that these and bitfields from TaskObj are contiguous.             \
+    */                                                                      \
+    unsigned prefix##_log_tb: 1;                                            \
+    unsigned prefix##_blocking: 1;                                          \
+
+typedef struct {
+    FutureObj_HEAD(fut)
+} FutureObj;
+
+typedef struct TaskObj {
+    FutureObj_HEAD(task)
+    unsigned task_must_cancel: 1;
+    unsigned task_log_destroy_pending: 1;
+    int task_num_cancels_requested;
+    PyObject *task_fut_waiter;
+    PyObject *task_coro;
+    PyObject *task_name;
+    PyObject *task_context;
+    struct llist_node task_node;
+#ifdef Py_GIL_DISABLED
+    // thread id of the thread where this task was created
+    uintptr_t task_tid;
+#endif
+} TaskObj;
+
 #include "clinic/_remote_debugging_module.c.h"
 
 /*[clinic input]
@@ -497,14 +549,19 @@ parse_task_name(
     const struct _Py_AsyncioModuleDebugOffsets* async_offsets,
     uintptr_t task_address
 ) {
-    uintptr_t task_name_addr;
-    int err = read_py_ptr(
+    // Read the entire TaskObj at once
+    TaskObj task_obj;
+    int err = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle,
-        task_address + async_offsets->asyncio_task_object.task_name,
-        &task_name_addr);
-    if (err) {
+        task_address,
+        async_offsets->asyncio_task_object.size,
+        &task_obj);
+    if (err < 0) {
         return NULL;
     }
+
+    uintptr_t task_name_addr = (uintptr_t)task_obj.task_name;
+    task_name_addr &= ~Py_TAG_BITS;
 
     // The task name can be a long or a string so we need to check the type
     PyObject task_name_obj;
@@ -569,27 +626,25 @@ static int parse_task_awaited_by(
     int recurse_task,
     _Py_hashtable_t *code_object_cache
 ) {
-    uintptr_t task_ab_addr;
-    int err = read_py_ptr(
+    // Read the entire TaskObj at once
+    TaskObj task_obj;
+    int err = _Py_RemoteDebug_PagedReadRemoteMemory(
         handle,
-        task_address + async_offsets->asyncio_task_object.task_awaited_by,
-        &task_ab_addr);
-    if (err) {
+        task_address,
+        async_offsets->asyncio_task_object.size,
+        &task_obj);
+    if (err < 0) {
         return -1;
     }
+
+    uintptr_t task_ab_addr = (uintptr_t)task_obj.task_awaited_by;
+    task_ab_addr &= ~Py_TAG_BITS;
 
     if ((void*)task_ab_addr == NULL) {
         return 0;
     }
 
-    char awaited_by_is_a_set;
-    err = read_char(
-        handle,
-        task_address + async_offsets->asyncio_task_object.task_awaited_by_is_set,
-        &awaited_by_is_a_set);
-    if (err) {
-        return -1;
-    }
+    char awaited_by_is_a_set = task_obj.task_awaited_by_is_set;
 
     if (awaited_by_is_a_set) {
         if (parse_tasks_in_set(
@@ -648,13 +703,14 @@ parse_coro_chain(
 
     PyObject* name = NULL;
 
-    // Parse the previous frame
+    // Parse the previous frame using the gi_iframe from local copy
     uintptr_t prev_frame;
+    uintptr_t gi_iframe_addr = coro_address + offsets->gen_object.gi_iframe;
     if (parse_frame_object(
                 handle,
                 &name,
                 offsets,
-                coro_address + offsets->gen_object.gi_iframe,
+                gi_iframe_addr,
                 &prev_frame, code_object_cache)
         < 0)
     {
@@ -668,32 +724,26 @@ parse_coro_chain(
     Py_DECREF(name);
 
     if (gen_object.gi_frame_state == FRAME_SUSPENDED_YIELD_FROM) {
-        char owner;
-        err = read_char(
+        // Read the entire interpreter frame at once
+        _PyInterpreterFrame iframe;
+        err = _Py_RemoteDebug_PagedReadRemoteMemory(
             handle,
-            coro_address + offsets->gen_object.gi_iframe +
-                offsets->interpreter_frame.owner,
-            &owner
-        );
-        if (err) {
+            gi_iframe_addr,
+            offsets->interpreter_frame.size,
+            &iframe);
+        if (err < 0) {
             return -1;
         }
-        if (owner != FRAME_OWNED_BY_GENERATOR) {
+        
+        if (iframe.owner != FRAME_OWNED_BY_GENERATOR) {
             PyErr_SetString(
                 PyExc_RuntimeError,
                 "generator doesn't own its frame \\_o_/");
             return -1;
         }
 
-        uintptr_t stackpointer_addr;
-        err = read_py_ptr(
-            handle,
-            coro_address + offsets->gen_object.gi_iframe +
-                offsets->interpreter_frame.stackpointer,
-            &stackpointer_addr);
-        if (err) {
-            return -1;
-        }
+        uintptr_t stackpointer_addr = (uintptr_t)iframe.stackpointer;
+        stackpointer_addr &= ~Py_TAG_BITS;
 
         if ((void*)stackpointer_addr != NULL) {
             uintptr_t gi_await_addr;
