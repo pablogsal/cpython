@@ -34,6 +34,79 @@
 #    define HAVE_PROCESS_VM_READV 0
 #endif
 
+/* ============================================================================
+ * BINARY DUMP STRUCTURES AND DEFINITIONS
+ * ============================================================================ */
+
+// Binary format header (will be updated at end)
+
+typedef struct {
+    uint32_t magic;           // 'PYST' (0x54535950)
+    uint32_t version;         // Format version
+    uint64_t string_table_offset;  // Offset to string table from start of file
+    uint32_t string_table_size;    // Size of string table in bytes
+    uint32_t thread_count;         // Number of threads
+} BinaryHeader;
+
+// Per-thread data header
+typedef struct {
+    uint64_t thread_id;       // Thread ID
+    uint32_t frame_count;     // Number of frames in this thread
+    uint64_t frames_offset;   // Offset to frame data for this thread
+} ThreadHeader;
+
+// Per-frame data
+typedef struct {
+    uint32_t func_name_index; // Index into string table
+    uint32_t file_name_index; // Index into string table  
+    int32_t lineno;           // Line number
+} FrameData;
+
+// String table management
+typedef struct {
+    char **strings;
+    uint32_t *string_lengths;
+    uint32_t count;
+    uint32_t capacity;
+    size_t total_size;
+} StringTable;
+
+typedef struct {
+    uint64_t thread_id;       // Thread ID
+    uint32_t frame_count;     // Number of frames that follow
+} ThreadRecord;
+
+
+#define BINARY_MAGIC 0x54535950  // 'PYST'
+#define BINARY_VERSION 1
+
+typedef struct {
+    PyObject_HEAD
+    FILE *file;
+    char *filename;
+    StringTable *string_table;
+    _Py_hashtable_t *code_object_cache;
+    uint32_t thread_count;
+    
+    // Reusable process data
+    proc_handle_t handle;
+    uintptr_t runtime_start_address;
+    struct _Py_DebugOffsets debug_offsets;
+    uintptr_t interpreter_addr;
+    int all_threads;
+} BinaryStackDumperObject;
+
+typedef struct {
+    char *func_name;
+    size_t func_name_len;
+    char *file_name;
+    size_t file_name_len;
+    int first_lineno;
+    char *linetable;
+    size_t linetable_len;
+    uintptr_t addr_code_adaptive;
+} CachedCodeMetadata_Raw;
+
 /**/
 
 /* ============================================================================
@@ -127,6 +200,8 @@ typedef struct {
     _Py_hashtable_t *code_object_cache;
 } RemoteUnwinderObject;
 
+
+
 typedef struct {
     PyObject *func_name;
     PyObject *file_name;
@@ -138,6 +213,7 @@ typedef struct {
 typedef struct {
     /* Types */
     PyTypeObject *RemoteDebugging_Type;
+    PyTypeObject *BinaryStackDumper_Type;
 } RemoteDebuggingState;
 
 typedef struct
@@ -215,6 +291,16 @@ static int parse_frame_object(
 /* ============================================================================
  * UTILITY FUNCTIONS AND HELPERS
  * ============================================================================ */
+
+static void
+cached_code_metadata_raw_destroy(void *ptr)
+{
+    CachedCodeMetadata_Raw *meta = (CachedCodeMetadata_Raw *)ptr;
+    PyMem_RawFree(meta->func_name);
+    PyMem_RawFree(meta->file_name);
+    PyMem_RawFree(meta->linetable);
+    PyMem_RawFree(meta);
+}
 
 static void
 cached_code_metadata_destroy(void *ptr)
@@ -2687,6 +2773,1165 @@ static PyType_Spec RemoteUnwinder_spec = {
 };
 
 /* ============================================================================
+ * RAW STRING READING FUNCTIONS
+ * ============================================================================ */
+
+static int
+read_py_str_raw(
+    proc_handle_t *handle,
+    const _Py_DebugOffsets* debug_offsets,
+    uintptr_t address,
+    Py_ssize_t max_len,
+    char **out_str,
+    size_t *out_len
+) {
+    *out_str = NULL;
+    *out_len = 0;
+
+    // Read the entire PyUnicodeObject at once
+    PyUnicodeObject unicode_obj;
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(
+        handle,
+        address,
+        debug_offsets->unicode_object.size,
+        &unicode_obj
+    );
+    if (res < 0) {
+        return -1;
+    }
+
+    Py_ssize_t len = unicode_obj._base._base.length;
+    if (len < 0 || len > max_len) {
+        return -1;
+    }
+
+    char *buf = (char *)PyMem_RawMalloc(len + 1);
+    if (buf == NULL) {
+        return -1;
+    }
+
+    size_t offset = debug_offsets->unicode_object.asciiobject_size;
+    res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address + offset, len, buf);
+    if (res < 0) {
+        PyMem_RawFree(buf);
+        return -1;
+    }
+    buf[len] = '\0';
+
+    *out_str = buf;
+    *out_len = len;
+    return 0;
+}
+
+static int
+read_py_bytes_raw(
+    proc_handle_t *handle,
+    const _Py_DebugOffsets* debug_offsets,
+    uintptr_t address,
+    Py_ssize_t max_len,
+    char **out_bytes,
+    size_t *out_len
+) {
+    *out_bytes = NULL;
+    *out_len = 0;
+
+    // Read the entire PyBytesObject at once
+    PyBytesObject bytes_obj;
+    int res = _Py_RemoteDebug_PagedReadRemoteMemory(
+        handle,
+        address,
+        debug_offsets->bytes_object.size,
+        &bytes_obj
+    );
+    if (res < 0) {
+        return -1;
+    }
+
+    Py_ssize_t len = bytes_obj.ob_base.ob_size;
+    if (len < 0 || len > max_len) {
+        return -1;
+    }
+
+    char *buf = (char *)PyMem_RawMalloc(len + 1);
+    if (buf == NULL) {
+        return -1;
+    }
+
+    size_t offset = debug_offsets->bytes_object.ob_sval;
+    res = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address + offset, len, buf);
+    if (res < 0) {
+        PyMem_RawFree(buf);
+        return -1;
+    }
+    buf[len] = '\0';
+
+    *out_bytes = buf;
+    *out_len = len;
+    return 0;
+}
+
+
+/* ============================================================================
+ * ZERO-ALLOCATION BINARY STACK DUMPER
+ * ============================================================================ */
+
+
+/* ============================================================================
+ * STRING TABLE FUNCTIONS
+ * ============================================================================ */
+
+static StringTable*
+string_table_create(void)
+{
+    StringTable *table = PyMem_RawMalloc(sizeof(StringTable));
+    if (!table) {
+        return NULL;
+    }
+    
+    table->capacity = 256;
+    table->strings = PyMem_RawMalloc(table->capacity * sizeof(char*));
+    table->string_lengths = PyMem_RawMalloc(table->capacity * sizeof(uint32_t));
+    if (!table->strings || !table->string_lengths) {
+        PyMem_RawFree(table->strings);
+        PyMem_RawFree(table->string_lengths);
+        PyMem_RawFree(table);
+        return NULL;
+    }
+    
+    table->count = 0;
+    table->total_size = 0;
+    return table;
+}
+
+static void
+string_table_destroy(StringTable *table)
+{
+    if (!table) return;
+    
+    for (uint32_t i = 0; i < table->count; i++) {
+        PyMem_RawFree(table->strings[i]);
+    }
+    PyMem_RawFree(table->strings);
+    PyMem_RawFree(table->string_lengths);
+    PyMem_RawFree(table);
+}
+
+static uint32_t
+string_table_add(StringTable *table, const char *str, size_t len)
+{
+    if (!table || !str) {
+        return UINT32_MAX;
+    }
+    
+    // Check if string already exists
+    for (uint32_t i = 0; i < table->count; i++) {
+        if (table->string_lengths[i] == len && 
+            memcmp(table->strings[i], str, len) == 0) {
+            return i;
+        }
+    }
+    
+    // Expand if needed
+    if (table->count >= table->capacity) {
+        table->capacity *= 2;
+        char **new_strings = PyMem_RawRealloc(table->strings, 
+                                              table->capacity * sizeof(char*));
+        uint32_t *new_lengths = PyMem_RawRealloc(table->string_lengths,
+                                                  table->capacity * sizeof(uint32_t));
+        if (!new_strings || !new_lengths) {
+            return UINT32_MAX;
+        }
+        table->strings = new_strings;
+        table->string_lengths = new_lengths;
+    }
+    
+    // Add new string
+    char *str_copy = PyMem_RawMalloc(len + 1);
+    if (!str_copy) {
+        return UINT32_MAX;
+    }
+    
+    memcpy(str_copy, str, len);
+    str_copy[len] = '\0';
+    
+    uint32_t index = table->count;
+    table->strings[index] = str_copy;
+    table->string_lengths[index] = len;
+    table->total_size += len + 1; // +1 for null terminator
+    table->count++;
+    
+    return index;
+}
+
+
+/* ============================================================================
+ * DIRECT FRAME DUMPING FUNCTIONS
+ * ============================================================================ */
+
+static int
+dump_code_object_frame_direct(
+    proc_handle_t *handle,
+    const struct _Py_DebugOffsets *offsets,
+    uintptr_t address,
+    uintptr_t current_frame,
+    StringTable *string_table,
+    FILE *file,
+    _Py_hashtable_t *code_object_cache
+) {
+    void *key = (void *)address;
+    CachedCodeMetadata_Raw *meta = NULL;
+
+    if (code_object_cache != NULL) {
+        meta = _Py_hashtable_get(code_object_cache, key);
+    }
+
+    if (meta == NULL) {
+        PyCodeObject code_object;
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(
+                handle, address, offsets->code_object.size, &code_object) < 0)
+        {
+            return -1;
+        }
+
+        meta = PyMem_RawMalloc(sizeof(CachedCodeMetadata_Raw));
+        if (!meta) {
+            return -1;
+        }
+
+        // Read function name raw
+        if (read_py_str_raw(handle, offsets, (uintptr_t)code_object.co_qualname, 1024,
+                           &meta->func_name, &meta->func_name_len) < 0) {
+            PyMem_RawFree(meta);
+            return -1;
+        }
+
+        // Read file name raw
+        if (read_py_str_raw(handle, offsets, (uintptr_t)code_object.co_filename, 1024,
+                           &meta->file_name, &meta->file_name_len) < 0) {
+            PyMem_RawFree(meta->func_name);
+            PyMem_RawFree(meta);
+            return -1;
+        }
+
+        // Read linetable raw
+        if (read_py_bytes_raw(handle, offsets, (uintptr_t)code_object.co_linetable, 4096,
+                             &meta->linetable, &meta->linetable_len) < 0) {
+            PyMem_RawFree(meta->func_name);
+            PyMem_RawFree(meta->file_name);
+            PyMem_RawFree(meta);
+            return -1;
+        }
+
+        meta->first_lineno = code_object.co_firstlineno;
+        meta->addr_code_adaptive = address + offsets->code_object.co_code_adaptive;
+
+        if (code_object_cache && _Py_hashtable_set(code_object_cache, key, meta) < 0) {
+            cached_code_metadata_raw_destroy(meta);
+            return -1;
+        }
+    }
+
+    // Get instruction pointer
+    uintptr_t ip = 0;
+    if (read_instruction_ptr(handle, offsets, current_frame, &ip) < 0) {
+        return -1;
+    }
+
+    ptrdiff_t addrq = (uint16_t *)ip - (uint16_t *)meta->addr_code_adaptive;
+
+    LocationInfo info = {0};
+    bool ok = parse_linetable(addrq, meta->linetable, meta->first_lineno, &info);
+    if (!ok) {
+        info.lineno = -1;
+    }
+
+    // Add strings to table and get indices
+    uint32_t func_name_index = string_table_add(string_table, meta->func_name, meta->func_name_len);
+    uint32_t file_name_index = string_table_add(string_table, meta->file_name, meta->file_name_len);
+    
+    if (func_name_index == UINT32_MAX || file_name_index == UINT32_MAX) {
+        return -1;
+    }
+
+    // Write frame data directly to file
+    FrameData frame_data = {
+        .func_name_index = func_name_index,
+        .file_name_index = file_name_index,
+        .lineno = info.lineno
+    };
+
+    if (fwrite(&frame_data, sizeof(FrameData), 1, file) != 1) {
+        return -1;
+    }
+
+    return 1;  // Success
+}
+
+static int
+dump_frame_object_direct(
+    proc_handle_t *handle,
+    const struct _Py_DebugOffsets *offsets,
+    uintptr_t address,
+    uintptr_t *previous_frame,
+    StringTable *string_table,
+    FILE *file,
+    _Py_hashtable_t *code_object_cache
+) {
+    _PyInterpreterFrame frame;
+
+    Py_ssize_t bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
+        handle, address, offsets->interpreter_frame.size, &frame);
+    if (bytes_read < 0) {
+        return -1;
+    }
+
+    *previous_frame = (uintptr_t)frame.previous;
+
+    if (frame.owner >= FRAME_OWNED_BY_INTERPRETER) {
+        return 0;  // Skip C frames
+    }
+
+    if ((void*)frame.f_executable.bits == NULL) {
+        return 0;  // Skip frames without code
+    }
+
+    return dump_code_object_frame_direct(
+        handle, offsets, frame.f_executable.bits, address, 
+        string_table, file, code_object_cache);
+}
+
+static int
+dump_frame_from_chunks_direct(
+    proc_handle_t *handle,
+    const struct _Py_DebugOffsets *offsets,
+    uintptr_t address,
+    uintptr_t *previous_frame,
+    StackChunkList *chunks,
+    StringTable *string_table,
+    FILE *file,
+    _Py_hashtable_t *code_object_cache
+) {
+    void *frame_ptr = find_frame_in_chunks(chunks, address);
+    if (!frame_ptr) {
+        return -1;
+    }
+
+    _PyInterpreterFrame *frame = (_PyInterpreterFrame *)frame_ptr;
+    *previous_frame = (uintptr_t)frame->previous;
+
+    if (frame->owner >= FRAME_OWNED_BY_INTERPRETER || !frame->f_executable.bits) {
+        return 0;
+    }
+
+    return dump_code_object_frame_direct(
+        handle, offsets, frame->f_executable.bits, address,
+        string_table, file, code_object_cache);
+}
+
+/* ============================================================================
+ * DIRECT THREAD DUMPING FUNCTION
+ * ============================================================================ */
+
+static int
+dump_thread_frames_direct(
+    proc_handle_t *handle,
+    uintptr_t tstate_addr,
+    const _Py_DebugOffsets *offsets,
+    StringTable *string_table,
+    FILE *file,
+    _Py_hashtable_t *code_object_cache,
+    uint64_t *thread_id_out,
+    uint32_t *frame_count_out
+) {
+    PyThreadState ts;
+    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
+        handle, tstate_addr, offsets->thread_state.size, &ts);
+    if (bytes_read < 0) {
+        return -1;
+    }
+
+    *thread_id_out = ts.native_thread_id;
+    *frame_count_out = 0;
+
+    uintptr_t frame_addr = (uintptr_t)ts.current_frame;
+
+    StackChunkList chunks = {0};
+    if (copy_stack_chunks(handle, tstate_addr, offsets, &chunks) < 0) {
+        return -1;
+    }
+
+    const size_t MAX_FRAMES = 1024;
+    size_t frame_count_check = 0;
+
+    while ((void*)frame_addr != NULL && frame_count_check < MAX_FRAMES) {
+        uintptr_t next_frame_addr = 0;
+        frame_count_check++;
+
+        int result = dump_frame_from_chunks_direct(handle, offsets, frame_addr, 
+                                                  &next_frame_addr, &chunks, 
+                                                  string_table, file, 
+                                                  code_object_cache);
+        if (result < 0) {
+            // Try fallback
+            result = dump_frame_object_direct(handle, offsets, frame_addr,
+                                             &next_frame_addr, string_table,
+                                             file, code_object_cache);
+            if (result < 0) {
+                break;
+            }
+        }
+
+        if (result > 0) {  // Valid frame written
+            (*frame_count_out)++;
+        }
+
+        frame_addr = next_frame_addr;
+    }
+
+    // Cleanup chunks
+    for (size_t i = 0; i < chunks.count; ++i) {
+        PyMem_RawFree(chunks.chunks[i].local_copy);
+    }
+    PyMem_RawFree(chunks.chunks);
+
+    return 0;
+}
+
+/* ============================================================================
+ * BINARY STACK DUMPER 
+ * ============================================================================ */
+
+/*[clinic input]
+class _remote_debugging.BinaryStackDumper "BinaryStackDumperObject *" "&BinaryStackDumper_Type"
+[clinic start generated code]*/
+/*[clinic end generated code: output=da39a3ee5e6b4b0d input=04e4e70d7e0bcee9]*/
+
+/*[clinic input]
+_remote_debugging.BinaryStackDumper.__init__
+    filename: str
+    pid: int
+    *
+    all_threads: bool = False
+Initialize binary stack dumper with filename and PID
+[clinic start generated code]*/
+
+static int
+_remote_debugging_BinaryStackDumper___init___impl(BinaryStackDumperObject *self,
+                                                  const char *filename,
+                                                  int pid, int all_threads)
+/*[clinic end generated code: output=6f8389e69f4728b4 input=027d57b22a09af3e]*/
+{
+#if (!defined(__linux__) && !defined(__APPLE__))  && !defined(MS_WINDOWS) || \
+    (defined(__linux__) && !HAVE_PROCESS_VM_READV)
+    PyErr_SetString(
+        PyExc_RuntimeError,
+        "BinaryStackDumper is not supported on this platform");
+    return -1;
+#endif
+
+    // Initialize handle to invalid state
+    self->handle.pid = 0;
+    
+    // Store filename
+    size_t filename_len = strlen(filename);
+    self->filename = PyMem_RawMalloc(filename_len + 1);
+    if (!self->filename) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    strcpy(self->filename, filename);
+
+    // Open file for writing
+    self->file = fopen(filename, "wb");
+    if (!self->file) {
+        PyMem_RawFree(self->filename);
+        PyErr_SetFromErrnoWithFilename(PyExc_IOError, filename);
+        return -1;
+    }
+
+    // Create string table
+    self->string_table = string_table_create();
+    if (!self->string_table) {
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    // Create raw code object cache
+    self->code_object_cache = _Py_hashtable_new_full(
+        _Py_hashtable_hash_ptr,
+        _Py_hashtable_compare_direct,
+        NULL,
+        cached_code_metadata_raw_destroy,
+        NULL
+    );
+    if (!self->code_object_cache) {
+        string_table_destroy(self->string_table);
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    // Initialize process handle and read debug offsets
+    if (_Py_RemoteDebug_InitProcHandle(&self->handle, pid) < 0) {
+        _Py_hashtable_destroy(self->code_object_cache);
+        string_table_destroy(self->string_table);
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        return -1;
+    }
+
+    self->runtime_start_address = _Py_RemoteDebug_GetPyRuntimeAddress(&self->handle);
+    if (self->runtime_start_address == 0) {
+        _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+        _Py_hashtable_destroy(self->code_object_cache);
+        string_table_destroy(self->string_table);
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_RuntimeError, "Failed to get .PyRuntime address");
+        }
+        return -1;
+    }
+
+    if (_Py_RemoteDebug_ReadDebugOffsets(&self->handle, &self->runtime_start_address, 
+                                         &self->debug_offsets) < 0) {
+        _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+        _Py_hashtable_destroy(self->code_object_cache);
+        string_table_destroy(self->string_table);
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        chain_exceptions(PyExc_RuntimeError, "Failed to read debug offsets");
+        return -1;
+    }
+
+    // Get interpreter address
+    uint64_t interpreter_state_list_head = self->debug_offsets.runtime_state.interpreters_head;
+    if (_Py_RemoteDebug_PagedReadRemoteMemory(
+            &self->handle,
+            self->runtime_start_address + interpreter_state_list_head,
+            sizeof(void*),
+            &self->interpreter_addr) < 0) {
+        _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+        _Py_hashtable_destroy(self->code_object_cache);
+        string_table_destroy(self->string_table);
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        return -1;
+    }
+
+    if (self->interpreter_addr == 0) {
+        _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+        _Py_hashtable_destroy(self->code_object_cache);
+        string_table_destroy(self->string_table);
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        PyErr_SetString(PyExc_RuntimeError, "No interpreter state found");
+        return -1;
+    }
+
+    self->all_threads = all_threads;
+
+    // Write placeholder header (will be updated at end)
+    BinaryHeader header = {
+        .magic = BINARY_MAGIC,
+        .version = BINARY_VERSION,
+        .string_table_offset = 0,
+        .string_table_size = 0,
+        .thread_count = 0
+    };
+    
+    if (fwrite(&header, sizeof(BinaryHeader), 1, self->file) != 1) {
+        _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+        _Py_hashtable_destroy(self->code_object_cache);
+        string_table_destroy(self->string_table);
+        fclose(self->file);
+        PyMem_RawFree(self->filename);
+        PyErr_SetFromErrnoWithFilename(PyExc_IOError, filename);
+        return -1;
+    }
+
+    self->thread_count = 0;
+
+    return 0;
+}
+
+/*[clinic input]
+@critical_section
+_remote_debugging.BinaryStackDumper.dump_thread
+Dump current stack trace state from the initialized PID
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_BinaryStackDumper_dump_thread_impl(BinaryStackDumperObject *self)
+/*[clinic end generated code: output=37220d576a43ee21 input=443a854a060499cb]*/
+{
+    if (!self->file) {
+        PyErr_SetString(PyExc_RuntimeError, "Dumper is closed");
+        return NULL;
+    }
+
+    if (self->handle.pid == 0) {
+        PyErr_SetString(PyExc_RuntimeError, "Process handle not initialized");
+        return NULL;
+    }
+
+    // Get current thread state
+    uintptr_t current_tstate;
+    if (self->all_threads) {
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(
+                &self->handle,
+                self->interpreter_addr + self->debug_offsets.interpreter_state.threads_head,
+                sizeof(void*),
+                &current_tstate) < 0) {
+            return NULL;
+        }
+    } else {
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(
+                &self->handle,
+                self->interpreter_addr + self->debug_offsets.interpreter_state.threads_main,
+                sizeof(void*),
+                &current_tstate) < 0) {
+            return NULL;
+        }
+    }
+
+    // Process each thread and write data immediately in streaming fashion
+    while (current_tstate != 0) {
+        uint64_t thread_id;
+        uint32_t frame_count;
+        
+        // Write thread record first
+        ThreadRecord thread_record = {0, 0};
+        long thread_record_pos = ftell(self->file);
+        if (fwrite(&thread_record, sizeof(ThreadRecord), 1, self->file) != 1) {
+            PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+            return NULL;
+        }
+
+        // Dump frames directly to file and get metadata
+        if (dump_thread_frames_direct(&self->handle, current_tstate, &self->debug_offsets,
+                                     self->string_table, self->file, self->code_object_cache,
+                                     &thread_id, &frame_count) < 0) {
+            return NULL;
+        }
+
+        // Go back and update the thread record with actual data
+        long current_pos = ftell(self->file);
+        if (fseek(self->file, thread_record_pos, SEEK_SET) != 0) {
+            PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+            return NULL;
+        }
+
+        thread_record.thread_id = thread_id;
+        thread_record.frame_count = frame_count;
+        if (fwrite(&thread_record, sizeof(ThreadRecord), 1, self->file) != 1) {
+            PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+            return NULL;
+        }
+
+        // Return to end of file
+        if (fseek(self->file, current_pos, SEEK_SET) != 0) {
+            PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+            return NULL;
+        }
+
+        self->thread_count++;
+        
+        PyThreadState ts;
+        if (_Py_RemoteDebug_PagedReadRemoteMemory(
+                &self->handle, current_tstate, self->debug_offsets.thread_state.size, &ts) < 0) {
+            break;
+        }
+        current_tstate = (uintptr_t)ts.next;
+
+        if (!self->all_threads) {
+            break;
+        }
+    }
+
+    // Clear the process memory cache to ensure fresh data on next call
+    _Py_RemoteDebug_ClearCache(&self->handle);
+
+    Py_RETURN_NONE;
+}
+
+/*[clinic input]
+@critical_section  
+_remote_debugging.BinaryStackDumper.close
+Close the dumper and finalize the file
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_BinaryStackDumper_close_impl(BinaryStackDumperObject *self)
+/*[clinic end generated code: output=712959e3d04a3e78 input=2ed07b77fdc1439a]*/
+{
+    if (!self->file) {
+        Py_RETURN_NONE;  // Already closed
+    }
+
+    // Write string table at current position
+    uint64_t string_table_offset = ftell(self->file);
+    
+    // Write string table lengths first
+    if (fwrite(self->string_table->string_lengths, sizeof(uint32_t), 
+               self->string_table->count, self->file) != self->string_table->count) {
+        PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+        return NULL;
+    }
+    
+    // Write string data
+    for (uint32_t i = 0; i < self->string_table->count; i++) {
+        if (fwrite(self->string_table->strings[i], 1, 
+                   self->string_table->string_lengths[i] + 1, self->file) != 
+            self->string_table->string_lengths[i] + 1) {
+            PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+            return NULL;
+        }
+    }
+
+    // Calculate string table size
+    uint32_t string_table_size = self->string_table->count * sizeof(uint32_t) + 
+                                 self->string_table->total_size;
+
+    // Go back to beginning and write final header
+    if (fseek(self->file, 0, SEEK_SET) != 0) {
+        PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+        return NULL;
+    }
+
+    BinaryHeader final_header = {
+        .magic = BINARY_MAGIC,
+        .version = BINARY_VERSION,
+        .string_table_offset = string_table_offset,
+        .string_table_size = string_table_size,
+        .thread_count = self->thread_count
+    };
+    
+    if (fwrite(&final_header, sizeof(BinaryHeader), 1, self->file) != 1) {
+        PyErr_SetFromErrnoWithFilename(PyExc_IOError, self->filename);
+        return NULL;
+    }
+
+    fclose(self->file);
+    self->file = NULL;
+
+    Py_RETURN_NONE;
+}
+
+static void
+BinaryStackDumper_dealloc(BinaryStackDumperObject *self)
+{
+    PyTypeObject *tp = Py_TYPE(self);
+    
+    if (self->file) {
+        fclose(self->file);
+    }
+    
+    if (self->handle.pid != 0) {
+        _Py_RemoteDebug_CleanupProcHandle(&self->handle);
+    }
+    
+    if (self->string_table) {
+        string_table_destroy(self->string_table);
+    }
+    
+    if (self->code_object_cache) {
+        _Py_hashtable_destroy(self->code_object_cache);
+    }
+    
+    if (self->filename) {
+        PyMem_RawFree(self->filename);
+    }
+    
+    PyObject_Del(self);
+    Py_DECREF(tp);
+}
+
+
+static PyMethodDef BinaryStackDumper_methods[] = {
+    _REMOTE_DEBUGGING_BINARYSTACKDUMPER_DUMP_THREAD_METHODDEF
+    _REMOTE_DEBUGGING_BINARYSTACKDUMPER_CLOSE_METHODDEF
+    {NULL, NULL}
+};
+
+static PyType_Slot BinaryStackDumper_slots[] = {
+    {Py_tp_doc, (void *)"BinaryStackDumper(filename): Efficient binary stack trace dumper."},
+    {Py_tp_methods, BinaryStackDumper_methods},
+    {Py_tp_init, _remote_debugging_BinaryStackDumper___init__},
+    {Py_tp_dealloc, BinaryStackDumper_dealloc},
+    {0, NULL}
+};
+
+static PyType_Spec BinaryStackDumper_spec = {
+    .name = "_remote_debugging.BinaryStackDumper",
+    .basicsize = sizeof(BinaryStackDumperObject),
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = BinaryStackDumper_slots,
+};
+
+/* ============================================================================
+ * BINARY READING FUNCTIONS
+ * ============================================================================ */
+
+/* ============================================================================
+ * UPDATED BINARY READING FUNCTION
+ * ============================================================================ */
+
+static PyObject*
+read_binary_dump(const char *filename)
+{
+    FILE *file = fopen(filename, "rb");
+    if (!file) {
+        PyErr_SetFromErrnoWithFilename(PyExc_IOError, filename);
+        return NULL;
+    }
+
+    // Read header
+    BinaryHeader header;
+    if (fread(&header, sizeof(BinaryHeader), 1, file) != 1) {
+        fclose(file);
+        PyErr_SetString(PyExc_IOError, "Failed to read header");
+        return NULL;
+    }
+
+    if (header.magic != BINARY_MAGIC) {
+        fclose(file);
+        PyErr_SetString(PyExc_ValueError, "Invalid file format");
+        return NULL;
+    }
+
+    if (header.version != BINARY_VERSION) {
+        fclose(file);
+        PyErr_SetString(PyExc_ValueError, "Unsupported file version");
+        return NULL;
+    }
+
+    // Read string table first
+    if (fseek(file, header.string_table_offset, SEEK_SET) != 0) {
+        fclose(file);
+        PyErr_SetString(PyExc_IOError, "Failed to seek to string table");
+        return NULL;
+    }
+
+    // Calculate string count from table size
+    uint32_t string_count = 0;
+    if (header.string_table_size >= sizeof(uint32_t)) {
+        // Count how many length entries we can fit
+        uint32_t lengths_size = 0;
+        uint32_t data_size = 0;
+        
+        // Read lengths to count strings
+        long pos = ftell(file);
+        while (lengths_size + sizeof(uint32_t) <= header.string_table_size) {
+            uint32_t len;
+            if (fread(&len, sizeof(uint32_t), 1, file) != 1) {
+                break;
+            }
+            lengths_size += sizeof(uint32_t);
+            data_size += len + 1; // +1 for null terminator
+            
+            if (lengths_size + data_size > header.string_table_size) {
+                break;
+            }
+            
+            string_count++;
+        }
+        
+        // Go back to start of string table
+        if (fseek(file, pos, SEEK_SET) != 0) {
+            fclose(file);
+            PyErr_SetString(PyExc_IOError, "Failed to seek back to string table");
+            return NULL;
+        }
+    }
+
+    uint32_t *string_lengths = PyMem_RawMalloc(string_count * sizeof(uint32_t));
+    if (!string_lengths) {
+        fclose(file);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    if (fread(string_lengths, sizeof(uint32_t), string_count, file) != string_count) {
+        PyMem_RawFree(string_lengths);
+        fclose(file);
+        PyErr_SetString(PyExc_IOError, "Failed to read string lengths");
+        return NULL;
+    }
+
+    // Build string table
+    PyObject **strings = PyMem_RawMalloc(string_count * sizeof(PyObject*));
+    if (!strings) {
+        PyMem_RawFree(string_lengths);
+        fclose(file);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < string_count; i++) {
+        char *str_buf = PyMem_RawMalloc(string_lengths[i] + 1);
+        if (!str_buf) {
+            // Cleanup already created strings
+            for (uint32_t j = 0; j < i; j++) {
+                Py_DECREF(strings[j]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            PyErr_NoMemory();
+            return NULL;
+        }
+
+        if (fread(str_buf, 1, string_lengths[i] + 1, file) != string_lengths[i] + 1) {
+            PyMem_RawFree(str_buf);
+            // Cleanup already created strings
+            for (uint32_t j = 0; j < i; j++) {
+                Py_DECREF(strings[j]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            PyErr_SetString(PyExc_IOError, "Failed to read string data");
+            return NULL;
+        }
+
+        strings[i] = PyUnicode_FromStringAndSize(str_buf, string_lengths[i]);
+        PyMem_RawFree(str_buf);
+        
+        if (!strings[i]) {
+            // Cleanup already created strings
+            for (uint32_t j = 0; j < i; j++) {
+                Py_DECREF(strings[j]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            return NULL;
+        }
+    }
+
+    // Now read thread data sequentially from start of file (after header)
+    if (fseek(file, sizeof(BinaryHeader), SEEK_SET) != 0) {
+        // Cleanup
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_RawFree(strings);
+        PyMem_RawFree(string_lengths);
+        fclose(file);
+        PyErr_SetString(PyExc_IOError, "Failed to seek to thread data");
+        return NULL;
+    }
+
+    PyObject *result = PyList_New(0);
+    if (!result) {
+        // Cleanup
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_RawFree(strings);
+        PyMem_RawFree(string_lengths);
+        fclose(file);
+        return NULL;
+    }
+
+    // Read threads sequentially
+    for (uint32_t t = 0; t < header.thread_count; t++) {
+        // Read thread record
+        ThreadRecord thread_record;
+        if (fread(&thread_record, sizeof(ThreadRecord), 1, file) != 1) {
+            Py_DECREF(result);
+            // Cleanup
+            for (uint32_t i = 0; i < string_count; i++) {
+                Py_DECREF(strings[i]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            PyErr_SetString(PyExc_IOError, "Failed to read thread record");
+            return NULL;
+        }
+
+        // Read frame data for this thread
+        FrameData *frames = PyMem_RawMalloc(thread_record.frame_count * sizeof(FrameData));
+        if (!frames && thread_record.frame_count > 0) {
+            Py_DECREF(result);
+            // Cleanup
+            for (uint32_t i = 0; i < string_count; i++) {
+                Py_DECREF(strings[i]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            PyErr_NoMemory();
+            return NULL;
+        }
+
+        if (thread_record.frame_count > 0) {
+            if (fread(frames, sizeof(FrameData), thread_record.frame_count, file) != thread_record.frame_count) {
+                PyMem_RawFree(frames);
+                Py_DECREF(result);
+                // Cleanup
+                for (uint32_t i = 0; i < string_count; i++) {
+                    Py_DECREF(strings[i]);
+                }
+                PyMem_RawFree(strings);
+                PyMem_RawFree(string_lengths);
+                fclose(file);
+                PyErr_SetString(PyExc_IOError, "Failed to read frame data");
+                return NULL;
+            }
+        }
+
+        // Build Python objects for this thread
+        PyObject *thread_id_obj = PyLong_FromLongLong(thread_record.thread_id);
+        PyObject *frame_list = PyList_New(0);
+        
+        if (!thread_id_obj || !frame_list) {
+            Py_XDECREF(thread_id_obj);
+            Py_XDECREF(frame_list);
+            if (frames) PyMem_RawFree(frames);
+            Py_DECREF(result);
+            // Cleanup
+            for (uint32_t i = 0; i < string_count; i++) {
+                Py_DECREF(strings[i]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            return NULL;
+        }
+
+        for (uint32_t f = 0; f < thread_record.frame_count; f++) {
+            if (frames[f].func_name_index >= string_count || 
+                frames[f].file_name_index >= string_count) {
+                Py_DECREF(thread_id_obj);
+                Py_DECREF(frame_list);
+                PyMem_RawFree(frames);
+                Py_DECREF(result);
+                // Cleanup
+                for (uint32_t i = 0; i < string_count; i++) {
+                    Py_DECREF(strings[i]);
+                }
+                PyMem_RawFree(strings);
+                PyMem_RawFree(string_lengths);
+                fclose(file);
+                PyErr_SetString(PyExc_ValueError, "Invalid string index in frame data");
+                return NULL;
+            }
+
+            PyObject *func_name = strings[frames[f].func_name_index];
+            PyObject *file_name = strings[frames[f].file_name_index];
+            PyObject *lineno = PyLong_FromLong(frames[f].lineno);
+            
+            PyObject *frame_tuple = PyTuple_New(3);
+            if (!lineno || !frame_tuple) {
+                Py_XDECREF(lineno);
+                Py_XDECREF(frame_tuple);
+                Py_DECREF(thread_id_obj);
+                Py_DECREF(frame_list);
+                PyMem_RawFree(frames);
+                Py_DECREF(result);
+                // Cleanup
+                for (uint32_t i = 0; i < string_count; i++) {
+                    Py_DECREF(strings[i]);
+                }
+                PyMem_RawFree(strings);
+                PyMem_RawFree(string_lengths);
+                fclose(file);
+                return NULL;
+            }
+            
+            Py_INCREF(func_name);
+            Py_INCREF(file_name);
+            PyTuple_SET_ITEM(frame_tuple, 0, func_name);
+            PyTuple_SET_ITEM(frame_tuple, 1, file_name);
+            PyTuple_SET_ITEM(frame_tuple, 2, lineno);
+            
+            if (PyList_Append(frame_list, frame_tuple) == -1) {
+                Py_DECREF(frame_tuple);
+                Py_DECREF(thread_id_obj);
+                Py_DECREF(frame_list);
+                PyMem_RawFree(frames);
+                Py_DECREF(result);
+                // Cleanup
+                for (uint32_t i = 0; i < string_count; i++) {
+                    Py_DECREF(strings[i]);
+                }
+                PyMem_RawFree(strings);
+                PyMem_RawFree(string_lengths);
+                fclose(file);
+                return NULL;
+            }
+            Py_DECREF(frame_tuple);
+        }
+
+        PyObject *thread_tuple = PyTuple_New(2);
+        if (!thread_tuple) {
+            Py_DECREF(thread_id_obj);
+            Py_DECREF(frame_list);
+            if (frames) PyMem_RawFree(frames);
+            Py_DECREF(result);
+            // Cleanup
+            for (uint32_t i = 0; i < string_count; i++) {
+                Py_DECREF(strings[i]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            return NULL;
+        }
+
+        PyTuple_SET_ITEM(thread_tuple, 0, thread_id_obj);
+        PyTuple_SET_ITEM(thread_tuple, 1, frame_list);
+
+        if (PyList_Append(result, thread_tuple) == -1) {
+            Py_DECREF(thread_tuple);
+            if (frames) PyMem_RawFree(frames);
+            Py_DECREF(result);
+            // Cleanup
+            for (uint32_t i = 0; i < string_count; i++) {
+                Py_DECREF(strings[i]);
+            }
+            PyMem_RawFree(strings);
+            PyMem_RawFree(string_lengths);
+            fclose(file);
+            return NULL;
+        }
+        Py_DECREF(thread_tuple);
+
+        if (frames) PyMem_RawFree(frames);
+    }
+
+    // Cleanup
+    for (uint32_t i = 0; i < string_count; i++) {
+        Py_DECREF(strings[i]);
+    }
+    PyMem_RawFree(strings);
+    PyMem_RawFree(string_lengths);
+    fclose(file);
+
+    return result;
+}
+
+/*[clinic input]
+_remote_debugging.load_stack_trace_binary
+    filename: str
+Load stack trace from binary format
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_load_stack_trace_binary_impl(PyObject *module,
+                                               const char *filename)
+/*[clinic end generated code: output=d0fcad1ac2742f5a input=c685dd27e1e8130c]*/
+{
+    return read_binary_dump(filename);
+}
+
+/* ============================================================================
  * MODULE INITIALIZATION
  * ============================================================================ */
 
@@ -2703,8 +3948,12 @@ _remote_debugging_exec(PyObject *m)
     } while (0)
 
     CREATE_TYPE(m, st->RemoteDebugging_Type, &RemoteUnwinder_spec);
+    CREATE_TYPE(m, st->BinaryStackDumper_Type, &BinaryStackDumper_spec);  // Add this line
 
-   if (PyModule_AddType(m, st->RemoteDebugging_Type) < 0) {
+    if (PyModule_AddType(m, st->RemoteDebugging_Type) < 0) {
+        return -1;
+    }
+    if (PyModule_AddType(m, st->BinaryStackDumper_Type) < 0) {  // Add this block
         return -1;
     }
 #ifdef Py_GIL_DISABLED
@@ -2725,6 +3974,7 @@ remote_debugging_traverse(PyObject *mod, visitproc visit, void *arg)
 {
     RemoteDebuggingState *state = RemoteDebugging_GetState(mod);
     Py_VISIT(state->RemoteDebugging_Type);
+    Py_VISIT(state->BinaryStackDumper_Type);
     return 0;
 }
 
@@ -2733,6 +3983,7 @@ remote_debugging_clear(PyObject *mod)
 {
     RemoteDebuggingState *state = RemoteDebugging_GetState(mod);
     Py_CLEAR(state->RemoteDebugging_Type);
+    Py_CLEAR(state->BinaryStackDumper_Type);  // Add this line
     return 0;
 }
 
@@ -2752,6 +4003,7 @@ static PyModuleDef_Slot remote_debugging_slots[] = {
 static PyMethodDef remote_debugging_methods[] = {
     _REMOTE_DEBUGGING_GET_ASYNC_STACK_TRACE_METHODDEF
     _REMOTE_DEBUGGING_GET_ALL_AWAITED_BY_METHODDEF
+    _REMOTE_DEBUGGING_LOAD_STACK_TRACE_BINARY_METHODDEF  // Add this line
     {NULL, NULL, 0, NULL},
 };
 
