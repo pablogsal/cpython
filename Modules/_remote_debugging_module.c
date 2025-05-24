@@ -1,6 +1,6 @@
 /******************************************************************************
  * Python Remote Debugging Module
- * 
+ *
  * This module provides functionality to debug Python processes remotely by
  * reading their memory and reconstructing stack traces and asyncio task states.
  ******************************************************************************/
@@ -101,7 +101,6 @@ typedef struct {
 typedef struct {
     /* Types */
     PyTypeObject *RemoteDebugging_Type;
-    PyTypeObject *BinaryStackDumper_Type;
 } RemoteDebuggingState;
 
 typedef struct
@@ -156,7 +155,7 @@ parse_task(
     int recurse_task,
     _Py_hashtable_t *code_object_cache
 );
- 
+
 static int
 parse_coro_chain(
     proc_handle_t *handle,
@@ -166,7 +165,7 @@ parse_coro_chain(
     PyObject *render_to,
     _Py_hashtable_t *code_object_cache
 );
- 
+
 /* Forward declarations for task parsing functions */
 static int parse_frame_object(
     proc_handle_t *handle,
@@ -256,34 +255,6 @@ read_char(proc_handle_t *handle, uintptr_t address, char *result)
         return -1;
     }
     return 0;
-}
-
-static int
-read_remote_pointer(proc_handle_t *handle, uintptr_t address, uintptr_t *out_ptr, const char *error_message)
-{
-    int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(handle, address, sizeof(void *), out_ptr);
-    if (bytes_read < 0) {
-        return -1;
-    }
-
-    if ((void *)(*out_ptr) == NULL) {
-        PyErr_SetString(PyExc_RuntimeError, error_message);
-        return -1;
-    }
-
-    return 0;
-}
-
-static int
-read_instruction_ptr(proc_handle_t *handle, const struct _Py_DebugOffsets *offsets,
-                     uintptr_t current_frame, uintptr_t *instruction_ptr)
-{
-    return read_remote_pointer(
-        handle,
-        current_frame + offsets->interpreter_frame.instr_ptr,
-        instruction_ptr,
-        "No instruction ptr found"
-    );
 }
 
 /* ============================================================================
@@ -414,8 +385,8 @@ read_py_long(proc_handle_t *handle, const _Py_DebugOffsets* offsets, uintptr_t a
     // Read the entire PyLongObject at once
     char long_obj[offsets->long_object.size];
     int bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
-        handle, 
-        address, 
+        handle,
+        address,
         offsets->long_object.size,
         long_obj);
     if (bytes_read < 0) {
@@ -622,12 +593,9 @@ static int parse_task_awaited_by(
 ) {
     // Read the entire TaskObj at once
     char task_obj[async_offsets->asyncio_task_object.size];
-    int err = _Py_RemoteDebug_PagedReadRemoteMemory(
-        handle,
-        task_address,
-        async_offsets->asyncio_task_object.size,
-        task_obj);
-    if (err < 0) {
+    if (_Py_RemoteDebug_PagedReadRemoteMemory(handle, task_address,
+                                              async_offsets->asyncio_task_object.size,
+                                              task_obj) < 0) {
         return -1;
     }
 
@@ -641,29 +609,13 @@ static int parse_task_awaited_by(
     char awaited_by_is_a_set = GET_MEMBER(char, task_obj, async_offsets->asyncio_task_object.task_awaited_by_is_set);
 
     if (awaited_by_is_a_set) {
-        if (parse_tasks_in_set(
-            handle,
-            offsets,
-            async_offsets,
-            task_ab_addr,
-            awaited_by,
-            recurse_task,
-            code_object_cache
-        )
-         ) {
+        if (parse_tasks_in_set(handle, offsets, async_offsets, task_ab_addr,
+                               awaited_by, recurse_task, code_object_cache)) {
             return -1;
         }
     } else {
-        if (parse_task(
-            handle,
-            offsets,
-            async_offsets,
-            task_ab_addr,
-            awaited_by,
-            recurse_task,
-            code_object_cache
-        )
-        ) {
+        if (parse_task(handle, offsets, async_offsets, task_ab_addr,
+                       awaited_by, recurse_task, code_object_cache)) {
             return -1;
         }
     }
@@ -691,7 +643,7 @@ handle_yield_from_frame(
     if (err < 0) {
         return -1;
     }
-    
+
     if (GET_MEMBER(char, iframe, offsets->interpreter_frame.owner) != FRAME_OWNED_BY_GENERATOR) {
         PyErr_SetString(
             PyExc_RuntimeError,
@@ -799,7 +751,7 @@ parse_coro_chain(
 
     if (GET_MEMBER(char, gen_object, offsets->gen_object.gi_frame_state) == FRAME_SUSPENDED_YIELD_FROM) {
         return handle_yield_from_frame(
-            handle, offsets, async_offsets, gi_iframe_addr, 
+            handle, offsets, async_offsets, gi_iframe_addr,
             gen_type_addr, render_to, code_object_cache);
     }
 
@@ -910,7 +862,7 @@ parse_task(
 
     PyObject* result = NULL;
     if (is_task) {
-        result = create_task_result(handle, offsets, async_offsets, 
+        result = create_task_result(handle, offsets, async_offsets,
                                    task_address, recurse_task, code_object_cache);
         if (!result) {
             return -1;
@@ -1023,7 +975,7 @@ parse_tasks_in_set(
         int result = process_set_entry(
             handle, offsets, async_offsets, table_ptr,
             awaited_by, recurse_task, code_object_cache);
-        
+
         if (result < 0) {
             return -1;
         }
@@ -1138,7 +1090,7 @@ parse_code_object(proc_handle_t *handle,
                   PyObject **result,
                   const struct _Py_DebugOffsets *offsets,
                   uintptr_t address,
-                  uintptr_t current_frame,
+                  uintptr_t instruction_pointer,
                   uintptr_t *previous_frame,
                   _Py_hashtable_t *code_object_cache)
 {
@@ -1157,20 +1109,20 @@ parse_code_object(proc_handle_t *handle,
             return -1;
         }
 
-        PyObject *func = read_py_str(handle, offsets, 
+        PyObject *func = read_py_str(handle, offsets,
             GET_MEMBER(uintptr_t, code_object, offsets->code_object.qualname), 1024);
         if (!func) {
             return -1;
         }
 
-        PyObject *file = read_py_str(handle, offsets, 
+        PyObject *file = read_py_str(handle, offsets,
             GET_MEMBER(uintptr_t, code_object, offsets->code_object.filename), 1024);
         if (!file) {
             Py_DECREF(func);
             return -1;
         }
 
-        PyObject *linetable = read_py_bytes(handle, offsets, 
+        PyObject *linetable = read_py_bytes(handle, offsets,
             GET_MEMBER(uintptr_t, code_object, offsets->code_object.linetable), 4096);
         if (!linetable) {
             Py_DECREF(func);
@@ -1197,13 +1149,9 @@ parse_code_object(proc_handle_t *handle,
             cached_code_metadata_destroy(meta);
             return -1;
         }
-    } 
-
-    // Instruction pointer for the current frame
-    uintptr_t ip = 0;
-    if (read_instruction_ptr(handle, offsets, current_frame, &ip) < 0) {
-        return -1;
     }
+
+    uintptr_t ip = instruction_pointer;
 
     ptrdiff_t addrq = (uint16_t *)ip - (uint16_t *)meta->addr_code_adaptive;
 
@@ -1350,14 +1298,16 @@ parse_frame_from_chunks(
     char *frame = (char *)frame_ptr;
     *previous_frame = GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.previous);
 
-    if (GET_MEMBER(char, frame, offsets->interpreter_frame.owner) >= FRAME_OWNED_BY_INTERPRETER || 
+    if (GET_MEMBER(char, frame, offsets->interpreter_frame.owner) >= FRAME_OWNED_BY_INTERPRETER ||
         !GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.executable)) {
         return 0;
     }
 
+    uintptr_t instruction_pointer = GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.instr_ptr);
+
     return parse_code_object(
-        handle, result, offsets, GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.executable), 
-        address, previous_frame, code_object_cache);
+        handle, result, offsets, GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.executable),
+        instruction_pointer, previous_frame, code_object_cache);
 }
 
 /* ============================================================================
@@ -1395,9 +1345,11 @@ parse_frame_object(
         return 0;
     }
 
+    uintptr_t instruction_pointer = GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.instr_ptr);
+
     return parse_code_object(
-        handle, result, offsets, GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.executable), 
-        address, previous_frame, code_object_cache);
+        handle, result, offsets, GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.executable),
+        instruction_pointer, previous_frame, code_object_cache);
 }
 
 static int
@@ -1424,14 +1376,14 @@ parse_async_frame_object(
 
     *previous_frame = GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.previous);
 
-    if (GET_MEMBER(char, frame, offsets->interpreter_frame.owner) == FRAME_OWNED_BY_CSTACK || 
+    if (GET_MEMBER(char, frame, offsets->interpreter_frame.owner) == FRAME_OWNED_BY_CSTACK ||
         GET_MEMBER(char, frame, offsets->interpreter_frame.owner) == FRAME_OWNED_BY_INTERPRETER) {
         return 0;  // C frame
     }
 
     if (GET_MEMBER(char, frame, offsets->interpreter_frame.owner) != FRAME_OWNED_BY_GENERATOR
         && GET_MEMBER(char, frame, offsets->interpreter_frame.owner) != FRAME_OWNED_BY_THREAD) {
-        PyErr_Format(PyExc_RuntimeError, "Unhandled frame owner %d.\n", 
+        PyErr_Format(PyExc_RuntimeError, "Unhandled frame owner %d.\n",
                     GET_MEMBER(char, frame, offsets->interpreter_frame.owner));
         return -1;
     }
@@ -1443,8 +1395,10 @@ parse_async_frame_object(
         return 0;
     }
 
+    uintptr_t instruction_pointer = GET_MEMBER(uintptr_t, frame, offsets->interpreter_frame.instr_ptr);
+
     if (parse_code_object(
-        handle, result, offsets, *code_object, address, previous_frame, code_object_cache)) {
+        handle, result, offsets, *code_object, instruction_pointer, previous_frame, code_object_cache)) {
         return -1;
     }
 
@@ -1850,7 +1804,7 @@ unwind_stack_for_thread(
             goto error;
         }
 
-        if (PyList_Append(frame_info, frame) == 1) {
+        if (PyList_Append(frame_info, frame) == -1) {
             Py_DECREF(frame);
             goto error;
         }
@@ -1870,6 +1824,7 @@ unwind_stack_for_thread(
     PyObject* thread_id = PyLong_FromLongLong(GET_MEMBER(long, ts, offsets->thread_state.native_thread_id));
     if (thread_id == NULL) {
         Py_DECREF(frame_info);
+        return NULL;
     }
 
     PyObject* result = PyTuple_New(2);
@@ -1975,8 +1930,8 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
     // Check the code object generation
     uint64_t code_object_generation = 0;
     if (_Py_RemoteDebug_PagedReadRemoteMemory(
-        &self->handle, 
-        self->interpreter_addr + self->debug_offsets.interpreter_state.code_object_generation, 
+        &self->handle,
+        self->interpreter_addr + self->debug_offsets.interpreter_state.code_object_generation,
         sizeof(uint64_t), &code_object_generation) < 0) {
         goto exit;
     }
@@ -2006,7 +1961,7 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
     }
 
     while (current_tstate != 0) {
-        PyObject* frame_info = unwind_stack_for_thread(&self->handle, 
+        PyObject* frame_info = unwind_stack_for_thread(&self->handle,
                                                        &current_tstate, &self->debug_offsets,
                                                        self->code_object_cache);
         if (!frame_info) {
@@ -2349,7 +2304,6 @@ remote_debugging_traverse(PyObject *mod, visitproc visit, void *arg)
 {
     RemoteDebuggingState *state = RemoteDebugging_GetState(mod);
     Py_VISIT(state->RemoteDebugging_Type);
-    Py_VISIT(state->BinaryStackDumper_Type);
     return 0;
 }
 
@@ -2358,7 +2312,6 @@ remote_debugging_clear(PyObject *mod)
 {
     RemoteDebuggingState *state = RemoteDebugging_GetState(mod);
     Py_CLEAR(state->RemoteDebugging_Type);
-    Py_CLEAR(state->BinaryStackDumper_Type);  // Add this line
     return 0;
 }
 
