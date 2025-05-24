@@ -211,6 +211,11 @@ typedef struct _Py_DebugOffsets {
         uint64_t gi_frame_state;
     } gen_object;
 
+    struct _llist_node {
+        uint64_t next;
+        uint64_t prev;
+    } llist_node;
+
     struct _debugger_support {
         uint64_t eval_breaker;
         uint64_t remote_debugger_support;
@@ -340,6 +345,10 @@ typedef struct _Py_DebugOffsets {
         .gi_name = offsetof(PyGenObject, gi_name), \
         .gi_iframe = offsetof(PyGenObject, gi_iframe), \
         .gi_frame_state = offsetof(PyGenObject, gi_frame_state), \
+    }, \
+    .llist_node = { \
+        .next = offsetof(struct llist_node, next), \
+        .prev = offsetof(struct llist_node, prev), \
     }, \
     .debugger_support = { \
         .eval_breaker = offsetof(PyThreadState, eval_breaker), \
