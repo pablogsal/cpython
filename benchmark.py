@@ -121,7 +121,7 @@ def benchmark_raw(pid):
     un = _remote_debugging.BinaryStackDumper("results.bin", pid)
 
     try:
-        while True:
+        for _ in range(1000):
             all += 1
             t0 = time.perf_counter()
             try:

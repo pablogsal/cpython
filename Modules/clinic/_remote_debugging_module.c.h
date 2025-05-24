@@ -9,128 +9,6 @@ preserve
 #include "pycore_critical_section.h"// Py_BEGIN_CRITICAL_SECTION()
 #include "pycore_modsupport.h"    // _PyArg_UnpackKeywords()
 
-PyDoc_STRVAR(_remote_debugging_get_all_awaited_by__doc__,
-"get_all_awaited_by($module, /, pid)\n"
-"--\n"
-"\n"
-"Get all tasks and their awaited_by from a given pid");
-
-#define _REMOTE_DEBUGGING_GET_ALL_AWAITED_BY_METHODDEF    \
-    {"get_all_awaited_by", _PyCFunction_CAST(_remote_debugging_get_all_awaited_by), METH_FASTCALL|METH_KEYWORDS, _remote_debugging_get_all_awaited_by__doc__},
-
-static PyObject *
-_remote_debugging_get_all_awaited_by_impl(PyObject *module, int pid);
-
-static PyObject *
-_remote_debugging_get_all_awaited_by(PyObject *module, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
-{
-    PyObject *return_value = NULL;
-    #if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
-
-    #define NUM_KEYWORDS 1
-    static struct {
-        PyGC_Head _this_is_not_used;
-        PyObject_VAR_HEAD
-        Py_hash_t ob_hash;
-        PyObject *ob_item[NUM_KEYWORDS];
-    } _kwtuple = {
-        .ob_base = PyVarObject_HEAD_INIT(&PyTuple_Type, NUM_KEYWORDS)
-        .ob_hash = -1,
-        .ob_item = { &_Py_ID(pid), },
-    };
-    #undef NUM_KEYWORDS
-    #define KWTUPLE (&_kwtuple.ob_base.ob_base)
-
-    #else  // !Py_BUILD_CORE
-    #  define KWTUPLE NULL
-    #endif  // !Py_BUILD_CORE
-
-    static const char * const _keywords[] = {"pid", NULL};
-    static _PyArg_Parser _parser = {
-        .keywords = _keywords,
-        .fname = "get_all_awaited_by",
-        .kwtuple = KWTUPLE,
-    };
-    #undef KWTUPLE
-    PyObject *argsbuf[1];
-    int pid;
-
-    args = _PyArg_UnpackKeywords(args, nargs, NULL, kwnames, &_parser,
-            /*minpos*/ 1, /*maxpos*/ 1, /*minkw*/ 0, /*varpos*/ 0, argsbuf);
-    if (!args) {
-        goto exit;
-    }
-    pid = PyLong_AsInt(args[0]);
-    if (pid == -1 && PyErr_Occurred()) {
-        goto exit;
-    }
-    return_value = _remote_debugging_get_all_awaited_by_impl(module, pid);
-
-exit:
-    return return_value;
-}
-
-PyDoc_STRVAR(_remote_debugging_get_async_stack_trace__doc__,
-"get_async_stack_trace($module, /, pid)\n"
-"--\n"
-"\n"
-"Get the asyncio stack from a given pid");
-
-#define _REMOTE_DEBUGGING_GET_ASYNC_STACK_TRACE_METHODDEF    \
-    {"get_async_stack_trace", _PyCFunction_CAST(_remote_debugging_get_async_stack_trace), METH_FASTCALL|METH_KEYWORDS, _remote_debugging_get_async_stack_trace__doc__},
-
-static PyObject *
-_remote_debugging_get_async_stack_trace_impl(PyObject *module, int pid);
-
-static PyObject *
-_remote_debugging_get_async_stack_trace(PyObject *module, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
-{
-    PyObject *return_value = NULL;
-    #if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
-
-    #define NUM_KEYWORDS 1
-    static struct {
-        PyGC_Head _this_is_not_used;
-        PyObject_VAR_HEAD
-        Py_hash_t ob_hash;
-        PyObject *ob_item[NUM_KEYWORDS];
-    } _kwtuple = {
-        .ob_base = PyVarObject_HEAD_INIT(&PyTuple_Type, NUM_KEYWORDS)
-        .ob_hash = -1,
-        .ob_item = { &_Py_ID(pid), },
-    };
-    #undef NUM_KEYWORDS
-    #define KWTUPLE (&_kwtuple.ob_base.ob_base)
-
-    #else  // !Py_BUILD_CORE
-    #  define KWTUPLE NULL
-    #endif  // !Py_BUILD_CORE
-
-    static const char * const _keywords[] = {"pid", NULL};
-    static _PyArg_Parser _parser = {
-        .keywords = _keywords,
-        .fname = "get_async_stack_trace",
-        .kwtuple = KWTUPLE,
-    };
-    #undef KWTUPLE
-    PyObject *argsbuf[1];
-    int pid;
-
-    args = _PyArg_UnpackKeywords(args, nargs, NULL, kwnames, &_parser,
-            /*minpos*/ 1, /*maxpos*/ 1, /*minkw*/ 0, /*varpos*/ 0, argsbuf);
-    if (!args) {
-        goto exit;
-    }
-    pid = PyLong_AsInt(args[0]);
-    if (pid == -1 && PyErr_Occurred()) {
-        goto exit;
-    }
-    return_value = _remote_debugging_get_async_stack_trace_impl(module, pid);
-
-exit:
-    return return_value;
-}
-
 PyDoc_STRVAR(_remote_debugging_RemoteUnwinder___init____doc__,
 "RemoteUnwinder(pid, *, all_threads=False)\n"
 "--\n"
@@ -408,21 +286,21 @@ _remote_debugging_BinaryStackDumper_close(PyObject *self, PyObject *Py_UNUSED(ig
     return return_value;
 }
 
-PyDoc_STRVAR(_remote_debugging_load_stack_trace_binary__doc__,
-"load_stack_trace_binary($module, /, filename)\n"
+PyDoc_STRVAR(_remote_debugging_load_stack_trace_binary_iter__doc__,
+"load_stack_trace_binary_iter($module, /, filename)\n"
 "--\n"
 "\n"
-"Load stack trace from binary format");
+"Load stack trace from binary format as an iterator that yields one thread at a time");
 
-#define _REMOTE_DEBUGGING_LOAD_STACK_TRACE_BINARY_METHODDEF    \
-    {"load_stack_trace_binary", _PyCFunction_CAST(_remote_debugging_load_stack_trace_binary), METH_FASTCALL|METH_KEYWORDS, _remote_debugging_load_stack_trace_binary__doc__},
-
-static PyObject *
-_remote_debugging_load_stack_trace_binary_impl(PyObject *module,
-                                               const char *filename);
+#define _REMOTE_DEBUGGING_LOAD_STACK_TRACE_BINARY_ITER_METHODDEF    \
+    {"load_stack_trace_binary_iter", _PyCFunction_CAST(_remote_debugging_load_stack_trace_binary_iter), METH_FASTCALL|METH_KEYWORDS, _remote_debugging_load_stack_trace_binary_iter__doc__},
 
 static PyObject *
-_remote_debugging_load_stack_trace_binary(PyObject *module, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
+_remote_debugging_load_stack_trace_binary_iter_impl(PyObject *module,
+                                                    const char *filename);
+
+static PyObject *
+_remote_debugging_load_stack_trace_binary_iter(PyObject *module, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
 {
     PyObject *return_value = NULL;
     #if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
@@ -448,7 +326,7 @@ _remote_debugging_load_stack_trace_binary(PyObject *module, PyObject *const *arg
     static const char * const _keywords[] = {"filename", NULL};
     static _PyArg_Parser _parser = {
         .keywords = _keywords,
-        .fname = "load_stack_trace_binary",
+        .fname = "load_stack_trace_binary_iter",
         .kwtuple = KWTUPLE,
     };
     #undef KWTUPLE
@@ -461,7 +339,7 @@ _remote_debugging_load_stack_trace_binary(PyObject *module, PyObject *const *arg
         goto exit;
     }
     if (!PyUnicode_Check(args[0])) {
-        _PyArg_BadArgument("load_stack_trace_binary", "argument 'filename'", "str", args[0]);
+        _PyArg_BadArgument("load_stack_trace_binary_iter", "argument 'filename'", "str", args[0]);
         goto exit;
     }
     Py_ssize_t filename_length;
@@ -473,9 +351,9 @@ _remote_debugging_load_stack_trace_binary(PyObject *module, PyObject *const *arg
         PyErr_SetString(PyExc_ValueError, "embedded null character");
         goto exit;
     }
-    return_value = _remote_debugging_load_stack_trace_binary_impl(module, filename);
+    return_value = _remote_debugging_load_stack_trace_binary_iter_impl(module, filename);
 
 exit:
     return return_value;
 }
-/*[clinic end generated code: output=282e1afcd910a3b9 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=1427cb03f3b6430e input=a9049054013a1b77]*/
