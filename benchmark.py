@@ -7,12 +7,13 @@ import os
 from collections import defaultdict
 
 class SamplingProfiler:
-    def __init__(self):
-        self.function_stats = defaultdict(lambda: {'sample_count': 0})
+    def __init__(self, include_line_numbers=True):
+        self.function_stats = defaultdict(lambda: {'sample_count': 0, 'line_samples': defaultdict(int)})
         self.total_samples = 0
         self.total_work_time = 0.0  # Time spent sampling + processing
         self.start_time = None
         self.end_time = None
+        self.include_line_numbers = include_line_numbers
 
     def process_stack_trace(self, stack_trace):
         """Process a stack trace sample"""
@@ -29,7 +30,11 @@ class SamplingProfiler:
                 func_key = f"{file_name}({func})"
                 self.function_stats[func_key]['sample_count'] += 1
 
-    def print_results(self):
+                # Track line number samples if enabled
+                if self.include_line_numbers and lineno is not None:
+                    self.function_stats[func_key]['line_samples'][lineno] += 1
+
+    def print_results(self, show_lines=True, max_lines_per_function=5):
         """Print sampling profiler results"""
         if self.total_samples == 0:
             print("No samples collected.")
@@ -44,28 +49,76 @@ class SamplingProfiler:
         print(f"Work time: {self.total_work_time:.3f} seconds")
         print(f"Work rate: {self.total_samples/self.total_work_time:.2f} Hz")
         print(f"Average work time: {(self.total_work_time/self.total_samples)*1e6:.2f} µs")
-        print(f"Functions observed: {len(self.function_stats)}")
-        print(f"\nOrdered by: sample count")
-        print()
-        print(f"{'samples':<10} {'%time':<8} {'sample_hz':<10} function")
+
+        # Sort functions by sample count
+        sorted_functions = sorted(self.function_stats.items(),
+                                key=lambda x: x[1]['sample_count'],
+                                reverse=True)
+
+        print(f"\n{'samples':<10} {'%time':<7} {'sample_hz':<9} function")
         print("-" * 60)
 
-        # Sort by sample count - shows hottest functions
-        sorted_funcs = sorted(self.function_stats.items(),
-                             key=lambda x: x[1]['sample_count'],
-                             reverse=True)
-
-        for func_name, stats in sorted_funcs:
+        for func_name, stats in sorted_functions:
             samples = stats['sample_count']
             percent_time = (samples / total_function_samples) * 100 if total_function_samples > 0 else 0
             sample_rate = samples / wall_time if wall_time > 0 else 0
 
             print(f"{samples:<10} {percent_time:<7.1f}% {sample_rate:<9.1f} {func_name}")
 
+            # Show line number breakdown if enabled and available
+            if show_lines and self.include_line_numbers and stats['line_samples']:
+                # Sort lines by sample count
+                sorted_lines = sorted(stats['line_samples'].items(),
+                                    key=lambda x: x[1],
+                                    reverse=True)
+
+                # Show top N lines for this function
+                lines_shown = 0
+                for line_no, line_samples in sorted_lines:
+                    if lines_shown >= max_lines_per_function:
+                        remaining = len(sorted_lines) - lines_shown
+                        if remaining > 0:
+                            print(f"{'':>12}    ... and {remaining} more lines")
+                        break
+
+                    line_percent = (line_samples / samples) * 100
+                    line_rate = line_samples / wall_time if wall_time > 0 else 0
+                    print(f"{'':>12} L{line_no}: {line_samples} samples ({line_percent:.1f}%, {line_rate:.1f}Hz)")
+                    lines_shown += 1
+
         print("\nInterpretation:")
         print("- 'samples': Number of times function appeared in stack traces")
         print("- '%time': Percentage of samples containing this function")
         print("- 'sample_hz': How often this function was sampled per second")
+        if show_lines:
+            print("- Line numbers show where within each function samples were taken")
+
+    def print_hottest_lines(self, top_n=20):
+        """Print the hottest individual lines across all functions"""
+        all_lines = []
+
+        for func_name, stats in self.function_stats.items():
+            for line_no, line_samples in stats['line_samples'].items():
+                all_lines.append((func_name, line_no, line_samples))
+
+        if not all_lines:
+            print("\nNo line number data available.")
+            return
+
+        # Sort by sample count
+        all_lines.sort(key=lambda x: x[2], reverse=True)
+
+        wall_time = self.end_time - self.start_time if self.start_time and self.end_time else 0
+        total_function_samples = sum(stats['sample_count'] for stats in self.function_stats.values())
+
+        print(f"\nHottest Lines (Top {min(top_n, len(all_lines))}):")
+        print(f"{'samples':<8} {'%time':<7} {'line_hz':<9} function:line")
+        print("-" * 65)
+
+        for func_name, line_no, line_samples in all_lines[:top_n]:
+            percent_time = (line_samples / total_function_samples) * 100 if total_function_samples > 0 else 0
+            line_rate = line_samples / wall_time if wall_time > 0 else 0
+            print(f"{line_samples:<8} {percent_time:<7.1f}% {line_rate:<9.1f} {func_name}:{line_no}")
 
 # Global profiler instance
 profiler = SamplingProfiler()
@@ -107,7 +160,7 @@ def benchmark(unwinder):
                   f"Rate: {work_rate:.1f}Hz | "
                   f"Avg: {avg_work_time_us:.2f}µs")
 
-def sample(unwinder, interval_us):
+def sample(unwinder, interval_us, show_line_details=True):
     """Main sampling profiler"""
     global profiler, shutdown_requested
 
@@ -198,24 +251,32 @@ def sample(unwinder, interval_us):
     print(f"Slow samples: {slow_samples}/{sample_attempts} ({(slow_samples/sample_attempts)*100:.2f}%)")
 
     # Print profiling results
-    profiler.print_results()
+    profiler.print_results(show_lines=show_line_details)
+
+    # Also print hottest individual lines
+    profiler.print_hottest_lines()
 
 def main():
-    parser = argparse.ArgumentParser(description="Remote stack sampler")
+    parser = argparse.ArgumentParser(description="Remote stack sampler", color=True)
     parser.add_argument("pid", type=int, help="PID of the target process")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--benchmark", action="store_true", help="Run in max-speed benchmark mode")
     group.add_argument("--interval", type=float,
                        help="Sampling interval in microseconds (e.g. 1000 for 1ms)")
+    parser.add_argument("--no-lines", action="store_true",
+                       help="Disable line number tracking and display")
 
     args = parser.parse_args()
+
+    global profiler
+    profiler = SamplingProfiler(include_line_numbers=not args.no_lines)
 
     if args.benchmark:
         unwinder = _remote_debugging.RemoteUnwinder(args.pid, all_threads=False)
         benchmark(unwinder)
     else:
         unwinder = _remote_debugging.RemoteUnwinder(args.pid, all_threads=False)
-        sample(unwinder, args.interval)
+        sample(unwinder, args.interval, show_line_details=not args.no_lines)
 
 if __name__ == "__main__":
     main()
