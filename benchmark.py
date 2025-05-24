@@ -2,39 +2,32 @@ import argparse
 import _remote_debugging
 import time
 import signal
+import select
+import os
 from collections import defaultdict
 
 class SamplingProfiler:
     def __init__(self):
-        self.function_stats = defaultdict(lambda: {'ncalls': 0, 'tottime': 0.0})
+        self.function_stats = defaultdict(lambda: {'sample_count': 0})
         self.total_samples = 0
-        self.total_sample_time = 0.0
-        self.total_processing_time = 0.0
+        self.total_work_time = 0.0  # Time spent sampling + processing
         self.start_time = None
         self.end_time = None
 
-    def add_sample(self, stack_trace, sample_time):
-        """Add a stack trace sample and aggregate immediately"""
-        process_start = time.perf_counter()
-
+    def process_stack_trace(self, stack_trace):
+        """Process a stack trace sample"""
         self.total_samples += 1
-        self.total_sample_time += sample_time
 
         for thread_id, frames in stack_trace:
             if not frames:
                 continue
 
-            # Aggregate by function name (not line number)
+            # Count each function in the stack trace
             for func, file, lineno in frames:
                 # Extract just filename and function name
                 file_name = file.split('/')[-1] if '/' in file else file
                 func_key = f"{file_name}({func})"
-
-                self.function_stats[func_key]['ncalls'] += 1
-                self.function_stats[func_key]['tottime'] += sample_time
-
-        process_end = time.perf_counter()
-        self.total_processing_time += (process_end - process_start)
+                self.function_stats[func_key]['sample_count'] += 1
 
     def print_results(self):
         """Print sampling profiler results"""
@@ -43,42 +36,35 @@ class SamplingProfiler:
             return
 
         wall_time = self.end_time - self.start_time if self.start_time and self.end_time else 0
-        total_function_calls = sum(stats['ncalls'] for stats in self.function_stats.values())
+        total_function_samples = sum(stats['sample_count'] for stats in self.function_stats.values())
 
         print(f"\nSampling Profiler Results")
         print(f"Total samples: {self.total_samples}")
         print(f"Wall time: {wall_time:.3f} seconds")
-        print(f"Sample rate: {self.total_samples/wall_time:.2f} Hz")
-        print(f"Sample time: {self.total_sample_time:.3f} seconds")
-        print(f"Processing time: {self.total_processing_time:.3f} seconds")
-        print(f"Avg sample+processing: {((self.total_sample_time + self.total_processing_time)/self.total_samples)*1e6:.2f} µs")
+        print(f"Work time: {self.total_work_time:.3f} seconds")
+        print(f"Work rate: {self.total_samples/self.total_work_time:.2f} Hz")
+        print(f"Average work time: {(self.total_work_time/self.total_samples)*1e6:.2f} µs")
         print(f"Functions observed: {len(self.function_stats)}")
-        print(f"\nOrdered by: sample count (time spent)")
+        print(f"\nOrdered by: sample count")
         print()
-        print(f"{'samples':<10} {'%time':<8} {'avg_ms':<8} {'sample_hz':<10} function")
-        print("-" * 70)
+        print(f"{'samples':<10} {'%time':<8} {'sample_hz':<10} function")
+        print("-" * 60)
 
-        # Sort by sample count (ncalls) - this shows where most time is spent
+        # Sort by sample count - shows hottest functions
         sorted_funcs = sorted(self.function_stats.items(),
-                             key=lambda x: x[1]['ncalls'],
+                             key=lambda x: x[1]['sample_count'],
                              reverse=True)
 
         for func_name, stats in sorted_funcs:
-            samples = stats['ncalls']
-            sample_time = stats['tottime']
-
-            # Calculate meaningful metrics
-            percent_time = (samples / total_function_calls) * 100 if total_function_calls > 0 else 0
-            avg_sample_time_ms = (sample_time / samples * 1000) if samples > 0 else 0
+            samples = stats['sample_count']
+            percent_time = (samples / total_function_samples) * 100 if total_function_samples > 0 else 0
             sample_rate = samples / wall_time if wall_time > 0 else 0
 
-            print(f"{samples:<10} {percent_time:<7.1f}% {avg_sample_time_ms:<7.3f} "
-                  f"{sample_rate:<9.1f} {func_name}")
+            print(f"{samples:<10} {percent_time:<7.1f}% {sample_rate:<9.1f} {func_name}")
 
         print("\nInterpretation:")
         print("- 'samples': Number of times function appeared in stack traces")
-        print("- '%time': Percentage of total execution time spent in this function")
-        print("- 'avg_ms': Average time to collect a sample when in this function")
+        print("- '%time': Percentage of samples containing this function")
         print("- 'sample_hz': How often this function was sampled per second")
 
 # Global profiler instance
@@ -91,125 +77,125 @@ def signal_handler(sig, frame):
     shutdown_requested = True
 
 def benchmark(unwinder):
-    all = 0
-    fail = 0
-    total_time = 0.0
+    """Benchmark mode - measure raw sampling speed"""
+    sample_count = 0
+    fail_count = 0
+    total_work_time = 0.0
+
+    print("Benchmarking sampling speed...")
+
     while True:
-        all += 1
-        t0 = time.perf_counter()
-        n_frames = 1
+        work_start = time.perf_counter()
         try:
-            n_frames = len(unwinder.get_stack_trace()[0][1]) + 1
+            stack_trace = unwinder.get_stack_trace()
+            if stack_trace:
+                sample_count += 1
         except (OSError, RuntimeError, UnicodeDecodeError) as e:
-            print(e)
-            fail += 1
-        t1 = time.perf_counter()
-        total_time += (t1 - t0)
-        success = all - fail
-        avg_us = (total_time / all) * 1e6 if all else 0.0
-        print(f"Average interval: {avg_us:.2f} µs | "
-            f"Average interval: {all/total_time:.2f}Hz "
-            f"Average interval per frame: {avg_us/n_frames:.2f} µs | "
-            f"Success rate: {(success / all) * 100:.2f}%")
+            fail_count += 1
 
-def benchmark_raw(pid):
-    print("Raw benchmark mode doesn't collect stack traces for profiling.")
-    # Keep original raw benchmark logic
-    all = 0
-    fail = 0
-    total_time = 0.0
-    un = _remote_debugging.BinaryStackDumper("results.bin", pid)
+        work_end = time.perf_counter()
+        total_work_time += (work_end - work_start)
 
-    try:
-        for _ in range(1000):
-            all += 1
-            t0 = time.perf_counter()
-            try:
-                un.dump_thread()
-            except (OSError, RuntimeError, UnicodeDecodeError) as e:
-                print(e)
-                fail += 1
-            t1 = time.perf_counter()
-            total_time += (t1 - t0)
-            success = all - fail
-            avg_us = (total_time / all) * 1e6 if all else 0.0
-            print(f"Average interval: {avg_us:.2f} µs | "
-                f"Average interval: {all/total_time:.2f}Hz "
-                f"Success rate: {(success / all) * 100:.2f}%")
-    finally:
-        un.close()
+        total_attempts = sample_count + fail_count
+        if total_attempts % 10000 == 0:
+            avg_work_time_us = (total_work_time / total_attempts) * 1e6
+            work_rate = total_attempts / total_work_time if total_work_time > 0 else 0
+            success_rate = (sample_count / total_attempts) * 100
+
+            print(f"Attempts: {total_attempts} | "
+                  f"Success: {success_rate:.1f}% | "
+                  f"Rate: {work_rate:.1f}Hz | "
+                  f"Avg: {avg_work_time_us:.2f}µs")
 
 def sample(unwinder, interval_us):
+    """Main sampling profiler"""
     global profiler, shutdown_requested
 
     print("Starting profiling sampler... Press Ctrl+C to stop and see results.")
     signal.signal(signal.SIGINT, signal_handler)
 
     interval_sec = interval_us / 1e6
-    all = 0
-    fail = 0
-    slow = 0
+    sample_attempts = 0
+    failed_samples = 0
+    slow_samples = 0
 
     profiler.start_time = time.perf_counter()
 
     try:
+        loop_time = 0
         while not shutdown_requested:
-            all += 1
-            t0 = time.perf_counter()
+            sample_attempts += 1
+
+            # Measure work time (sampling + processing)
+            work_start = time.perf_counter()
+
             try:
                 stack_trace = unwinder.get_stack_trace()
-                t1 = time.perf_counter()
-                sample_time = t1 - t0
-
                 if stack_trace:
-                    profiler.add_sample(stack_trace, sample_time)
+                    profiler.process_stack_trace(stack_trace)
 
             except (OSError, RuntimeError, UnicodeDecodeError) as e:
-                fail += 1
-                t1 = time.perf_counter()
+                failed_samples += 1
 
-            elapsed = t1 - t0
-            if elapsed > interval_sec:
-                slow += 1
+            work_end = time.perf_counter()
+            work_time = work_end - work_start
+            profiler.total_work_time += work_time
 
-            # Print progress stats every 100 samples
-            if all % 100 == 0:
+            # Track slow samples
+            if work_time > interval_sec:
+                slow_samples += 1
+
+            # Progress update every 100 attempts
+            if sample_attempts % 100 == 0:
                 wall_time = time.perf_counter() - profiler.start_time
-                success = all - fail
-                sample_rate = profiler.total_samples / wall_time if wall_time > 0 else 0
-                avg_sample_processing = ((profiler.total_sample_time + profiler.total_processing_time) / profiler.total_samples * 1e6) if profiler.total_samples > 0 else 0
+                success_rate = ((sample_attempts - failed_samples) / sample_attempts) * 100
+                avg_work_time_us = (profiler.total_work_time / sample_attempts) * 1e6
+                work_rate = sample_attempts / profiler.total_work_time if profiler.total_work_time > 0 else 0
 
                 print(f"Samples: {profiler.total_samples} | "
-                      f"Rate: {sample_rate:.1f}Hz | "
-                      f"Success: {(success/all)*100:.1f}% | "
-                      f"Avg: {avg_sample_processing:.1f}µs | "
-                      f"Slow: {slow}/{all} | "
+                      f"Rate: {work_rate:.1f}Hz | "
+                      f"Success: {success_rate:.1f}% | "
+                      f"Avg: {avg_work_time_us:.1f}µs | "
+                      f"Slow: {slow_samples}/{sample_attempts} | "
+                      f"Work time: {work_time/1e-6:.3f}µs | "
+                      f"Loop time: {loop_time/1e-6:.3f}µs | "
                       f"Functions: {len(profiler.function_stats)}")
 
-            if all > 1000 and (slow / all) > 0.90:
+            # Exit if too many slow samples
+            if sample_attempts > 20000 and (slow_samples / sample_attempts) > 0.90:
                 raise RuntimeError("More than 90% of samples exceeded the requested interval")
 
-            sleep_time = interval_sec - elapsed
+            # Sleep to maintain sampling interval
+            sleep_time = interval_sec - work_time
+            # For some reason sleeping causes the CPU to go slower and the profiler to be less accurate
             if sleep_time > 0:
-                time.sleep(sleep_time)
+                start = time.perf_counter()
+                while time.perf_counter() - start < sleep_time:
+                    os.sched_yield()
+            loop_time = time.perf_counter() - work_start
 
     except KeyboardInterrupt:
         pass
 
     profiler.end_time = time.perf_counter()
 
-    # Print sampling statistics
+    # Final statistics
     wall_time = profiler.end_time - profiler.start_time
-    success = all - fail
+    successful_samples = sample_attempts - failed_samples
+    success_rate = (successful_samples / sample_attempts) * 100 if sample_attempts > 0 else 0
+    avg_work_time_us = (profiler.total_work_time / sample_attempts) * 1e6 if sample_attempts > 0 else 0
+    work_rate = sample_attempts / profiler.total_work_time if profiler.total_work_time > 0 else 0
 
     print(f"\nSampling Summary:")
-    print(f"Total sample attempts: {all}")
-    print(f"Failed samples: {fail}")
-    print(f"Successful samples: {profiler.total_samples}")
-    print(f"Success rate: {(success / all) * 100:.2f}%")
+    print(f"Sample attempts: {sample_attempts}")
+    print(f"Successful samples: {successful_samples}")
+    print(f"Failed samples: {failed_samples}")
+    print(f"Success rate: {success_rate:.2f}%")
     print(f"Wall time: {wall_time:.3f} seconds")
-    print(f"Sample rate: {profiler.total_samples/wall_time:.2f} Hz")
-    print(f"Slow samples: {slow}/{all} ({(slow / all) * 100:.2f}%)")
+    print(f"Work time: {profiler.total_work_time:.3f} seconds")
+    print(f"Work rate: {work_rate:.2f} Hz")
+    print(f"Average work time: {avg_work_time_us:.2f} µs")
+    print(f"Slow samples: {slow_samples}/{sample_attempts} ({(slow_samples/sample_attempts)*100:.2f}%)")
 
     # Print profiling results
     profiler.print_results()
@@ -219,15 +205,12 @@ def main():
     parser.add_argument("pid", type=int, help="PID of the target process")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--benchmark", action="store_true", help="Run in max-speed benchmark mode")
-    group.add_argument("--benchmark-raw", action="store_true", help="Run in max-speed raw benchmark mode")
     group.add_argument("--interval", type=float,
                        help="Sampling interval in microseconds (e.g. 1000 for 1ms)")
 
     args = parser.parse_args()
 
-    if args.benchmark_raw:
-        benchmark_raw(args.pid)
-    elif args.benchmark:
+    if args.benchmark:
         unwinder = _remote_debugging.RemoteUnwinder(args.pid, all_threads=False)
         benchmark(unwinder)
     else:
