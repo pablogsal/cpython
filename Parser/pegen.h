@@ -91,6 +91,13 @@ typedef struct {
     int call_invalid_rules;
     int debug;
     location last_stmt_location;
+    int current_rule;
+    // New fields for CSV logging
+    FILE *csv_file;
+    char *current_filename;
+    // High-precision start time for CSV logging
+    long start_time_sec;
+    long start_time_nsec;
 } Parser;
 
 typedef struct {

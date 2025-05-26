@@ -684,6 +684,7 @@ class CParserGenerator(ParserGenerator, GrammarVisitor):
                 self.print("p->call_invalid_rules = 0;")
                 self.cleanup_statements.append("p->call_invalid_rules = _prev_call_invalid;")
 
+        self.print(f"p->current_rule = (int){node.name}_type;")
         if is_loop:
             self._handle_loop_rule_body(node, rhs)
         else:

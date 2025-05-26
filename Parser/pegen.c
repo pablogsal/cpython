@@ -6,6 +6,9 @@
 #include "pycore_runtime.h"     // _PyRuntime
 #include "pycore_unicodeobject.h" // _PyUnicode_InternImmortal
 #include <errcode.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 
 #include "lexer/lexer.h"
 #include "tokenizer/tokenizer.h"
@@ -428,8 +431,27 @@ _PyPegen_expect_token(Parser *p, int type)
         }
     }
     Token *t = p->tokens[p->mark];
-    if (t->type != type) {
-       return NULL;
+    int success = (t->type == type);
+    
+    // Write to CSV file if it's open
+    if (p->csv_file) {
+        struct timespec ts_now;
+        clock_gettime(CLOCK_MONOTONIC, &ts_now);
+        long sec_diff = ts_now.tv_sec - p->start_time_sec;
+        long nsec_diff = ts_now.tv_nsec - p->start_time_nsec;
+        if (nsec_diff < 0) {
+            sec_diff--;
+            nsec_diff += 1000000000L;
+        }
+        // Print as seconds.nanoseconds
+        double elapsed = sec_diff + nsec_diff / 1e9;
+        int token_number = t ? t->type : 0;
+        fprintf(p->csv_file, "%.9f,%d,%d,%d\n", elapsed, token_number, p->current_rule, success);
+        fflush(p->csv_file);
+    }
+    
+    if (!success) {
+        return NULL;
     }
     p->mark += 1;
     return t;
@@ -823,6 +845,7 @@ _PyPegen_Parser_New(struct tok_state *tok, int start_rule, int flags,
     assert(tok != NULL);
     tok->type_comments = (flags & PyPARSE_TYPE_COMMENTS) > 0;
     p->tok = tok;
+    p->current_rule = 0;
     p->keywords = NULL;
     p->n_keyword_lists = -1;
     p->soft_keywords = NULL;
@@ -869,6 +892,50 @@ _PyPegen_Parser_New(struct tok_state *tok, int start_rule, int flags,
 #ifdef Py_DEBUG
     p->debug = _Py_GetConfig()->parser_debug;
 #endif
+
+    // Initialize CSV logging
+    p->csv_file = NULL;
+    p->current_filename = NULL;
+    if (tok->filename) {
+        const char *filename = PyUnicode_AsUTF8(tok->filename);
+        if (filename) {
+            // Optionally sanitize filename here if needed
+            // Create 'music' directory if it doesn't exist
+            struct stat st = {0};
+            if (stat("music", &st) == -1) {
+                mkdir("music", 0777);
+            }
+            char csv_filename[512];
+            snprintf(csv_filename, sizeof(csv_filename), "music/music_for_%s.csv", filename);
+            // Replace all path separators with underscores in csv_filename except the first one
+            int replace_count = 0;
+            for (char *p = csv_filename + 1; *p; p++) {
+                if (*p == '/') {
+                    if (replace_count > 0) {
+                        *p = '_';
+                    }
+                    replace_count++;
+                }
+            }
+            printf("filename: %s\n", csv_filename);
+            p->csv_file = fopen(csv_filename, "w");
+            if (p->csv_file) {
+                // Write CSV header
+                fprintf(p->csv_file, "TIMESTAMP,TOKEN,PARSER_RULE,success_status\n");
+                size_t len = strlen(filename) + 1;
+                p->current_filename = PyMem_Malloc(len);
+                if (p->current_filename) {
+                    strcpy(p->current_filename, filename);
+                }
+            }
+        }
+    }
+
+    struct timespec ts_start;
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+    p->start_time_sec = ts_start.tv_sec;
+    p->start_time_nsec = ts_start.tv_nsec;
+
     return p;
 }
 
@@ -881,6 +948,16 @@ _PyPegen_Parser_Free(Parser *p)
     }
     PyMem_Free(p->tokens);
     growable_comment_array_deallocate(&p->type_ignore_comments);
+    
+    // Close CSV file if open
+    if (p->csv_file) {
+        fclose(p->csv_file);
+        p->csv_file = NULL;
+    }
+    if (p->current_filename) {
+        PyMem_Free(p->current_filename);
+    }
+    
     PyMem_Free(p);
 }
 

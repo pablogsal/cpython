@@ -977,6 +977,7 @@ static void *_tmp_176_rule(Parser *p);
 static mod_ty
 file_rule(Parser *p)
 {
+p->current_rule = (int)file_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1023,6 +1024,7 @@ file_rule(Parser *p)
 static mod_ty
 interactive_rule(Parser *p)
 {
+p->current_rule = (int)interactive_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1066,6 +1068,7 @@ interactive_rule(Parser *p)
 static mod_ty
 eval_rule(Parser *p)
 {
+p->current_rule = (int)eval_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1115,6 +1118,7 @@ eval_rule(Parser *p)
 static mod_ty
 func_type_rule(Parser *p)
 {
+p->current_rule = (int)func_type_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1176,6 +1180,7 @@ func_type_rule(Parser *p)
 static asdl_stmt_seq*
 statements_rule(Parser *p)
 {
+p->current_rule = (int)statements_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1219,6 +1224,7 @@ statements_rule(Parser *p)
 static asdl_stmt_seq*
 statement_rule(Parser *p)
 {
+p->current_rule = (int)statement_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1286,6 +1292,7 @@ statement_rule(Parser *p)
 static asdl_stmt_seq*
 single_compound_stmt_rule(Parser *p)
 {
+p->current_rule = (int)single_compound_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1329,6 +1336,7 @@ single_compound_stmt_rule(Parser *p)
 static asdl_stmt_seq*
 statement_newline_rule(Parser *p)
 {
+p->current_rule = (int)statement_newline_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1460,6 +1468,7 @@ statement_newline_rule(Parser *p)
 static asdl_stmt_seq*
 simple_stmts_rule(Parser *p)
 {
+p->current_rule = (int)simple_stmts_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1553,6 +1562,7 @@ simple_stmts_rule(Parser *p)
 static stmt_ty
 simple_stmt_rule(Parser *p)
 {
+p->current_rule = (int)simple_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -1898,6 +1908,7 @@ simple_stmt_rule(Parser *p)
 static stmt_ty
 compound_stmt_rule(Parser *p)
 {
+p->current_rule = (int)compound_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2088,6 +2099,7 @@ compound_stmt_rule(Parser *p)
 static stmt_ty
 assignment_rule(Parser *p)
 {
+p->current_rule = (int)assignment_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2306,6 +2318,7 @@ assignment_rule(Parser *p)
 static expr_ty
 annotated_rhs_rule(Parser *p)
 {
+p->current_rule = (int)annotated_rhs_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2376,6 +2389,7 @@ annotated_rhs_rule(Parser *p)
 static AugOperator*
 augassign_rule(Parser *p)
 {
+p->current_rule = (int)augassign_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2707,6 +2721,7 @@ augassign_rule(Parser *p)
 static stmt_ty
 return_stmt_rule(Parser *p)
 {
+p->current_rule = (int)return_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2771,6 +2786,7 @@ return_stmt_rule(Parser *p)
 static stmt_ty
 raise_stmt_rule(Parser *p)
 {
+p->current_rule = (int)raise_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2871,6 +2887,7 @@ raise_stmt_rule(Parser *p)
 static stmt_ty
 pass_stmt_rule(Parser *p)
 {
+p->current_rule = (int)pass_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2932,6 +2949,7 @@ pass_stmt_rule(Parser *p)
 static stmt_ty
 break_stmt_rule(Parser *p)
 {
+p->current_rule = (int)break_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -2993,6 +3011,7 @@ break_stmt_rule(Parser *p)
 static stmt_ty
 continue_stmt_rule(Parser *p)
 {
+p->current_rule = (int)continue_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3054,6 +3073,7 @@ continue_stmt_rule(Parser *p)
 static stmt_ty
 global_stmt_rule(Parser *p)
 {
+p->current_rule = (int)global_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3118,6 +3138,7 @@ global_stmt_rule(Parser *p)
 static stmt_ty
 nonlocal_stmt_rule(Parser *p)
 {
+p->current_rule = (int)nonlocal_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3182,6 +3203,7 @@ nonlocal_stmt_rule(Parser *p)
 static stmt_ty
 del_stmt_rule(Parser *p)
 {
+p->current_rule = (int)del_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3267,6 +3289,7 @@ del_stmt_rule(Parser *p)
 static stmt_ty
 yield_stmt_rule(Parser *p)
 {
+p->current_rule = (int)yield_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3328,6 +3351,7 @@ yield_stmt_rule(Parser *p)
 static stmt_ty
 assert_stmt_rule(Parser *p)
 {
+p->current_rule = (int)assert_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3395,6 +3419,7 @@ assert_stmt_rule(Parser *p)
 static stmt_ty
 import_stmt_rule(Parser *p)
 {
+p->current_rule = (int)import_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3471,6 +3496,7 @@ import_stmt_rule(Parser *p)
 static stmt_ty
 import_name_rule(Parser *p)
 {
+p->current_rule = (int)import_name_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3537,6 +3563,7 @@ import_name_rule(Parser *p)
 static stmt_ty
 import_from_rule(Parser *p)
 {
+p->current_rule = (int)import_from_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3656,6 +3683,7 @@ import_from_rule(Parser *p)
 static asdl_alias_seq*
 import_from_targets_rule(Parser *p)
 {
+p->current_rule = (int)import_from_targets_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3791,6 +3819,7 @@ import_from_targets_rule(Parser *p)
 static asdl_alias_seq*
 import_from_as_names_rule(Parser *p)
 {
+p->current_rule = (int)import_from_as_names_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3834,6 +3863,7 @@ import_from_as_names_rule(Parser *p)
 static alias_ty
 import_from_as_name_rule(Parser *p)
 {
+p->current_rule = (int)import_from_as_name_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3917,6 +3947,7 @@ import_from_as_name_rule(Parser *p)
 static asdl_alias_seq*
 dotted_as_names_rule(Parser *p)
 {
+p->current_rule = (int)dotted_as_names_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -3960,6 +3991,7 @@ dotted_as_names_rule(Parser *p)
 static alias_ty
 dotted_as_name_rule(Parser *p)
 {
+p->current_rule = (int)dotted_as_name_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4079,6 +4111,7 @@ dotted_name_rule(Parser *p)
 static expr_ty
 dotted_name_raw(Parser *p)
 {
+p->current_rule = (int)dotted_name_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4147,6 +4180,7 @@ dotted_name_raw(Parser *p)
 static asdl_stmt_seq*
 block_rule(Parser *p)
 {
+p->current_rule = (int)block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4242,6 +4276,7 @@ block_rule(Parser *p)
 static asdl_expr_seq*
 decorators_rule(Parser *p)
 {
+p->current_rule = (int)decorators_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4285,6 +4320,7 @@ decorators_rule(Parser *p)
 static stmt_ty
 class_def_rule(Parser *p)
 {
+p->current_rule = (int)class_def_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4352,6 +4388,7 @@ class_def_rule(Parser *p)
 static stmt_ty
 class_def_raw_rule(Parser *p)
 {
+p->current_rule = (int)class_def_raw_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4447,6 +4484,7 @@ class_def_raw_rule(Parser *p)
 static stmt_ty
 function_def_rule(Parser *p)
 {
+p->current_rule = (int)function_def_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4515,6 +4553,7 @@ function_def_rule(Parser *p)
 static stmt_ty
 function_def_raw_rule(Parser *p)
 {
+p->current_rule = (int)function_def_raw_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4685,6 +4724,7 @@ function_def_raw_rule(Parser *p)
 static arguments_ty
 params_rule(Parser *p)
 {
+p->current_rule = (int)params_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4747,6 +4787,7 @@ params_rule(Parser *p)
 static arguments_ty
 parameters_rule(Parser *p)
 {
+p->current_rule = (int)parameters_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4910,6 +4951,7 @@ parameters_rule(Parser *p)
 static asdl_arg_seq*
 slash_no_default_rule(Parser *p)
 {
+p->current_rule = (int)slash_no_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -4990,6 +5032,7 @@ slash_no_default_rule(Parser *p)
 static SlashWithDefault*
 slash_with_default_rule(Parser *p)
 {
+p->current_rule = (int)slash_with_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5079,6 +5122,7 @@ slash_with_default_rule(Parser *p)
 static StarEtc*
 star_etc_rule(Parser *p)
 {
+p->current_rule = (int)star_etc_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5240,6 +5284,7 @@ star_etc_rule(Parser *p)
 static arg_ty
 kwds_rule(Parser *p)
 {
+p->current_rule = (int)kwds_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5305,6 +5350,7 @@ kwds_rule(Parser *p)
 static arg_ty
 param_no_default_rule(Parser *p)
 {
+p->current_rule = (int)param_no_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5385,6 +5431,7 @@ param_no_default_rule(Parser *p)
 static arg_ty
 param_no_default_star_annotation_rule(Parser *p)
 {
+p->current_rule = (int)param_no_default_star_annotation_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5463,6 +5510,7 @@ param_no_default_star_annotation_rule(Parser *p)
 static NameDefaultPair*
 param_with_default_rule(Parser *p)
 {
+p->current_rule = (int)param_with_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5549,6 +5597,7 @@ param_with_default_rule(Parser *p)
 static NameDefaultPair*
 param_maybe_default_rule(Parser *p)
 {
+p->current_rule = (int)param_maybe_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5633,6 +5682,7 @@ param_maybe_default_rule(Parser *p)
 static arg_ty
 param_rule(Parser *p)
 {
+p->current_rule = (int)param_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5697,6 +5747,7 @@ param_rule(Parser *p)
 static arg_ty
 param_star_annotation_rule(Parser *p)
 {
+p->current_rule = (int)param_star_annotation_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5761,6 +5812,7 @@ param_star_annotation_rule(Parser *p)
 static expr_ty
 annotation_rule(Parser *p)
 {
+p->current_rule = (int)annotation_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5807,6 +5859,7 @@ annotation_rule(Parser *p)
 static expr_ty
 star_annotation_rule(Parser *p)
 {
+p->current_rule = (int)star_annotation_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5853,6 +5906,7 @@ star_annotation_rule(Parser *p)
 static expr_ty
 default_rule(Parser *p)
 {
+p->current_rule = (int)default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -5921,6 +5975,7 @@ default_rule(Parser *p)
 static stmt_ty
 if_stmt_rule(Parser *p)
 {
+p->current_rule = (int)if_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -6061,6 +6116,7 @@ if_stmt_rule(Parser *p)
 static stmt_ty
 elif_stmt_rule(Parser *p)
 {
+p->current_rule = (int)elif_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -6198,6 +6254,7 @@ elif_stmt_rule(Parser *p)
 static asdl_stmt_seq*
 else_block_rule(Parser *p)
 {
+p->current_rule = (int)else_block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -6266,6 +6323,7 @@ else_block_rule(Parser *p)
 static stmt_ty
 while_stmt_rule(Parser *p)
 {
+p->current_rule = (int)while_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -6362,6 +6420,7 @@ while_stmt_rule(Parser *p)
 static stmt_ty
 for_stmt_rule(Parser *p)
 {
+p->current_rule = (int)for_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -6559,6 +6618,7 @@ for_stmt_rule(Parser *p)
 static stmt_ty
 with_stmt_rule(Parser *p)
 {
+p->current_rule = (int)with_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -6831,6 +6891,7 @@ with_stmt_rule(Parser *p)
 static withitem_ty
 with_item_rule(Parser *p)
 {
+p->current_rule = (int)with_item_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -6929,6 +6990,7 @@ with_item_rule(Parser *p)
 static stmt_ty
 try_stmt_rule(Parser *p)
 {
+p->current_rule = (int)try_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7120,6 +7182,7 @@ try_stmt_rule(Parser *p)
 static excepthandler_ty
 except_block_rule(Parser *p)
 {
+p->current_rule = (int)except_block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7362,6 +7425,7 @@ except_block_rule(Parser *p)
 static excepthandler_ty
 except_star_block_rule(Parser *p)
 {
+p->current_rule = (int)except_star_block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7569,6 +7633,7 @@ except_star_block_rule(Parser *p)
 static asdl_stmt_seq*
 finally_block_rule(Parser *p)
 {
+p->current_rule = (int)finally_block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7639,6 +7704,7 @@ finally_block_rule(Parser *p)
 static stmt_ty
 match_stmt_rule(Parser *p)
 {
+p->current_rule = (int)match_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7737,6 +7803,7 @@ match_stmt_rule(Parser *p)
 static expr_ty
 subject_expr_rule(Parser *p)
 {
+p->current_rule = (int)subject_expr_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7823,6 +7890,7 @@ subject_expr_rule(Parser *p)
 static match_case_ty
 case_block_rule(Parser *p)
 {
+p->current_rule = (int)case_block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7897,6 +7965,7 @@ case_block_rule(Parser *p)
 static expr_ty
 guard_rule(Parser *p)
 {
+p->current_rule = (int)guard_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -7943,6 +8012,7 @@ guard_rule(Parser *p)
 static pattern_ty
 patterns_rule(Parser *p)
 {
+p->current_rule = (int)patterns_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8023,6 +8093,7 @@ patterns_rule(Parser *p)
 static pattern_ty
 pattern_rule(Parser *p)
 {
+p->current_rule = (int)pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8080,6 +8151,7 @@ pattern_rule(Parser *p)
 static pattern_ty
 as_pattern_rule(Parser *p)
 {
+p->current_rule = (int)as_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8166,6 +8238,7 @@ as_pattern_rule(Parser *p)
 static pattern_ty
 or_pattern_rule(Parser *p)
 {
+p->current_rule = (int)or_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8235,6 +8308,7 @@ or_pattern_rule(Parser *p)
 static pattern_ty
 closed_pattern_rule(Parser *p)
 {
+p->current_rule = (int)closed_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8417,6 +8491,7 @@ closed_pattern_rule(Parser *p)
 static pattern_ty
 literal_pattern_rule(Parser *p)
 {
+p->current_rule = (int)literal_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8651,6 +8726,7 @@ literal_pattern_rule(Parser *p)
 static expr_ty
 literal_expr_rule(Parser *p)
 {
+p->current_rule = (int)literal_expr_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8841,6 +8917,7 @@ literal_expr_rule(Parser *p)
 static expr_ty
 complex_number_rule(Parser *p)
 {
+p->current_rule = (int)complex_number_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -8947,6 +9024,7 @@ complex_number_rule(Parser *p)
 static expr_ty
 signed_number_rule(Parser *p)
 {
+p->current_rule = (int)signed_number_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9030,6 +9108,7 @@ signed_number_rule(Parser *p)
 static expr_ty
 signed_real_number_rule(Parser *p)
 {
+p->current_rule = (int)signed_real_number_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9113,6 +9192,7 @@ signed_real_number_rule(Parser *p)
 static expr_ty
 real_number_rule(Parser *p)
 {
+p->current_rule = (int)real_number_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9156,6 +9236,7 @@ real_number_rule(Parser *p)
 static expr_ty
 imaginary_number_rule(Parser *p)
 {
+p->current_rule = (int)imaginary_number_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9199,6 +9280,7 @@ imaginary_number_rule(Parser *p)
 static pattern_ty
 capture_pattern_rule(Parser *p)
 {
+p->current_rule = (int)capture_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9260,6 +9342,7 @@ capture_pattern_rule(Parser *p)
 static expr_ty
 pattern_capture_target_rule(Parser *p)
 {
+p->current_rule = (int)pattern_capture_target_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9307,6 +9390,7 @@ pattern_capture_target_rule(Parser *p)
 static pattern_ty
 wildcard_pattern_rule(Parser *p)
 {
+p->current_rule = (int)wildcard_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9368,6 +9452,7 @@ wildcard_pattern_rule(Parser *p)
 static pattern_ty
 value_pattern_rule(Parser *p)
 {
+p->current_rule = (int)value_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9467,6 +9552,7 @@ attr_rule(Parser *p)
 static expr_ty
 attr_raw(Parser *p)
 {
+p->current_rule = (int)attr_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9535,6 +9621,7 @@ attr_raw(Parser *p)
 static expr_ty
 name_or_attr_rule(Parser *p)
 {
+p->current_rule = (int)name_or_attr_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9592,6 +9679,7 @@ name_or_attr_rule(Parser *p)
 static pattern_ty
 group_pattern_rule(Parser *p)
 {
+p->current_rule = (int)group_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9641,6 +9729,7 @@ group_pattern_rule(Parser *p)
 static pattern_ty
 sequence_pattern_rule(Parser *p)
 {
+p->current_rule = (int)sequence_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9747,6 +9836,7 @@ sequence_pattern_rule(Parser *p)
 static asdl_seq*
 open_sequence_pattern_rule(Parser *p)
 {
+p->current_rule = (int)open_sequence_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9796,6 +9886,7 @@ open_sequence_pattern_rule(Parser *p)
 static asdl_seq*
 maybe_sequence_pattern_rule(Parser *p)
 {
+p->current_rule = (int)maybe_sequence_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9843,6 +9934,7 @@ maybe_sequence_pattern_rule(Parser *p)
 static pattern_ty
 maybe_star_pattern_rule(Parser *p)
 {
+p->current_rule = (int)maybe_star_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -9900,6 +9992,7 @@ maybe_star_pattern_rule(Parser *p)
 static pattern_ty
 star_pattern_rule(Parser *p)
 {
+p->current_rule = (int)star_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10009,6 +10102,7 @@ star_pattern_rule(Parser *p)
 static pattern_ty
 mapping_pattern_rule(Parser *p)
 {
+p->current_rule = (int)mapping_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10208,6 +10302,7 @@ mapping_pattern_rule(Parser *p)
 static asdl_seq*
 items_pattern_rule(Parser *p)
 {
+p->current_rule = (int)items_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10246,6 +10341,7 @@ items_pattern_rule(Parser *p)
 static KeyPatternPair*
 key_value_pattern_rule(Parser *p)
 {
+p->current_rule = (int)key_value_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10295,6 +10391,7 @@ key_value_pattern_rule(Parser *p)
 static expr_ty
 double_star_pattern_rule(Parser *p)
 {
+p->current_rule = (int)double_star_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10346,6 +10443,7 @@ double_star_pattern_rule(Parser *p)
 static pattern_ty
 class_pattern_rule(Parser *p)
 {
+p->current_rule = (int)class_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10576,6 +10674,7 @@ class_pattern_rule(Parser *p)
 static asdl_pattern_seq*
 positional_patterns_rule(Parser *p)
 {
+p->current_rule = (int)positional_patterns_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10619,6 +10718,7 @@ positional_patterns_rule(Parser *p)
 static asdl_seq*
 keyword_patterns_rule(Parser *p)
 {
+p->current_rule = (int)keyword_patterns_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10657,6 +10757,7 @@ keyword_patterns_rule(Parser *p)
 static KeyPatternPair*
 keyword_pattern_rule(Parser *p)
 {
+p->current_rule = (int)keyword_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10706,6 +10807,7 @@ keyword_pattern_rule(Parser *p)
 static stmt_ty
 type_alias_rule(Parser *p)
 {
+p->current_rule = (int)type_alias_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10779,6 +10881,7 @@ type_alias_rule(Parser *p)
 static asdl_type_param_seq*
 type_params_rule(Parser *p)
 {
+p->current_rule = (int)type_params_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10847,6 +10950,7 @@ type_params_rule(Parser *p)
 static asdl_type_param_seq*
 type_param_seq_rule(Parser *p)
 {
+p->current_rule = (int)type_param_seq_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -10898,6 +11002,7 @@ type_param_seq_rule(Parser *p)
 static type_param_ty
 type_param_rule(Parser *p)
 {
+p->current_rule = (int)type_param_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11067,6 +11172,7 @@ type_param_rule(Parser *p)
 static expr_ty
 type_param_bound_rule(Parser *p)
 {
+p->current_rule = (int)type_param_bound_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11113,6 +11219,7 @@ type_param_bound_rule(Parser *p)
 static expr_ty
 type_param_default_rule(Parser *p)
 {
+p->current_rule = (int)type_param_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11159,6 +11266,7 @@ type_param_default_rule(Parser *p)
 static expr_ty
 type_param_starred_default_rule(Parser *p)
 {
+p->current_rule = (int)type_param_starred_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11205,6 +11313,7 @@ type_param_starred_default_rule(Parser *p)
 static expr_ty
 expressions_rule(Parser *p)
 {
+p->current_rule = (int)expressions_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11333,6 +11442,7 @@ expressions_rule(Parser *p)
 static expr_ty
 expression_rule(Parser *p)
 {
+p->current_rule = (int)expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11487,6 +11597,7 @@ expression_rule(Parser *p)
 static expr_ty
 yield_expr_rule(Parser *p)
 {
+p->current_rule = (int)yield_expr_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11593,6 +11704,7 @@ yield_expr_rule(Parser *p)
 static expr_ty
 star_expressions_rule(Parser *p)
 {
+p->current_rule = (int)star_expressions_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11716,6 +11828,7 @@ star_expressions_rule(Parser *p)
 static expr_ty
 star_expression_rule(Parser *p)
 {
+p->current_rule = (int)star_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11804,6 +11917,7 @@ star_expression_rule(Parser *p)
 static asdl_expr_seq*
 star_named_expressions_rule(Parser *p)
 {
+p->current_rule = (int)star_named_expressions_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11851,6 +11965,7 @@ star_named_expressions_rule(Parser *p)
 static expr_ty
 star_named_expression_rule(Parser *p)
 {
+p->current_rule = (int)star_named_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -11934,6 +12049,7 @@ star_named_expression_rule(Parser *p)
 static expr_ty
 assignment_expression_rule(Parser *p)
 {
+p->current_rule = (int)assignment_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12008,6 +12124,7 @@ assignment_expression_rule(Parser *p)
 static expr_ty
 named_expression_rule(Parser *p)
 {
+p->current_rule = (int)named_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12086,6 +12203,7 @@ named_expression_rule(Parser *p)
 static expr_ty
 disjunction_rule(Parser *p)
 {
+p->current_rule = (int)disjunction_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12174,6 +12292,7 @@ disjunction_rule(Parser *p)
 static expr_ty
 conjunction_rule(Parser *p)
 {
+p->current_rule = (int)conjunction_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12262,6 +12381,7 @@ conjunction_rule(Parser *p)
 static expr_ty
 inversion_rule(Parser *p)
 {
+p->current_rule = (int)inversion_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12350,6 +12470,7 @@ inversion_rule(Parser *p)
 static expr_ty
 comparison_rule(Parser *p)
 {
+p->current_rule = (int)comparison_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12443,6 +12564,7 @@ comparison_rule(Parser *p)
 static CmpopExprPair*
 compare_op_bitwise_or_pair_rule(Parser *p)
 {
+p->current_rule = (int)compare_op_bitwise_or_pair_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12652,6 +12774,7 @@ compare_op_bitwise_or_pair_rule(Parser *p)
 static CmpopExprPair*
 eq_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)eq_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12698,6 +12821,7 @@ eq_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 noteq_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)noteq_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12744,6 +12868,7 @@ noteq_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 lte_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)lte_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12790,6 +12915,7 @@ lte_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 lt_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)lt_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12836,6 +12962,7 @@ lt_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 gte_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)gte_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12882,6 +13009,7 @@ gte_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 gt_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)gt_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12928,6 +13056,7 @@ gt_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 notin_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)notin_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -12977,6 +13106,7 @@ notin_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 in_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)in_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13023,6 +13153,7 @@ in_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 isnot_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)isnot_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13072,6 +13203,7 @@ isnot_bitwise_or_rule(Parser *p)
 static CmpopExprPair*
 is_bitwise_or_rule(Parser *p)
 {
+p->current_rule = (int)is_bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13154,6 +13286,7 @@ bitwise_or_rule(Parser *p)
 static expr_ty
 bitwise_or_raw(Parser *p)
 {
+p->current_rule = (int)bitwise_or_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13276,6 +13409,7 @@ bitwise_xor_rule(Parser *p)
 static expr_ty
 bitwise_xor_raw(Parser *p)
 {
+p->current_rule = (int)bitwise_xor_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13398,6 +13532,7 @@ bitwise_and_rule(Parser *p)
 static expr_ty
 bitwise_and_raw(Parser *p)
 {
+p->current_rule = (int)bitwise_and_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13520,6 +13655,7 @@ shift_expr_rule(Parser *p)
 static expr_ty
 shift_expr_raw(Parser *p)
 {
+p->current_rule = (int)shift_expr_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13700,6 +13836,7 @@ sum_rule(Parser *p)
 static expr_ty
 sum_raw(Parser *p)
 {
+p->current_rule = (int)sum_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -13868,6 +14005,7 @@ term_rule(Parser *p)
 static expr_ty
 term_raw(Parser *p)
 {
+p->current_rule = (int)term_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -14129,6 +14267,7 @@ term_raw(Parser *p)
 static expr_ty
 factor_rule(Parser *p)
 {
+p->current_rule = (int)factor_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -14289,6 +14428,7 @@ factor_rule(Parser *p)
 static expr_ty
 power_rule(Parser *p)
 {
+p->current_rule = (int)power_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -14375,6 +14515,7 @@ power_rule(Parser *p)
 static expr_ty
 await_primary_rule(Parser *p)
 {
+p->current_rule = (int)await_primary_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -14504,6 +14645,7 @@ primary_rule(Parser *p)
 static expr_ty
 primary_raw(Parser *p)
 {
+p->current_rule = (int)primary_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -14710,6 +14852,7 @@ primary_raw(Parser *p)
 static expr_ty
 slices_rule(Parser *p)
 {
+p->current_rule = (int)slices_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -14801,6 +14944,7 @@ slices_rule(Parser *p)
 static expr_ty
 slice_rule(Parser *p)
 {
+p->current_rule = (int)slice_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -14905,6 +15049,7 @@ slice_rule(Parser *p)
 static expr_ty
 atom_rule(Parser *p)
 {
+p->current_rule = (int)atom_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15187,6 +15332,7 @@ atom_rule(Parser *p)
 static expr_ty
 group_rule(Parser *p)
 {
+p->current_rule = (int)group_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15255,6 +15401,7 @@ group_rule(Parser *p)
 static expr_ty
 lambdef_rule(Parser *p)
 {
+p->current_rule = (int)lambdef_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15325,6 +15472,7 @@ lambdef_rule(Parser *p)
 static arguments_ty
 lambda_params_rule(Parser *p)
 {
+p->current_rule = (int)lambda_params_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15387,6 +15535,7 @@ lambda_params_rule(Parser *p)
 static arguments_ty
 lambda_parameters_rule(Parser *p)
 {
+p->current_rule = (int)lambda_parameters_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15552,6 +15701,7 @@ lambda_parameters_rule(Parser *p)
 static asdl_arg_seq*
 lambda_slash_no_default_rule(Parser *p)
 {
+p->current_rule = (int)lambda_slash_no_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15632,6 +15782,7 @@ lambda_slash_no_default_rule(Parser *p)
 static SlashWithDefault*
 lambda_slash_with_default_rule(Parser *p)
 {
+p->current_rule = (int)lambda_slash_with_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15720,6 +15871,7 @@ lambda_slash_with_default_rule(Parser *p)
 static StarEtc*
 lambda_star_etc_rule(Parser *p)
 {
+p->current_rule = (int)lambda_star_etc_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15848,6 +16000,7 @@ lambda_star_etc_rule(Parser *p)
 static arg_ty
 lambda_kwds_rule(Parser *p)
 {
+p->current_rule = (int)lambda_kwds_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15913,6 +16066,7 @@ lambda_kwds_rule(Parser *p)
 static arg_ty
 lambda_param_no_default_rule(Parser *p)
 {
+p->current_rule = (int)lambda_param_no_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -15985,6 +16139,7 @@ lambda_param_no_default_rule(Parser *p)
 static NameDefaultPair*
 lambda_param_with_default_rule(Parser *p)
 {
+p->current_rule = (int)lambda_param_with_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16063,6 +16218,7 @@ lambda_param_with_default_rule(Parser *p)
 static NameDefaultPair*
 lambda_param_maybe_default_rule(Parser *p)
 {
+p->current_rule = (int)lambda_param_maybe_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16141,6 +16297,7 @@ lambda_param_maybe_default_rule(Parser *p)
 static arg_ty
 lambda_param_rule(Parser *p)
 {
+p->current_rule = (int)lambda_param_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16202,6 +16359,7 @@ lambda_param_rule(Parser *p)
 static expr_ty
 fstring_middle_rule(Parser *p)
 {
+p->current_rule = (int)fstring_middle_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16266,6 +16424,7 @@ fstring_middle_rule(Parser *p)
 static expr_ty
 fstring_replacement_field_rule(Parser *p)
 {
+p->current_rule = (int)fstring_replacement_field_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16361,6 +16520,7 @@ fstring_replacement_field_rule(Parser *p)
 static ResultTokenWithMetadata*
 fstring_conversion_rule(Parser *p)
 {
+p->current_rule = (int)fstring_conversion_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16407,6 +16567,7 @@ fstring_conversion_rule(Parser *p)
 static ResultTokenWithMetadata*
 fstring_full_format_spec_rule(Parser *p)
 {
+p->current_rule = (int)fstring_full_format_spec_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16471,6 +16632,7 @@ fstring_full_format_spec_rule(Parser *p)
 static expr_ty
 fstring_format_spec_rule(Parser *p)
 {
+p->current_rule = (int)fstring_format_spec_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16533,6 +16695,7 @@ fstring_format_spec_rule(Parser *p)
 static expr_ty
 fstring_rule(Parser *p)
 {
+p->current_rule = (int)fstring_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16584,6 +16747,7 @@ fstring_rule(Parser *p)
 static expr_ty
 tstring_format_spec_replacement_field_rule(Parser *p)
 {
+p->current_rule = (int)tstring_format_spec_replacement_field_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16679,6 +16843,7 @@ tstring_format_spec_replacement_field_rule(Parser *p)
 static expr_ty
 tstring_format_spec_rule(Parser *p)
 {
+p->current_rule = (int)tstring_format_spec_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16741,6 +16906,7 @@ tstring_format_spec_rule(Parser *p)
 static ResultTokenWithMetadata*
 tstring_full_format_spec_rule(Parser *p)
 {
+p->current_rule = (int)tstring_full_format_spec_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16807,6 +16973,7 @@ tstring_full_format_spec_rule(Parser *p)
 static expr_ty
 tstring_replacement_field_rule(Parser *p)
 {
+p->current_rule = (int)tstring_replacement_field_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16902,6 +17069,7 @@ tstring_replacement_field_rule(Parser *p)
 static expr_ty
 tstring_middle_rule(Parser *p)
 {
+p->current_rule = (int)tstring_middle_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -16964,6 +17132,7 @@ tstring_middle_rule(Parser *p)
 static expr_ty
 tstring_rule(Parser *p)
 {
+p->current_rule = (int)tstring_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17018,6 +17187,7 @@ tstring_rule(Parser *p)
 static expr_ty
 string_rule(Parser *p)
 {
+p->current_rule = (int)string_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17061,6 +17231,7 @@ string_rule(Parser *p)
 static expr_ty
 strings_rule(Parser *p)
 {
+p->current_rule = (int)strings_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17127,6 +17298,7 @@ strings_rule(Parser *p)
 static expr_ty
 list_rule(Parser *p)
 {
+p->current_rule = (int)list_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17194,6 +17366,7 @@ list_rule(Parser *p)
 static expr_ty
 tuple_rule(Parser *p)
 {
+p->current_rule = (int)tuple_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17261,6 +17434,7 @@ tuple_rule(Parser *p)
 static expr_ty
 set_rule(Parser *p)
 {
+p->current_rule = (int)set_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17328,6 +17502,7 @@ set_rule(Parser *p)
 static expr_ty
 dict_rule(Parser *p)
 {
+p->current_rule = (int)dict_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17420,6 +17595,7 @@ dict_rule(Parser *p)
 static asdl_seq*
 double_starred_kvpairs_rule(Parser *p)
 {
+p->current_rule = (int)double_starred_kvpairs_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17467,6 +17643,7 @@ double_starred_kvpairs_rule(Parser *p)
 static KeyValuePair*
 double_starred_kvpair_rule(Parser *p)
 {
+p->current_rule = (int)double_starred_kvpair_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17532,6 +17709,7 @@ double_starred_kvpair_rule(Parser *p)
 static KeyValuePair*
 kvpair_rule(Parser *p)
 {
+p->current_rule = (int)kvpair_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17581,6 +17759,7 @@ kvpair_rule(Parser *p)
 static asdl_comprehension_seq*
 for_if_clauses_rule(Parser *p)
 {
+p->current_rule = (int)for_if_clauses_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17628,6 +17807,7 @@ for_if_clauses_rule(Parser *p)
 static comprehension_ty
 for_if_clause_rule(Parser *p)
 {
+p->current_rule = (int)for_if_clause_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17774,6 +17954,7 @@ for_if_clause_rule(Parser *p)
 static expr_ty
 listcomp_rule(Parser *p)
 {
+p->current_rule = (int)listcomp_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17863,6 +18044,7 @@ listcomp_rule(Parser *p)
 static expr_ty
 setcomp_rule(Parser *p)
 {
+p->current_rule = (int)setcomp_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -17954,6 +18136,7 @@ setcomp_rule(Parser *p)
 static expr_ty
 genexp_rule(Parser *p)
 {
+p->current_rule = (int)genexp_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18043,6 +18226,7 @@ genexp_rule(Parser *p)
 static expr_ty
 dictcomp_rule(Parser *p)
 {
+p->current_rule = (int)dictcomp_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18132,6 +18316,7 @@ dictcomp_rule(Parser *p)
 static expr_ty
 arguments_rule(Parser *p)
 {
+p->current_rule = (int)arguments_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18207,6 +18392,7 @@ arguments_rule(Parser *p)
 static expr_ty
 args_rule(Parser *p)
 {
+p->current_rule = (int)args_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18307,6 +18493,7 @@ args_rule(Parser *p)
 static asdl_seq*
 kwargs_rule(Parser *p)
 {
+p->current_rule = (int)kwargs_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18397,6 +18584,7 @@ kwargs_rule(Parser *p)
 static expr_ty
 starred_expression_rule(Parser *p)
 {
+p->current_rule = (int)starred_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18499,6 +18687,7 @@ starred_expression_rule(Parser *p)
 static KeywordOrStarred*
 kwarg_or_starred_rule(Parser *p)
 {
+p->current_rule = (int)kwarg_or_starred_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18609,6 +18798,7 @@ kwarg_or_starred_rule(Parser *p)
 static KeywordOrStarred*
 kwarg_or_double_starred_rule(Parser *p)
 {
+p->current_rule = (int)kwarg_or_double_starred_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18731,6 +18921,7 @@ kwarg_or_double_starred_rule(Parser *p)
 static expr_ty
 star_targets_rule(Parser *p)
 {
+p->current_rule = (int)star_targets_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18825,6 +19016,7 @@ star_targets_rule(Parser *p)
 static asdl_expr_seq*
 star_targets_list_seq_rule(Parser *p)
 {
+p->current_rule = (int)star_targets_list_seq_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18872,6 +19064,7 @@ star_targets_list_seq_rule(Parser *p)
 static asdl_expr_seq*
 star_targets_tuple_seq_rule(Parser *p)
 {
+p->current_rule = (int)star_targets_tuple_seq_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -18949,6 +19142,7 @@ star_targets_tuple_seq_rule(Parser *p)
 static expr_ty
 star_target_rule(Parser *p)
 {
+p->current_rule = (int)star_target_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19040,6 +19234,7 @@ star_target_rule(Parser *p)
 static expr_ty
 target_with_star_atom_rule(Parser *p)
 {
+p->current_rule = (int)target_with_star_atom_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19181,6 +19376,7 @@ target_with_star_atom_rule(Parser *p)
 static expr_ty
 star_atom_rule(Parser *p)
 {
+p->current_rule = (int)star_atom_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19341,6 +19537,7 @@ star_atom_rule(Parser *p)
 static expr_ty
 single_target_rule(Parser *p)
 {
+p->current_rule = (int)single_target_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19435,6 +19632,7 @@ single_target_rule(Parser *p)
 static expr_ty
 single_subscript_attribute_target_rule(Parser *p)
 {
+p->current_rule = (int)single_subscript_attribute_target_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19589,6 +19787,7 @@ t_primary_rule(Parser *p)
 static expr_ty
 t_primary_raw(Parser *p)
 {
+p->current_rule = (int)t_primary_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19810,6 +20009,7 @@ t_primary_raw(Parser *p)
 static void *
 t_lookahead_rule(Parser *p)
 {
+p->current_rule = (int)t_lookahead_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19886,6 +20086,7 @@ t_lookahead_rule(Parser *p)
 static asdl_expr_seq*
 del_targets_rule(Parser *p)
 {
+p->current_rule = (int)del_targets_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -19936,6 +20137,7 @@ del_targets_rule(Parser *p)
 static expr_ty
 del_target_rule(Parser *p)
 {
+p->current_rule = (int)del_target_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -20073,6 +20275,7 @@ del_target_rule(Parser *p)
 static expr_ty
 del_t_atom_rule(Parser *p)
 {
+p->current_rule = (int)del_t_atom_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -20240,6 +20443,7 @@ del_t_atom_rule(Parser *p)
 static asdl_expr_seq*
 type_expressions_rule(Parser *p)
 {
+p->current_rule = (int)type_expressions_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -20484,6 +20688,7 @@ type_expressions_rule(Parser *p)
 static Token*
 func_type_comment_rule(Parser *p)
 {
+p->current_rule = (int)func_type_comment_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -20577,6 +20782,7 @@ func_type_comment_rule(Parser *p)
 static void *
 invalid_arguments_rule(Parser *p)
 {
+p->current_rule = (int)invalid_arguments_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -20820,6 +21026,7 @@ invalid_arguments_rule(Parser *p)
 static void *
 invalid_kwarg_rule(Parser *p)
 {
+p->current_rule = (int)invalid_kwarg_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -20966,6 +21173,7 @@ expression_without_invalid_rule(Parser *p)
 {
     int _prev_call_invalid = p->call_invalid_rules;
     p->call_invalid_rules = 0;
+p->current_rule = (int)expression_without_invalid_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21085,6 +21293,7 @@ expression_without_invalid_rule(Parser *p)
 static void *
 invalid_legacy_expression_rule(Parser *p)
 {
+p->current_rule = (int)invalid_legacy_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21133,6 +21342,7 @@ invalid_legacy_expression_rule(Parser *p)
 static void *
 invalid_type_param_rule(Parser *p)
 {
+p->current_rule = (int)invalid_type_param_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21225,6 +21435,7 @@ invalid_type_param_rule(Parser *p)
 static void *
 invalid_expression_rule(Parser *p)
 {
+p->current_rule = (int)invalid_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21475,6 +21686,7 @@ invalid_expression_rule(Parser *p)
 static void *
 invalid_named_expression_rule(Parser *p)
 {
+p->current_rule = (int)invalid_named_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21601,6 +21813,7 @@ invalid_named_expression_rule(Parser *p)
 static void *
 invalid_assignment_rule(Parser *p)
 {
+p->current_rule = (int)invalid_assignment_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21806,6 +22019,7 @@ invalid_assignment_rule(Parser *p)
 static expr_ty
 invalid_ann_assign_target_rule(Parser *p)
 {
+p->current_rule = (int)invalid_ann_assign_target_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21893,6 +22107,7 @@ invalid_ann_assign_target_rule(Parser *p)
 static void *
 invalid_del_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_del_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21939,6 +22154,7 @@ invalid_del_stmt_rule(Parser *p)
 static void *
 invalid_block_rule(Parser *p)
 {
+p->current_rule = (int)invalid_block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -21987,6 +22203,7 @@ invalid_block_rule(Parser *p)
 static void *
 invalid_comprehension_rule(Parser *p)
 {
+p->current_rule = (int)invalid_comprehension_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22105,6 +22322,7 @@ invalid_comprehension_rule(Parser *p)
 static void *
 invalid_dict_comprehension_rule(Parser *p)
 {
+p->current_rule = (int)invalid_dict_comprehension_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22166,6 +22384,7 @@ invalid_dict_comprehension_rule(Parser *p)
 static void *
 invalid_parameters_rule(Parser *p)
 {
+p->current_rule = (int)invalid_parameters_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22383,6 +22602,7 @@ invalid_parameters_rule(Parser *p)
 static void *
 invalid_default_rule(Parser *p)
 {
+p->current_rule = (int)invalid_default_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22432,6 +22652,7 @@ invalid_default_rule(Parser *p)
 static void *
 invalid_star_etc_rule(Parser *p)
 {
+p->current_rule = (int)invalid_star_etc_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22574,6 +22795,7 @@ invalid_star_etc_rule(Parser *p)
 static void *
 invalid_kwds_rule(Parser *p)
 {
+p->current_rule = (int)invalid_kwds_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22689,6 +22911,7 @@ invalid_kwds_rule(Parser *p)
 static void *
 invalid_parameters_helper_rule(Parser *p)
 {
+p->current_rule = (int)invalid_parameters_helper_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22757,6 +22980,7 @@ invalid_parameters_helper_rule(Parser *p)
 static void *
 invalid_lambda_parameters_rule(Parser *p)
 {
+p->current_rule = (int)invalid_lambda_parameters_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -22976,6 +23200,7 @@ invalid_lambda_parameters_rule(Parser *p)
 static void *
 invalid_lambda_parameters_helper_rule(Parser *p)
 {
+p->current_rule = (int)invalid_lambda_parameters_helper_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23041,6 +23266,7 @@ invalid_lambda_parameters_helper_rule(Parser *p)
 static void *
 invalid_lambda_star_etc_rule(Parser *p)
 {
+p->current_rule = (int)invalid_lambda_star_etc_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23156,6 +23382,7 @@ invalid_lambda_star_etc_rule(Parser *p)
 static void *
 invalid_lambda_kwds_rule(Parser *p)
 {
+p->current_rule = (int)invalid_lambda_kwds_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23271,6 +23498,7 @@ invalid_lambda_kwds_rule(Parser *p)
 static void *
 invalid_double_type_comments_rule(Parser *p)
 {
+p->current_rule = (int)invalid_double_type_comments_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23326,6 +23554,7 @@ invalid_double_type_comments_rule(Parser *p)
 static void *
 invalid_with_item_rule(Parser *p)
 {
+p->current_rule = (int)invalid_with_item_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23377,6 +23606,7 @@ invalid_with_item_rule(Parser *p)
 static void *
 invalid_for_if_clause_rule(Parser *p)
 {
+p->current_rule = (int)invalid_for_if_clause_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23429,6 +23659,7 @@ invalid_for_if_clause_rule(Parser *p)
 static void *
 invalid_for_target_rule(Parser *p)
 {
+p->current_rule = (int)invalid_for_target_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23479,6 +23710,7 @@ invalid_for_target_rule(Parser *p)
 static void *
 invalid_group_rule(Parser *p)
 {
+p->current_rule = (int)invalid_group_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23561,6 +23793,7 @@ invalid_group_rule(Parser *p)
 static void *
 invalid_import_rule(Parser *p)
 {
+p->current_rule = (int)invalid_import_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23640,6 +23873,7 @@ invalid_import_rule(Parser *p)
 static void *
 invalid_dotted_as_name_rule(Parser *p)
 {
+p->current_rule = (int)invalid_dotted_as_name_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23691,6 +23925,7 @@ invalid_dotted_as_name_rule(Parser *p)
 static void *
 invalid_import_from_as_name_rule(Parser *p)
 {
+p->current_rule = (int)invalid_import_from_as_name_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23742,6 +23977,7 @@ invalid_import_from_as_name_rule(Parser *p)
 static void *
 invalid_import_from_targets_rule(Parser *p)
 {
+p->current_rule = (int)invalid_import_from_targets_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23817,6 +24053,7 @@ invalid_import_from_targets_rule(Parser *p)
 static void *
 invalid_with_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_with_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -23916,6 +24153,7 @@ invalid_with_stmt_rule(Parser *p)
 static void *
 invalid_with_stmt_indent_rule(Parser *p)
 {
+p->current_rule = (int)invalid_with_stmt_indent_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24027,6 +24265,7 @@ invalid_with_stmt_indent_rule(Parser *p)
 static void *
 invalid_try_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_try_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24206,6 +24445,7 @@ invalid_try_stmt_rule(Parser *p)
 static void *
 invalid_except_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_except_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24371,6 +24611,7 @@ invalid_except_stmt_rule(Parser *p)
 static void *
 invalid_except_star_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_except_star_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24544,6 +24785,7 @@ invalid_except_star_stmt_rule(Parser *p)
 static void *
 invalid_finally_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_finally_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24597,6 +24839,7 @@ invalid_finally_stmt_rule(Parser *p)
 static void *
 invalid_except_stmt_indent_rule(Parser *p)
 {
+p->current_rule = (int)invalid_except_stmt_indent_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24688,6 +24931,7 @@ invalid_except_stmt_indent_rule(Parser *p)
 static void *
 invalid_except_star_stmt_indent_rule(Parser *p)
 {
+p->current_rule = (int)invalid_except_star_stmt_indent_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24751,6 +24995,7 @@ invalid_except_star_stmt_indent_rule(Parser *p)
 static void *
 invalid_match_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_match_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24837,6 +25082,7 @@ invalid_match_stmt_rule(Parser *p)
 static void *
 invalid_case_block_rule(Parser *p)
 {
+p->current_rule = (int)invalid_case_block_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -24929,6 +25175,7 @@ invalid_case_block_rule(Parser *p)
 static void *
 invalid_as_pattern_rule(Parser *p)
 {
+p->current_rule = (int)invalid_as_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25008,6 +25255,7 @@ invalid_as_pattern_rule(Parser *p)
 static void *
 invalid_class_pattern_rule(Parser *p)
 {
+p->current_rule = (int)invalid_class_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25058,6 +25306,7 @@ invalid_class_pattern_rule(Parser *p)
 static asdl_pattern_seq*
 invalid_class_argument_pattern_rule(Parser *p)
 {
+p->current_rule = (int)invalid_class_argument_pattern_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25113,6 +25362,7 @@ invalid_class_argument_pattern_rule(Parser *p)
 static void *
 invalid_if_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_if_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25199,6 +25449,7 @@ invalid_if_stmt_rule(Parser *p)
 static void *
 invalid_elif_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_elif_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25283,6 +25534,7 @@ invalid_elif_stmt_rule(Parser *p)
 static void *
 invalid_else_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_else_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25369,6 +25621,7 @@ invalid_else_stmt_rule(Parser *p)
 static void *
 invalid_while_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_while_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25455,6 +25708,7 @@ invalid_while_stmt_rule(Parser *p)
 static void *
 invalid_for_stmt_rule(Parser *p)
 {
+p->current_rule = (int)invalid_for_stmt_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25561,6 +25815,7 @@ invalid_for_stmt_rule(Parser *p)
 static void *
 invalid_def_raw_rule(Parser *p)
 {
+p->current_rule = (int)invalid_def_raw_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25693,6 +25948,7 @@ invalid_def_raw_rule(Parser *p)
 static void *
 invalid_class_def_raw_rule(Parser *p)
 {
+p->current_rule = (int)invalid_class_def_raw_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25796,6 +26052,7 @@ invalid_class_def_raw_rule(Parser *p)
 static void *
 invalid_double_starred_kvpairs_rule(Parser *p)
 {
+p->current_rule = (int)invalid_double_starred_kvpairs_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -25905,6 +26162,7 @@ invalid_double_starred_kvpairs_rule(Parser *p)
 static void *
 invalid_kvpair_rule(Parser *p)
 {
+p->current_rule = (int)invalid_kvpair_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -26012,6 +26270,7 @@ invalid_kvpair_rule(Parser *p)
 static void *
 invalid_starred_expression_unpacking_rule(Parser *p)
 {
+p->current_rule = (int)invalid_starred_expression_unpacking_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -26064,6 +26323,7 @@ invalid_starred_expression_unpacking_rule(Parser *p)
 static void *
 invalid_starred_expression_rule(Parser *p)
 {
+p->current_rule = (int)invalid_starred_expression_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -26118,6 +26378,7 @@ invalid_starred_expression_rule(Parser *p)
 static void *
 invalid_fstring_replacement_field_rule(Parser *p)
 {
+p->current_rule = (int)invalid_fstring_replacement_field_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -26478,6 +26739,7 @@ invalid_fstring_replacement_field_rule(Parser *p)
 static void *
 invalid_fstring_conversion_character_rule(Parser *p)
 {
+p->current_rule = (int)invalid_fstring_conversion_character_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -26560,6 +26822,7 @@ invalid_fstring_conversion_character_rule(Parser *p)
 static void *
 invalid_tstring_replacement_field_rule(Parser *p)
 {
+p->current_rule = (int)invalid_tstring_replacement_field_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -26920,6 +27183,7 @@ invalid_tstring_replacement_field_rule(Parser *p)
 static void *
 invalid_tstring_conversion_character_rule(Parser *p)
 {
+p->current_rule = (int)invalid_tstring_conversion_character_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -26991,6 +27255,7 @@ invalid_tstring_conversion_character_rule(Parser *p)
 static void *
 invalid_arithmetic_rule(Parser *p)
 {
+p->current_rule = (int)invalid_arithmetic_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27043,6 +27308,7 @@ invalid_arithmetic_rule(Parser *p)
 static void *
 invalid_factor_rule(Parser *p)
 {
+p->current_rule = (int)invalid_factor_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27092,6 +27358,7 @@ invalid_factor_rule(Parser *p)
 static void *
 invalid_type_params_rule(Parser *p)
 {
+p->current_rule = (int)invalid_type_params_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27138,6 +27405,7 @@ invalid_type_params_rule(Parser *p)
 static asdl_seq *
 _loop0_1_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_1_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27205,6 +27473,7 @@ _loop0_1_rule(Parser *p)
 static asdl_seq *
 _loop1_2_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_2_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27277,6 +27546,7 @@ _loop1_2_rule(Parser *p)
 static asdl_seq *
 _loop0_3_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_3_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27353,6 +27623,7 @@ _loop0_3_rule(Parser *p)
 static asdl_seq *
 _gather_4_rule(Parser *p)
 {
+p->current_rule = (int)_gather_4_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27394,6 +27665,7 @@ _gather_4_rule(Parser *p)
 static void *
 _tmp_5_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_5_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27451,6 +27723,7 @@ _tmp_5_rule(Parser *p)
 static void *
 _tmp_6_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_6_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27527,6 +27800,7 @@ _tmp_6_rule(Parser *p)
 static void *
 _tmp_7_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_7_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27584,6 +27858,7 @@ _tmp_7_rule(Parser *p)
 static void *
 _tmp_8_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_8_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27641,6 +27916,7 @@ _tmp_8_rule(Parser *p)
 static void *
 _tmp_9_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_9_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27698,6 +27974,7 @@ _tmp_9_rule(Parser *p)
 static void *
 _tmp_10_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_10_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27744,6 +28021,7 @@ _tmp_10_rule(Parser *p)
 static void *
 _tmp_11_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_11_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27812,6 +28090,7 @@ _tmp_11_rule(Parser *p)
 static asdl_seq *
 _loop1_12_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_12_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27884,6 +28163,7 @@ _loop1_12_rule(Parser *p)
 static void *
 _tmp_13_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_13_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -27930,6 +28210,7 @@ _tmp_13_rule(Parser *p)
 static asdl_seq *
 _loop0_14_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_14_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28006,6 +28287,7 @@ _loop0_14_rule(Parser *p)
 static asdl_seq *
 _gather_15_rule(Parser *p)
 {
+p->current_rule = (int)_gather_15_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28047,6 +28329,7 @@ _gather_15_rule(Parser *p)
 static void *
 _tmp_16_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_16_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28104,6 +28387,7 @@ _tmp_16_rule(Parser *p)
 static void *
 _tmp_17_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_17_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28150,6 +28434,7 @@ _tmp_17_rule(Parser *p)
 static asdl_seq *
 _loop0_18_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_18_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28217,6 +28502,7 @@ _loop0_18_rule(Parser *p)
 static asdl_seq *
 _loop1_19_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_19_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28289,6 +28575,7 @@ _loop1_19_rule(Parser *p)
 static asdl_seq *
 _loop0_20_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_20_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28365,6 +28652,7 @@ _loop0_20_rule(Parser *p)
 static asdl_seq *
 _gather_21_rule(Parser *p)
 {
+p->current_rule = (int)_gather_21_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28406,6 +28694,7 @@ _gather_21_rule(Parser *p)
 static void *
 _tmp_22_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_22_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28452,6 +28741,7 @@ _tmp_22_rule(Parser *p)
 static asdl_seq *
 _loop0_23_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_23_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28528,6 +28818,7 @@ _loop0_23_rule(Parser *p)
 static asdl_seq *
 _gather_24_rule(Parser *p)
 {
+p->current_rule = (int)_gather_24_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28569,6 +28860,7 @@ _gather_24_rule(Parser *p)
 static asdl_seq *
 _loop1_25_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_25_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28641,6 +28933,7 @@ _loop1_25_rule(Parser *p)
 static void *
 _tmp_26_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_26_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28690,6 +28983,7 @@ _tmp_26_rule(Parser *p)
 static void *
 _tmp_27_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_27_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28736,6 +29030,7 @@ _tmp_27_rule(Parser *p)
 static asdl_seq *
 _loop0_28_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_28_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28803,6 +29098,7 @@ _loop0_28_rule(Parser *p)
 static asdl_seq *
 _loop0_29_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_29_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28870,6 +29166,7 @@ _loop0_29_rule(Parser *p)
 static asdl_seq *
 _loop1_30_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_30_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -28942,6 +29239,7 @@ _loop1_30_rule(Parser *p)
 static asdl_seq *
 _loop1_31_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_31_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29014,6 +29312,7 @@ _loop1_31_rule(Parser *p)
 static asdl_seq *
 _loop0_32_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_32_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29081,6 +29380,7 @@ _loop0_32_rule(Parser *p)
 static asdl_seq *
 _loop1_33_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_33_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29153,6 +29453,7 @@ _loop1_33_rule(Parser *p)
 static asdl_seq *
 _loop0_34_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_34_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29229,6 +29530,7 @@ _loop0_34_rule(Parser *p)
 static asdl_seq *
 _gather_35_rule(Parser *p)
 {
+p->current_rule = (int)_gather_35_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29270,6 +29572,7 @@ _gather_35_rule(Parser *p)
 static void *
 _tmp_36_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_36_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29346,6 +29649,7 @@ _tmp_36_rule(Parser *p)
 static asdl_seq *
 _loop1_37_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_37_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29418,6 +29722,7 @@ _loop1_37_rule(Parser *p)
 static asdl_seq *
 _loop1_38_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_38_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29490,6 +29795,7 @@ _loop1_38_rule(Parser *p)
 static asdl_seq *
 _loop1_39_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_39_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29562,6 +29868,7 @@ _loop1_39_rule(Parser *p)
 static asdl_seq *
 _loop0_40_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_40_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29638,6 +29945,7 @@ _loop0_40_rule(Parser *p)
 static asdl_seq *
 _gather_41_rule(Parser *p)
 {
+p->current_rule = (int)_gather_41_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29679,6 +29987,7 @@ _gather_41_rule(Parser *p)
 static void *
 _tmp_42_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_42_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29736,6 +30045,7 @@ _tmp_42_rule(Parser *p)
 static void *
 _tmp_43_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_43_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29812,6 +30122,7 @@ _tmp_43_rule(Parser *p)
 static void *
 _tmp_44_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_44_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29888,6 +30199,7 @@ _tmp_44_rule(Parser *p)
 static asdl_seq *
 _loop0_45_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_45_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -29964,6 +30276,7 @@ _loop0_45_rule(Parser *p)
 static asdl_seq *
 _gather_46_rule(Parser *p)
 {
+p->current_rule = (int)_gather_46_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30005,6 +30318,7 @@ _gather_46_rule(Parser *p)
 static asdl_seq *
 _loop0_47_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_47_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30081,6 +30395,7 @@ _loop0_47_rule(Parser *p)
 static asdl_seq *
 _gather_48_rule(Parser *p)
 {
+p->current_rule = (int)_gather_48_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30122,6 +30437,7 @@ _gather_48_rule(Parser *p)
 static void *
 _tmp_49_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_49_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30179,6 +30495,7 @@ _tmp_49_rule(Parser *p)
 static asdl_seq *
 _loop0_50_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_50_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30255,6 +30572,7 @@ _loop0_50_rule(Parser *p)
 static asdl_seq *
 _gather_51_rule(Parser *p)
 {
+p->current_rule = (int)_gather_51_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30296,6 +30614,7 @@ _gather_51_rule(Parser *p)
 static asdl_seq *
 _loop0_52_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_52_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30372,6 +30691,7 @@ _loop0_52_rule(Parser *p)
 static asdl_seq *
 _gather_53_rule(Parser *p)
 {
+p->current_rule = (int)_gather_53_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30413,6 +30733,7 @@ _gather_53_rule(Parser *p)
 static asdl_seq *
 _loop0_54_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_54_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30489,6 +30810,7 @@ _loop0_54_rule(Parser *p)
 static asdl_seq *
 _gather_55_rule(Parser *p)
 {
+p->current_rule = (int)_gather_55_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30530,6 +30852,7 @@ _gather_55_rule(Parser *p)
 static asdl_seq *
 _loop1_56_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_56_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30602,6 +30925,7 @@ _loop1_56_rule(Parser *p)
 static asdl_seq *
 _loop1_57_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_57_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30674,6 +30998,7 @@ _loop1_57_rule(Parser *p)
 static asdl_seq *
 _loop0_58_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_58_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30750,6 +31075,7 @@ _loop0_58_rule(Parser *p)
 static asdl_seq *
 _gather_59_rule(Parser *p)
 {
+p->current_rule = (int)_gather_59_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30791,6 +31117,7 @@ _gather_59_rule(Parser *p)
 static asdl_seq *
 _loop1_60_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_60_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30863,6 +31190,7 @@ _loop1_60_rule(Parser *p)
 static asdl_seq *
 _loop1_61_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_61_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -30935,6 +31263,7 @@ _loop1_61_rule(Parser *p)
 static asdl_seq *
 _loop1_62_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_62_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31007,6 +31336,7 @@ _loop1_62_rule(Parser *p)
 static void *
 _tmp_63_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_63_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31050,6 +31380,7 @@ _tmp_63_rule(Parser *p)
 static asdl_seq *
 _loop0_64_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_64_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31126,6 +31457,7 @@ _loop0_64_rule(Parser *p)
 static asdl_seq *
 _gather_65_rule(Parser *p)
 {
+p->current_rule = (int)_gather_65_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31167,6 +31499,7 @@ _gather_65_rule(Parser *p)
 static void *
 _tmp_66_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_66_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31213,6 +31546,7 @@ _tmp_66_rule(Parser *p)
 static void *
 _tmp_67_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_67_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31289,6 +31623,7 @@ _tmp_67_rule(Parser *p)
 static void *
 _tmp_68_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_68_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31346,6 +31681,7 @@ _tmp_68_rule(Parser *p)
 static void *
 _tmp_69_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_69_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31441,6 +31777,7 @@ _tmp_69_rule(Parser *p)
 static void *
 _tmp_70_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_70_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31498,6 +31835,7 @@ _tmp_70_rule(Parser *p)
 static asdl_seq *
 _loop0_71_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_71_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31565,6 +31903,7 @@ _loop0_71_rule(Parser *p)
 static asdl_seq *
 _loop0_72_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_72_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31632,6 +31971,7 @@ _loop0_72_rule(Parser *p)
 static asdl_seq *
 _loop1_73_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_73_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31704,6 +32044,7 @@ _loop1_73_rule(Parser *p)
 static asdl_seq *
 _loop1_74_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_74_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31776,6 +32117,7 @@ _loop1_74_rule(Parser *p)
 static asdl_seq *
 _loop0_75_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_75_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31843,6 +32185,7 @@ _loop0_75_rule(Parser *p)
 static asdl_seq *
 _loop1_76_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_76_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31915,6 +32258,7 @@ _loop1_76_rule(Parser *p)
 static asdl_seq *
 _loop0_77_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_77_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -31982,6 +32326,7 @@ _loop0_77_rule(Parser *p)
 static asdl_seq *
 _loop0_78_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_78_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32049,6 +32394,7 @@ _loop0_78_rule(Parser *p)
 static asdl_seq *
 _loop0_79_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_79_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32116,6 +32462,7 @@ _loop0_79_rule(Parser *p)
 static asdl_seq *
 _loop0_80_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_80_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32183,6 +32530,7 @@ _loop0_80_rule(Parser *p)
 static asdl_seq *
 _loop1_81_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_81_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32255,6 +32603,7 @@ _loop1_81_rule(Parser *p)
 static void *
 _tmp_82_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_82_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32304,6 +32653,7 @@ _tmp_82_rule(Parser *p)
 static asdl_seq *
 _loop0_83_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_83_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32380,6 +32730,7 @@ _loop0_83_rule(Parser *p)
 static asdl_seq *
 _gather_84_rule(Parser *p)
 {
+p->current_rule = (int)_gather_84_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32421,6 +32772,7 @@ _gather_84_rule(Parser *p)
 static asdl_seq *
 _loop1_85_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_85_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32493,6 +32845,7 @@ _loop1_85_rule(Parser *p)
 static asdl_seq *
 _loop0_86_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_86_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32560,6 +32913,7 @@ _loop0_86_rule(Parser *p)
 static void *
 _tmp_87_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_87_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32619,6 +32973,7 @@ _tmp_87_rule(Parser *p)
 static asdl_seq *
 _loop0_88_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_88_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32696,6 +33051,7 @@ _loop0_88_rule(Parser *p)
 static asdl_seq *
 _gather_89_rule(Parser *p)
 {
+p->current_rule = (int)_gather_89_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32737,6 +33093,7 @@ _gather_89_rule(Parser *p)
 static void *
 _tmp_90_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_90_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32783,6 +33140,7 @@ _tmp_90_rule(Parser *p)
 static asdl_seq *
 _loop0_91_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_91_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32859,6 +33217,7 @@ _loop0_91_rule(Parser *p)
 static asdl_seq *
 _gather_92_rule(Parser *p)
 {
+p->current_rule = (int)_gather_92_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32900,6 +33259,7 @@ _gather_92_rule(Parser *p)
 static asdl_seq *
 _loop0_93_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_93_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -32976,6 +33336,7 @@ _loop0_93_rule(Parser *p)
 static asdl_seq *
 _gather_94_rule(Parser *p)
 {
+p->current_rule = (int)_gather_94_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33017,6 +33378,7 @@ _gather_94_rule(Parser *p)
 static asdl_seq *
 _loop0_95_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_95_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33084,6 +33446,7 @@ _loop0_95_rule(Parser *p)
 static asdl_seq *
 _loop0_96_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_96_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33160,6 +33523,7 @@ _loop0_96_rule(Parser *p)
 static asdl_seq *
 _gather_97_rule(Parser *p)
 {
+p->current_rule = (int)_gather_97_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33201,6 +33565,7 @@ _gather_97_rule(Parser *p)
 static asdl_seq *
 _loop1_98_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_98_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33273,6 +33638,7 @@ _loop1_98_rule(Parser *p)
 static void *
 _tmp_99_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_99_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33313,6 +33679,7 @@ _tmp_99_rule(Parser *p)
 static asdl_seq *
 _loop0_100_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_100_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33389,6 +33756,7 @@ _loop0_100_rule(Parser *p)
 static asdl_seq *
 _gather_101_rule(Parser *p)
 {
+p->current_rule = (int)_gather_101_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33430,6 +33798,7 @@ _gather_101_rule(Parser *p)
 static asdl_seq *
 _loop0_102_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_102_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33506,6 +33875,7 @@ _loop0_102_rule(Parser *p)
 static asdl_seq *
 _gather_103_rule(Parser *p)
 {
+p->current_rule = (int)_gather_103_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33547,6 +33917,7 @@ _gather_103_rule(Parser *p)
 static void *
 _tmp_104_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_104_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33590,6 +33961,7 @@ _tmp_104_rule(Parser *p)
 static void *
 _tmp_105_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_105_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33647,6 +34019,7 @@ _tmp_105_rule(Parser *p)
 static asdl_seq *
 _loop0_106_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_106_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33723,6 +34096,7 @@ _loop0_106_rule(Parser *p)
 static asdl_seq *
 _gather_107_rule(Parser *p)
 {
+p->current_rule = (int)_gather_107_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33764,6 +34138,7 @@ _gather_107_rule(Parser *p)
 static void *
 _tmp_108_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_108_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33824,6 +34199,7 @@ _tmp_108_rule(Parser *p)
 static void *
 _tmp_109_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_109_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33865,6 +34241,7 @@ _tmp_109_rule(Parser *p)
 static void *
 _tmp_110_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_110_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33922,6 +34299,7 @@ _tmp_110_rule(Parser *p)
 static void *
 _tmp_111_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_111_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -33998,6 +34376,7 @@ _tmp_111_rule(Parser *p)
 static void *
 _tmp_112_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_112_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34039,6 +34418,7 @@ _tmp_112_rule(Parser *p)
 static asdl_seq *
 _loop1_113_rule(Parser *p)
 {
+p->current_rule = (int)_loop1_113_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34111,6 +34491,7 @@ _loop1_113_rule(Parser *p)
 static void *
 _tmp_114_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_114_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34171,6 +34552,7 @@ _tmp_114_rule(Parser *p)
 static void *
 _tmp_115_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_115_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34228,6 +34610,7 @@ _tmp_115_rule(Parser *p)
 static void *
 _tmp_116_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_116_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34304,6 +34687,7 @@ _tmp_116_rule(Parser *p)
 static void *
 _tmp_117_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_117_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34361,6 +34745,7 @@ _tmp_117_rule(Parser *p)
 static void *
 _tmp_118_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_118_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34494,6 +34879,7 @@ _tmp_118_rule(Parser *p)
 static asdl_seq *
 _loop0_119_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_119_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34561,6 +34947,7 @@ _loop0_119_rule(Parser *p)
 static asdl_seq *
 _loop0_120_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_120_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34628,6 +35015,7 @@ _loop0_120_rule(Parser *p)
 static void *
 _tmp_121_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_121_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34704,6 +35092,7 @@ _tmp_121_rule(Parser *p)
 static void *
 _tmp_122_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_122_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34761,6 +35150,7 @@ _tmp_122_rule(Parser *p)
 static void *
 _tmp_123_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_123_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34818,6 +35208,7 @@ _tmp_123_rule(Parser *p)
 static void *
 _tmp_124_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_124_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34875,6 +35266,7 @@ _tmp_124_rule(Parser *p)
 static void *
 _tmp_125_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_125_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34932,6 +35324,7 @@ _tmp_125_rule(Parser *p)
 static void *
 _tmp_126_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_126_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -34992,6 +35385,7 @@ _tmp_126_rule(Parser *p)
 static void *
 _tmp_127_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_127_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35049,6 +35443,7 @@ _tmp_127_rule(Parser *p)
 static void *
 _tmp_128_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_128_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35125,6 +35520,7 @@ _tmp_128_rule(Parser *p)
 static void *
 _tmp_129_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_129_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35182,6 +35578,7 @@ _tmp_129_rule(Parser *p)
 static asdl_seq *
 _loop0_130_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_130_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35258,6 +35655,7 @@ _loop0_130_rule(Parser *p)
 static asdl_seq *
 _gather_131_rule(Parser *p)
 {
+p->current_rule = (int)_gather_131_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35299,6 +35697,7 @@ _gather_131_rule(Parser *p)
 static void *
 _tmp_132_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_132_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35356,6 +35755,7 @@ _tmp_132_rule(Parser *p)
 static void *
 _tmp_133_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_133_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35416,6 +35816,7 @@ _tmp_133_rule(Parser *p)
 static void *
 _tmp_134_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_134_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35473,6 +35874,7 @@ _tmp_134_rule(Parser *p)
 static void *
 _tmp_135_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_135_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35518,6 +35920,7 @@ _tmp_135_rule(Parser *p)
 static asdl_seq *
 _loop0_136_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_136_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35594,6 +35997,7 @@ _loop0_136_rule(Parser *p)
 static asdl_seq *
 _gather_137_rule(Parser *p)
 {
+p->current_rule = (int)_gather_137_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35635,6 +36039,7 @@ _gather_137_rule(Parser *p)
 static void *
 _tmp_138_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_138_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35676,6 +36081,7 @@ _tmp_138_rule(Parser *p)
 static asdl_seq *
 _loop0_139_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_139_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35752,6 +36158,7 @@ _loop0_139_rule(Parser *p)
 static asdl_seq *
 _gather_140_rule(Parser *p)
 {
+p->current_rule = (int)_gather_140_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35793,6 +36200,7 @@ _gather_140_rule(Parser *p)
 static asdl_seq *
 _loop0_141_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_141_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35869,6 +36277,7 @@ _loop0_141_rule(Parser *p)
 static asdl_seq *
 _gather_142_rule(Parser *p)
 {
+p->current_rule = (int)_gather_142_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35910,6 +36319,7 @@ _gather_142_rule(Parser *p)
 static void *
 _tmp_143_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_143_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -35967,6 +36377,7 @@ _tmp_143_rule(Parser *p)
 static asdl_seq *
 _loop0_144_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_144_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36034,6 +36445,7 @@ _loop0_144_rule(Parser *p)
 static void *
 _tmp_145_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_145_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36076,6 +36488,7 @@ _tmp_145_rule(Parser *p)
 static void *
 _tmp_146_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_146_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36133,6 +36546,7 @@ _tmp_146_rule(Parser *p)
 static void *
 _tmp_147_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_147_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36174,6 +36588,7 @@ _tmp_147_rule(Parser *p)
 static void *
 _tmp_148_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_148_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36231,6 +36646,7 @@ _tmp_148_rule(Parser *p)
 static void *
 _tmp_149_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_149_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36326,6 +36742,7 @@ _tmp_149_rule(Parser *p)
 static void *
 _tmp_150_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_150_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36402,6 +36819,7 @@ _tmp_150_rule(Parser *p)
 static void *
 _tmp_151_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_151_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36443,6 +36861,7 @@ _tmp_151_rule(Parser *p)
 static void *
 _tmp_152_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_152_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36500,6 +36919,7 @@ _tmp_152_rule(Parser *p)
 static void *
 _tmp_153_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_153_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36652,6 +37072,7 @@ _tmp_153_rule(Parser *p)
 static void *
 _tmp_154_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_154_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36728,6 +37149,7 @@ _tmp_154_rule(Parser *p)
 static void *
 _tmp_155_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_155_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36774,6 +37196,7 @@ _tmp_155_rule(Parser *p)
 static void *
 _tmp_156_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_156_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36831,6 +37254,7 @@ _tmp_156_rule(Parser *p)
 static void *
 _tmp_157_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_157_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36880,6 +37304,7 @@ _tmp_157_rule(Parser *p)
 static void *
 _tmp_158_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_158_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36926,6 +37351,7 @@ _tmp_158_rule(Parser *p)
 static void *
 _tmp_159_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_159_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -36972,6 +37398,7 @@ _tmp_159_rule(Parser *p)
 static void *
 _tmp_160_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_160_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37018,6 +37445,7 @@ _tmp_160_rule(Parser *p)
 static void *
 _tmp_161_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_161_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37075,6 +37503,7 @@ _tmp_161_rule(Parser *p)
 static void *
 _tmp_162_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_162_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37151,6 +37580,7 @@ _tmp_162_rule(Parser *p)
 static void *
 _tmp_163_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_163_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37197,6 +37627,7 @@ _tmp_163_rule(Parser *p)
 static void *
 _tmp_164_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_164_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37256,6 +37687,7 @@ _tmp_164_rule(Parser *p)
 static void *
 _tmp_165_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_165_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37303,6 +37735,7 @@ _tmp_165_rule(Parser *p)
 static void *
 _tmp_166_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_166_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37347,6 +37780,7 @@ _tmp_166_rule(Parser *p)
 static void *
 _tmp_167_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_167_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37387,6 +37821,7 @@ _tmp_167_rule(Parser *p)
 static void *
 _tmp_168_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_168_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37427,6 +37862,7 @@ _tmp_168_rule(Parser *p)
 static void *
 _tmp_169_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_169_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37484,6 +37920,7 @@ _tmp_169_rule(Parser *p)
 static void *
 _tmp_170_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_170_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37541,6 +37978,7 @@ _tmp_170_rule(Parser *p)
 static asdl_seq *
 _loop0_171_rule(Parser *p)
 {
+p->current_rule = (int)_loop0_171_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37608,6 +38046,7 @@ _loop0_171_rule(Parser *p)
 static void *
 _tmp_172_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_172_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37684,6 +38123,7 @@ _tmp_172_rule(Parser *p)
 static void *
 _tmp_173_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_173_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37726,6 +38166,7 @@ _tmp_173_rule(Parser *p)
 static void *
 _tmp_174_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_174_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37768,6 +38209,7 @@ _tmp_174_rule(Parser *p)
 static void *
 _tmp_175_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_175_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
@@ -37809,6 +38251,7 @@ _tmp_175_rule(Parser *p)
 static void *
 _tmp_176_rule(Parser *p)
 {
+p->current_rule = (int)_tmp_176_type;
     if (p->level++ == MAXSTACK || _Py_ReachedRecursionLimitWithMargin(PyThreadState_Get(), 1)) {
         _Pypegen_stack_overflow(p);
     }
