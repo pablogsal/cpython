@@ -21,6 +21,7 @@ extern "C" {
 #define FUNC_MAX_WATCHERS 8
 #define TYPE_MAX_WATCHERS 8
 
+#define PROFILE_SIZE_CLASSES 16  // Number of size classes for profile allocator
 
 #ifdef Py_GIL_DISABLED
 // This should be prime but otherwise the choice is arbitrary. A larger value
@@ -601,6 +602,15 @@ struct _Py_mem_interp_free_queue {
     struct llist_node head;  // queue of _mem_work_chunk items
 };
 
+// Profile allocator state
+struct _profile_allocator_state {
+    void *arena;                    // Base address of mmap'd area
+    size_t arena_size;              // Size of mmap'd area
+    size_t used;                    // Bytes used in arena
+    void *free_lists[PROFILE_SIZE_CLASSES];  // Free lists for each size class
+    PyMutex mutex;                  // Mutex for thread safety
+};
+
 
 /****** Unicode state *********/
 
@@ -821,6 +831,7 @@ struct _is {
     PyThreadState* _finalizing;
     /* The ID of the OS thread in which we are finalizing. */
     unsigned long _finalizing_id;
+    struct _profile_allocator_state profile_allocator;  // Profile allocator state
 
     struct _gc_runtime_state gc;
 
@@ -932,7 +943,6 @@ struct _is {
     struct _Py_dict_state dict_state;
     struct _Py_exc_state exc_state;
     struct _Py_mem_interp_free_queue mem_free_queue;
-
     struct ast_state ast;
     struct types_state types;
     struct callable_cache callable_cache;

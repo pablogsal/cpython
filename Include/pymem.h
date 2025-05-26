@@ -96,6 +96,21 @@ PyAPI_FUNC(void *) PyMem_RawMalloc(size_t size);
 PyAPI_FUNC(void *) PyMem_RawCalloc(size_t nelem, size_t elsize);
 PyAPI_FUNC(void *) PyMem_RawRealloc(void *ptr, size_t new_size);
 PyAPI_FUNC(void) PyMem_RawFree(void *ptr);
+
+// Profile memory allocator for PyThreadState and data chunks
+// Uses a 1GB mmap'd area for lazy loading and maintains a free list
+// Falls back to PyMem_RawMalloc for allocations that don't match size classes
+PyAPI_FUNC(void *) PyProfile_Malloc(void *interp, size_t size);
+PyAPI_FUNC(void *) PyProfile_Calloc(void *interp, size_t nelem, size_t elsize);
+PyAPI_FUNC(void *) PyProfile_Realloc(void *interp, void *ptr, size_t new_size);
+PyAPI_FUNC(void) PyProfile_Free(void *interp, void *ptr);
+
+// Initialize the profile allocator for the current interpreter
+// Returns 0 on success, -1 on failure
+PyAPI_FUNC(int) PyProfile_InitAllocator(void *interp);
+
+// Free the profile allocator for the current interpreter
+PyAPI_FUNC(void) PyProfile_FreeAllocator(void *interp);
 #endif
 
 #ifndef Py_LIMITED_API

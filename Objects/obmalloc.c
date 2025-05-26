@@ -9,6 +9,7 @@
 #include "pycore_pymem.h"
 #include "pycore_pystate.h"       // _PyInterpreterState_GET
 #include "pycore_stats.h"         // OBJECT_STAT_INC_COND()
+#include "pycore_lock.h"  // For PyMutex
 
 #include <stdlib.h>               // malloc()
 #include <stdbool.h>
@@ -44,6 +45,14 @@ static void set_up_debug_hooks_unlocked(void);
 static void get_allocator_unlocked(PyMemAllocatorDomain, PyMemAllocatorEx *);
 static void set_allocator_unlocked(PyMemAllocatorDomain, PyMemAllocatorEx *);
 
+// Forward declarations
+static void *profile_malloc(void *ctx, size_t size);
+static void *profile_calloc(void *ctx, size_t nelem, size_t elsize);
+static void *profile_realloc(void *ctx, void *ptr, size_t new_size);
+static void profile_free(void *ctx, void *ptr);
+
+// Define the profile allocator
+#define PROFILE_ALLOC {NULL, profile_malloc, profile_calloc, profile_realloc, profile_free}
 
 /***************************************/
 /* low-level allocator implementations */
@@ -490,7 +499,6 @@ set_default_allocator_unlocked(PyMemAllocatorDomain domain, int debug,
         get_allocator_unlocked(domain, old_alloc);
     }
 
-
     PyMemAllocatorEx new_alloc;
     switch(domain)
     {
@@ -502,6 +510,9 @@ set_default_allocator_unlocked(PyMemAllocatorDomain domain, int debug,
         break;
     case PYMEM_DOMAIN_OBJ:
         new_alloc = (PyMemAllocatorEx)PYOBJ_ALLOC;
+        break;
+    case PYMEM_DOMAIN_PROFILE:
+        new_alloc = (PyMemAllocatorEx)PROFILE_ALLOC;
         break;
     default:
         /* unknown domain */
@@ -3557,3 +3568,260 @@ _PyObject_DebugMallocStats(FILE *out)
 }
 
 #endif /* #ifdef WITH_PYMALLOC */
+
+/*************************/
+/* the "profile" allocator */
+/*************************/
+
+#define PROFILE_ARENA_SIZE (1024 * 1024 * 1024)  // 1GB
+#define PROFILE_SIZE_CLASSES 16
+#define PROFILE_MIN_SIZE 16
+#define PROFILE_MAX_SIZE (PROFILE_MIN_SIZE << (PROFILE_SIZE_CLASSES - 1))
+
+typedef struct {
+    void *arena;                    // Base address of mmap'd area
+    size_t arena_size;              // Size of mmap'd area
+    size_t used;                    // Bytes used in arena
+    void *free_lists[PROFILE_SIZE_CLASSES];  // Free lists for each size class
+    PyMutex mutex;                  // Mutex for thread safety
+} ProfileAllocator;
+
+// Get size class index for a given size
+static int
+get_size_class(size_t size)
+{
+    if (size < PROFILE_MIN_SIZE) {
+        size = PROFILE_MIN_SIZE;
+    }
+    if (size > PROFILE_MAX_SIZE) {
+        return -1;  // Too large for size classes
+    }
+
+    int idx = 0;
+    size_t class_size = PROFILE_MIN_SIZE;
+    while (class_size < size) {
+        class_size <<= 1;
+        idx++;
+    }
+    return idx;
+}
+
+// Allocate from the profile allocator
+
+static int profile_allocator_init(PyInterpreterState *interp);
+
+static void *
+profile_malloc(void *ctx, size_t size)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)ctx;
+    if (size == 0) {
+        return NULL;
+    }
+
+    PyMutex_Lock(&interp->profile_allocator.mutex);
+
+    // Initialize if needed
+    if (interp->profile_allocator.arena == NULL) {
+        if (profile_allocator_init(interp) < 0) {
+            PyMutex_Unlock(&interp->profile_allocator.mutex);
+            return PyMem_RawMalloc(size);  // Fall back to raw malloc
+        }
+    }
+
+    // Check if size fits in a size class
+    int size_class = get_size_class(size);
+    if (size_class < 0) {
+        PyMutex_Unlock(&interp->profile_allocator.mutex);
+        return PyMem_RawMalloc(size);  // Too large, fall back to raw malloc
+    }
+
+    // Try to get from free list first
+    void **free_list = &interp->profile_allocator.free_lists[size_class];
+    if (*free_list != NULL) {
+        void *ptr = *free_list;
+        *free_list = *(void **)ptr;  // Update free list
+        PyMutex_Unlock(&interp->profile_allocator.mutex);
+        return ptr;
+    }
+
+    // Allocate from arena
+    size_t class_size = PROFILE_MIN_SIZE << size_class;
+    if (interp->profile_allocator.used + class_size > interp->profile_allocator.arena_size) {
+        PyMutex_Unlock(&interp->profile_allocator.mutex);
+        return PyMem_RawMalloc(size);  // Arena full, fall back to raw malloc
+    }
+
+    void *ptr = (char *)interp->profile_allocator.arena + interp->profile_allocator.used;
+    interp->profile_allocator.used += class_size;
+    PyMutex_Unlock(&interp->profile_allocator.mutex);
+    return ptr;
+}
+
+// Free memory back to the profile allocator
+static void
+profile_free(void *ctx, void *ptr)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)ctx;
+    if (ptr == NULL) {
+        return;
+    }
+
+    // Check if pointer is in our arena
+    if (ptr < interp->profile_allocator.arena ||
+        ptr >= (char *)interp->profile_allocator.arena + interp->profile_allocator.arena_size) {
+        PyMem_RawFree(ptr);  // Not in our arena, use raw free
+        return;
+    }
+
+    PyMutex_Lock(&interp->profile_allocator.mutex);
+
+    // Find size class by scanning arena
+    size_t offset = (char *)ptr - (char *)interp->profile_allocator.arena;
+    int size_class = 0;
+    size_t class_size = PROFILE_MIN_SIZE;
+    while (offset >= class_size) {
+        class_size <<= 1;
+        size_class++;
+    }
+
+    // Add to free list
+    void **free_list = &interp->profile_allocator.free_lists[size_class];
+    *(void **)ptr = *free_list;
+    *free_list = ptr;
+
+    PyMutex_Unlock(&interp->profile_allocator.mutex);
+}
+
+// Reallocate memory
+static void *
+profile_realloc(void *ctx, void *ptr, size_t new_size)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)ctx;
+    if (ptr == NULL) {
+        return profile_malloc(ctx, new_size);
+    }
+
+    // Check if pointer is in our arena
+    if (ptr < interp->profile_allocator.arena ||
+        ptr >= (char *)interp->profile_allocator.arena + interp->profile_allocator.arena_size) {
+        return PyMem_RawRealloc(ptr, new_size);  // Not in our arena, use raw realloc
+    }
+
+    // Find current size class
+    size_t offset = (char *)ptr - (char *)interp->profile_allocator.arena;
+    int old_size_class = 0;
+    size_t old_class_size = PROFILE_MIN_SIZE;
+    while (offset >= old_class_size) {
+        old_class_size <<= 1;
+        old_size_class++;
+    }
+
+    // Get new size class
+    int new_size_class = get_size_class(new_size);
+    if (new_size_class < 0) {
+        // New size is too large for size classes
+        void *new_ptr = PyMem_RawMalloc(new_size);
+        if (new_ptr != NULL) {
+            memcpy(new_ptr, ptr, old_class_size);
+            profile_free(ctx, ptr);
+        }
+        return new_ptr;
+    }
+
+    // If size class hasn't changed, return same pointer
+    if (new_size_class == old_size_class) {
+        return ptr;
+    }
+
+    // Need to reallocate
+    void *new_ptr = profile_malloc(ctx, new_size);
+    if (new_ptr != NULL) {
+        memcpy(new_ptr, ptr, old_class_size);
+        profile_free(ctx, ptr);
+    }
+    return new_ptr;
+}
+
+// Calloc implementation
+static void *
+profile_calloc(void *ctx, size_t nelem, size_t elsize)
+{
+    size_t size = nelem * elsize;
+    void *ptr = profile_malloc(ctx, size);
+    if (ptr != NULL) {
+        memset(ptr, 0, size);
+    }
+    return ptr;
+}
+
+// Define the profile allocator
+#define PROFILE_ALLOC {NULL, profile_malloc, profile_calloc, profile_realloc, profile_free}
+
+// Public API functions for profile allocator
+void *
+PyProfile_Malloc(void *is, size_t size)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)is;
+    return profile_malloc(interp, size);
+}
+
+void *
+PyProfile_Calloc(void *is, size_t nelem, size_t elsize)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)is;
+    size_t size = nelem * elsize;
+    void *ptr = profile_malloc(interp, size);
+    if (ptr != NULL) {
+        memset(ptr, 0, size);
+    }
+    return ptr;
+}
+
+void *
+PyProfile_Realloc(void *is, void *ptr, size_t new_size)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)is;
+    return profile_realloc(interp, ptr, new_size);
+}
+
+void
+PyProfile_Free(void *is, void *ptr)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)is;
+    profile_free(interp, ptr);
+}
+
+static int
+profile_allocator_init(PyInterpreterState *interp)
+{
+    // Allocate arena
+    interp->profile_allocator.arena = PyMem_RawMalloc(PROFILE_ARENA_SIZE);
+    if (interp->profile_allocator.arena == NULL) {
+        return -1;
+    }
+
+    interp->profile_allocator.arena_size = PROFILE_ARENA_SIZE;
+    interp->profile_allocator.used = 0;
+    memset(interp->profile_allocator.free_lists, 0, sizeof(interp->profile_allocator.free_lists));
+    return 0;
+}
+
+int
+PyProfile_InitAllocator(void *is)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)is;
+    return profile_allocator_init(interp);
+}
+
+void
+PyProfile_FreeAllocator(void *is)
+{
+    PyInterpreterState *interp = (PyInterpreterState *)is;
+    if (interp->profile_allocator.arena != NULL) {
+        PyMem_RawFree(interp->profile_allocator.arena);
+        interp->profile_allocator.arena = NULL;
+        interp->profile_allocator.arena_size = 0;
+        interp->profile_allocator.used = 0;
+        memset(interp->profile_allocator.free_lists, 0, sizeof(interp->profile_allocator.free_lists));
+    }
+}

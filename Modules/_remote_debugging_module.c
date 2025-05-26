@@ -2336,6 +2336,21 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
     }
 #endif
 
+    // Prefetch profile allocator memory using the buffer we already have
+    uintptr_t profile_arena = GET_MEMBER(uintptr_t, interp_state_buffer,
+            self->debug_offsets.interpreter_state.profile_allocator_arena);
+    size_t profile_arena_size = GET_MEMBER(size_t, interp_state_buffer,
+            self->debug_offsets.interpreter_state.profile_allocator_used);
+
+    if (profile_arena != 0 && profile_arena_size != 0) {
+        if (_Py_RemoteDebug_PrefetchChunk(
+                &self->handle,
+                profile_arena,
+                profile_arena_size) < 0) {
+            goto exit;
+        }
+    }
+
     uintptr_t current_tstate;
     if (self->tstate_addr == 0) {
         // Get threads head from buffer
@@ -2371,7 +2386,7 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
     }
 
 exit:
-   _Py_RemoteDebug_ClearCache(&self->handle);
+    _Py_RemoteDebug_ClearCache(&self->handle);
     return result;
 }
 

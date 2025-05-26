@@ -181,18 +181,16 @@ def benchmark(unwinder, duration_seconds=10):
         f"{colors.BOLD_BLUE}Benchmarking sampling speed for {duration_seconds} seconds...{colors.RESET}"
     )
 
-    import traceback
     try:
-        while time.perf_counter() < end_time:
+        while True or time.perf_counter() < end_time:
             work_start = time.perf_counter()
             try:
                 stack_trace = unwinder.get_stack_trace()
                 if stack_trace:
                     sample_count += 1
             except (OSError, RuntimeError, UnicodeDecodeError) as e:
-                traceback.print_exception(e)
-                print(e)
-                
+                fail_count += 1
+
             work_end = time.perf_counter()
             total_work_time += work_end - work_start
 
@@ -422,7 +420,7 @@ def main():
                 print(f"{colors.BLUE}Initializing unwinder...{colors.RESET}")
                 try:
                     unwinder = _remote_debugging.RemoteUnwinder(
-                        process.pid, all_threads=True, debug=True
+                        process.pid, all_threads=True
                     )
                     results = benchmark(unwinder, duration_seconds=args.duration)
                 finally:

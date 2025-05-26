@@ -1,4 +1,3 @@
-
 /* Thread and interpreter state structures and their interfaces */
 
 #include "Python.h"
@@ -478,6 +477,9 @@ alloc_interpreter(void)
 static void
 free_interpreter(PyInterpreterState *interp)
 {
+    // Free the profile allocator
+    PyProfile_FreeAllocator((void*)interp);
+
     // The main interpreter is statically allocated so
     // should not be freed.
     if (interp != &_PyRuntime._main_interpreter) {
@@ -486,6 +488,7 @@ free_interpreter(PyInterpreterState *interp)
             PyMem_RawFree(interp->obmalloc);
             interp->obmalloc = NULL;
         }
+
         assert(_Py_IS_ALIGNED(interp, _Alignof(PyInterpreterState)));
         PyMem_RawFree(interp->_malloced);
     }
@@ -542,6 +545,15 @@ init_interpreter(PyInterpreterState *interp,
 
     interp->threads.preallocated = &interp->_initial_thread;
 
+    // Initialize profile allocator state
+    interp->profile_allocator.arena = NULL;
+    interp->profile_allocator.arena_size = 0;
+    interp->profile_allocator.used = 0;
+    for (int i = 0; i < PROFILE_SIZE_CLASSES; i++) {
+        interp->profile_allocator.free_lists[i] = NULL;
+    }
+    interp->profile_allocator.mutex = (PyMutex){0};
+
     // We would call _PyObject_InitState() at this point
     // if interp->feature_flags were alredy set.
 
@@ -573,36 +585,11 @@ init_interpreter(PyInterpreterState *interp,
     interp->executor_deletion_list_head = NULL;
     interp->executor_deletion_list_remaining_capacity = 0;
     interp->trace_run_counter = JIT_CLEANUP_THRESHOLD;
-    if (interp != &runtime->_main_interpreter) {
-        /* Fix the self-referential, statically initialized fields. */
-        interp->dtoa = (struct _dtoa_state)_dtoa_state_INIT(interp);
+
+    // Initialize the profile allocator
+    if (PyProfile_InitAllocator((void*)interp) < 0) {
+        return _PyStatus_NO_MEMORY();
     }
-#if !defined(Py_GIL_DISABLED) && defined(Py_STACKREF_DEBUG)
-    interp->next_stackref = INITIAL_STACKREF_INDEX;
-    _Py_hashtable_allocator_t alloc = {
-        .malloc = malloc,
-        .free = free,
-    };
-    interp->open_stackrefs_table = _Py_hashtable_new_full(
-        _Py_hashtable_hash_ptr,
-        _Py_hashtable_compare_direct,
-        NULL,
-        NULL,
-        &alloc
-    );
-#  ifdef Py_STACKREF_CLOSE_DEBUG
-    interp->closed_stackrefs_table = _Py_hashtable_new_full(
-        _Py_hashtable_hash_ptr,
-        _Py_hashtable_compare_direct,
-        NULL,
-        NULL,
-        &alloc
-    );
-#  endif
-    _Py_stackref_associate(interp, Py_None, PyStackRef_None);
-    _Py_stackref_associate(interp, Py_False, PyStackRef_False);
-    _Py_stackref_associate(interp, Py_True, PyStackRef_True);
-#endif
 
     interp->_initialized = 1;
     return _PyStatus_OK();
@@ -1352,10 +1339,10 @@ tstate_is_alive(PyThreadState *tstate)
 //----------
 
 static _PyStackChunk*
-allocate_chunk(int size_in_bytes, _PyStackChunk* previous)
+allocate_chunk(PyThreadState *tstate, int size_in_bytes, _PyStackChunk* previous)
 {
     assert(size_in_bytes % sizeof(PyObject **) == 0);
-    _PyStackChunk *res = _PyObject_VirtualAlloc(size_in_bytes);
+    _PyStackChunk *res = (_PyStackChunk *)PyProfile_Calloc(tstate->interp, 1, size_in_bytes);
     if (res == NULL) {
         return NULL;
     }
@@ -1380,34 +1367,34 @@ alloc_threadstate(PyInterpreterState *interp)
     _PyThreadStateImpl *tstate;
 
     // Try the preallocated tstate first.
-    tstate = _Py_atomic_exchange_ptr(&interp->threads.preallocated, NULL);
+    // tstate = _Py_atomic_exchange_ptr(&interp->threads.preallocated, NULL);
 
     // Fall back to the allocator.
-    if (tstate == NULL) {
-        tstate = PyMem_RawCalloc(1, sizeof(_PyThreadStateImpl));
+    // if (tstate == NULL) {
+        tstate = PyProfile_Calloc(interp, 1, sizeof(_PyThreadStateImpl));
         if (tstate == NULL) {
             return NULL;
         }
         reset_threadstate(tstate);
-    }
+    // }
     return tstate;
 }
 
 static void
 free_threadstate(_PyThreadStateImpl *tstate)
 {
-    PyInterpreterState *interp = tstate->base.interp;
+    // PyInterpreterState *interp = tstate->base.interp;
     // The initial thread state of the interpreter is allocated
     // as part of the interpreter state so should not be freed.
-    if (tstate == &interp->_initial_thread) {
-        // Make it available again.
-        reset_threadstate(tstate);
-        assert(interp->threads.preallocated == NULL);
-        _Py_atomic_store_ptr(&interp->threads.preallocated, tstate);
-    }
-    else {
-        PyMem_RawFree(tstate);
-    }
+    // if (tstate == &interp->_initial_thread) {
+    //     // Make it available again.
+    //     reset_threadstate(tstate);
+    //     assert(interp->threads.preallocated == NULL);
+    //     _Py_atomic_store_ptr(&interp->threads.preallocated, tstate);
+    // }
+    // else {
+        PyProfile_Free(tstate->base.interp, tstate);
+    // }
 }
 
 static void
@@ -2903,7 +2890,7 @@ push_chunk(PyThreadState *tstate, int size)
     while (allocate_size < (int)sizeof(PyObject*)*(size + MINIMUM_OVERHEAD)) {
         allocate_size *= 2;
     }
-    _PyStackChunk *new = allocate_chunk(allocate_size, tstate->datastack_chunk);
+    _PyStackChunk *new = allocate_chunk(tstate, allocate_size, tstate->datastack_chunk);
     if (new == NULL) {
         return NULL;
     }
@@ -2945,7 +2932,7 @@ _PyThreadState_PopFrame(PyThreadState *tstate, _PyInterpreterFrame * frame)
         assert(previous);
         tstate->datastack_top = &previous->data[previous->top];
         tstate->datastack_chunk = previous;
-        _PyObject_VirtualFree(chunk, chunk->size);
+        PyProfile_Free(tstate->interp, chunk);
         tstate->datastack_limit = (PyObject **)(((char *)previous) + previous->size);
     }
     else {

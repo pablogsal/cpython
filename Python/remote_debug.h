@@ -89,13 +89,23 @@ get_page_size(void) {
 }
 
 typedef struct page_cache_entry {
-    uintptr_t page_addr; // page-aligned base address
-    char *data;
-    int valid;
+    uintptr_t page_addr; // Base address of the chunk
+    size_t size;         // Size of the chunk
+    char *data;          // Local copy of the chunk data
+    int valid;           // Whether this entry is valid
     struct page_cache_entry *next;
 } page_cache_entry_t;
 
+typedef struct chunk_cache_entry {
+    uintptr_t chunk_addr;  // Base address of the chunk
+    size_t chunk_size;     // Size of the chunk
+    char *data;            // Local copy of the chunk data
+    int valid;             // Whether this entry is valid
+    struct chunk_cache_entry *next;
+} chunk_cache_entry_t;
+
 #define MAX_PAGES 1024
+#define MAX_CHUNKS 64
 
 // Define a platform-independent process handle structure
 typedef struct {
@@ -106,6 +116,7 @@ typedef struct {
     HANDLE hProcess;
 #endif
     page_cache_entry_t pages[MAX_PAGES];
+    chunk_cache_entry_t chunks[MAX_CHUNKS];
     Py_ssize_t page_size;
 } proc_handle_t;
 
@@ -117,6 +128,11 @@ _Py_RemoteDebug_FreePageCache(proc_handle_t *handle)
         handle->pages[i].data = NULL;
         handle->pages[i].valid = 0;
     }
+    for (int i = 0; i < MAX_CHUNKS; i++) {
+        PyMem_RawFree(handle->chunks[i].data);
+        handle->chunks[i].data = NULL;
+        handle->chunks[i].valid = 0;
+    }
 }
 
 void
@@ -124,6 +140,9 @@ _Py_RemoteDebug_ClearCache(proc_handle_t *handle)
 {
     for (int i = 0; i < MAX_PAGES; i++) {
         handle->pages[i].valid = 0;
+    }
+    for (int i = 0; i < MAX_CHUNKS; i++) {
+        handle->chunks[i].valid = 0;
     }
 }
 
@@ -840,55 +859,75 @@ _Py_RemoteDebug_ReadRemoteMemory(proc_handle_t *handle, uintptr_t remote_address
 
 int
 _Py_RemoteDebug_PagedReadRemoteMemory(proc_handle_t *handle,
-                                      uintptr_t addr,
-                                      size_t size,
-                                      void *out)
+                                     uintptr_t addr,
+                                     size_t size,
+                                     void *out)
 {
-    size_t page_size = handle->page_size;
-    uintptr_t page_base = addr & ~(page_size - 1);
-    size_t offset_in_page = addr - page_base;
-
-    if (offset_in_page + size > page_size) {
-        return _Py_RemoteDebug_ReadRemoteMemory(handle, addr, size, out);
-    }
-
-    // Search for valid cached page
+    // Search for valid cached chunk
     for (int i = 0; i < MAX_PAGES; i++) {
         page_cache_entry_t *entry = &handle->pages[i];
-        if (entry->valid && entry->page_addr == page_base) {
-            memcpy(out, entry->data + offset_in_page, size);
+        bool is_in_range = addr >= entry->page_addr && addr < entry->page_addr + entry->size;
+        if (entry->valid && is_in_range) {
+            memcpy(out, entry->data, size);
             return 0;
         }
     }
+
+    __asm__("int3");
 
     // Find reusable slot
     for (int i = 0; i < MAX_PAGES; i++) {
         page_cache_entry_t *entry = &handle->pages[i];
         if (!entry->valid) {
             if (entry->data == NULL) {
-                entry->data = PyMem_RawMalloc(page_size);
+                entry->data = PyMem_RawMalloc(size);
                 if (entry->data == NULL) {
                     PyErr_NoMemory();
                     return -1;
                 }
+            } else if (entry->size < size) {
+                // Realloc if current buffer is too small
+                char *new_data = PyMem_RawRealloc(entry->data, size);
+                if (new_data == NULL) {
+                    PyErr_NoMemory();
+                    return -1;
+                }
+                entry->data = new_data;
             }
 
-            if (_Py_RemoteDebug_ReadRemoteMemory(handle, page_base, page_size, entry->data) < 0) {
-                // Try to just copy the exact ammount as a fallback
-                PyErr_Clear();
-                goto fallback;
+            if (_Py_RemoteDebug_ReadRemoteMemory(handle, addr, size, entry->data) < 0) {
+                return -1;
             }
 
-            entry->page_addr = page_base;
+            entry->page_addr = addr;
+            entry->size = size;
             entry->valid = 1;
-            memcpy(out, entry->data + offset_in_page, size);
+            memcpy(out, entry->data, size);
             return 0;
         }
     }
 
-fallback:
-    // Cache full — fallback to uncached read
+    // Cache full - fallback to direct read
     return _Py_RemoteDebug_ReadRemoteMemory(handle, addr, size, out);
+}
+
+// Add new function to prefetch a chunk into the cache
+int
+_Py_RemoteDebug_PrefetchChunk(proc_handle_t *handle,
+                             uintptr_t addr,
+                             size_t size)
+{
+    // Allocate temporary buffer
+    char *dummy = PyMem_RawMalloc(size);
+    if (!dummy) {
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    // Read the chunk into the cache
+    int result = _Py_RemoteDebug_PagedReadRemoteMemory(handle, addr, size, dummy);
+    PyMem_RawFree(dummy);
+    return result;
 }
 
 static int

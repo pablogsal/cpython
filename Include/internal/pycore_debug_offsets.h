@@ -93,6 +93,11 @@ typedef struct _Py_DebugOffsets {
         uint64_t gil_runtime_state_holder;
         uint64_t code_object_generation;
         uint64_t tlbc_generation;
+        uint64_t profile_allocator_arena;
+        uint64_t profile_allocator_arena_size;
+        uint64_t profile_allocator_used;
+        uint64_t profile_allocator_free_lists;
+        uint64_t profile_allocator_mutex;
     } interpreter_state;
 
     // Thread state offset;
@@ -262,6 +267,11 @@ typedef struct _Py_DebugOffsets {
         .gil_runtime_state_holder = offsetof(PyInterpreterState, _gil.last_holder), \
         .code_object_generation = offsetof(PyInterpreterState, _code_object_generation), \
         .tlbc_generation = _Py_Debug_interpreter_state_tlbc_generation, \
+        .profile_allocator_arena = offsetof(PyInterpreterState, profile_allocator.arena), \
+        .profile_allocator_arena_size = offsetof(PyInterpreterState, profile_allocator.arena_size), \
+        .profile_allocator_used = offsetof(PyInterpreterState, profile_allocator.used), \
+        .profile_allocator_free_lists = offsetof(PyInterpreterState, profile_allocator.free_lists), \
+        .profile_allocator_mutex = offsetof(PyInterpreterState, profile_allocator.mutex), \
     }, \
     .thread_state = { \
         .size = sizeof(PyThreadState), \

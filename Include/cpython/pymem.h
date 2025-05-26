@@ -10,7 +10,10 @@ typedef enum {
     PYMEM_DOMAIN_MEM,
 
     /* PyObject_Malloc(), PyObject_Realloc() and PyObject_Free() */
-    PYMEM_DOMAIN_OBJ
+    PYMEM_DOMAIN_OBJ,
+
+    /* PyProfile_Malloc(), PyProfile_Realloc() and PyProfile_Free() */
+    PYMEM_DOMAIN_PROFILE
 } PyMemAllocatorDomain;
 
 typedef enum {
