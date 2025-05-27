@@ -98,6 +98,7 @@ typedef struct _Py_DebugOffsets {
         uint64_t profile_allocator_used;
         uint64_t profile_allocator_free_lists;
         uint64_t profile_allocator_mutex;
+        uint64_t _initial_thread;    
     } interpreter_state;
 
     // Thread state offset;
@@ -272,6 +273,7 @@ typedef struct _Py_DebugOffsets {
         .profile_allocator_used = offsetof(PyInterpreterState, profile_allocator.used), \
         .profile_allocator_free_lists = offsetof(PyInterpreterState, profile_allocator.free_lists), \
         .profile_allocator_mutex = offsetof(PyInterpreterState, profile_allocator.mutex), \
+        ._initial_thread = offsetof(PyInterpreterState, _initial_thread), \
     }, \
     .thread_state = { \
         .size = sizeof(PyThreadState), \

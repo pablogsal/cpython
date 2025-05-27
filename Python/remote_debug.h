@@ -659,6 +659,110 @@ search_linux_map_for_section(proc_handle_t *handle, const char* secname, const c
     return retval;
 }
 
+static int
+_Py_RemoteDebug_ReadTwoRegions(proc_handle_t *handle,
+                              uintptr_t addr1, size_t size1, void *dst1,
+                              uintptr_t addr2, size_t size2, void *dst2)
+{
+    struct iovec local[2];
+    struct iovec remote[2];
+    Py_ssize_t read_bytes = 0;
+
+    // Find two free cache slots
+    int cache_slot1 = -1;
+    int cache_slot2 = -1;
+    for (int i = 0; i < MAX_PAGES; i++) {
+        if (!handle->pages[i].valid) {
+            if (cache_slot1 == -1) {
+                cache_slot1 = i;
+            } else {
+                cache_slot2 = i;
+                break;
+            }
+        }
+    }
+
+    // Allocate or resize cache buffers if needed
+    if (cache_slot1 != -1) {
+        page_cache_entry_t *entry = &handle->pages[cache_slot1];
+        if (entry->data == NULL) {
+            entry->data = PyMem_RawMalloc(size1);
+            if (entry->data == NULL) {
+                PyErr_NoMemory();
+                return -1;
+            }
+        } else if (entry->size < size1) {
+            char *new_data = PyMem_RawRealloc(entry->data, size1);
+            if (new_data == NULL) {
+                PyErr_NoMemory();
+                return -1;
+            }
+            entry->data = new_data;
+        }
+    }
+
+    if (cache_slot2 != -1) {
+        page_cache_entry_t *entry = &handle->pages[cache_slot2];
+        if (entry->data == NULL) {
+            entry->data = PyMem_RawMalloc(size2);
+            if (entry->data == NULL) {
+                PyErr_NoMemory();
+                return -1;
+            }
+        } else if (entry->size < size2) {
+            char *new_data = PyMem_RawRealloc(entry->data, size2);
+            if (new_data == NULL) {
+                PyErr_NoMemory();
+                return -1;
+            }
+            entry->data = new_data;
+        }
+    }
+
+    // Set up the first region
+    local[0].iov_base = cache_slot1 != -1 ? handle->pages[cache_slot1].data : dst1;
+    local[0].iov_len = size1;
+    remote[0].iov_base = (void*)addr1;
+    remote[0].iov_len = size1;
+
+    // Set up the second region
+    local[1].iov_base = cache_slot2 != -1 ? handle->pages[cache_slot2].data : dst2;
+    local[1].iov_len = size2;
+    remote[1].iov_base = (void*)addr2;
+    remote[1].iov_len = size2;
+
+    // Read both regions in a single call
+    read_bytes = process_vm_readv(handle->pid, local, 2, remote, 2, 0);
+    if (read_bytes < 0) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        return -1;
+    }
+
+    // Verify we got all the data
+    if ((size_t)read_bytes != size1 + size2) {
+        PyErr_SetString(PyExc_RuntimeError, "Incomplete read of memory regions");
+        return -1;
+    }
+
+    // Update cache entries if we used them
+    if (cache_slot1 != -1 && dst1 != NULL) {
+        page_cache_entry_t *entry = &handle->pages[cache_slot1];
+        entry->page_addr = addr1;
+        entry->size = size1;
+        entry->valid = 1;
+        memcpy(dst1, entry->data, size1);
+    }
+
+    if (cache_slot2 != -1 && dst2 != NULL) {
+        page_cache_entry_t *entry = &handle->pages[cache_slot2];
+        entry->page_addr = addr2;
+        entry->size = size2;
+        entry->valid = 1;
+        memcpy(dst2, entry->data, size2);
+    }
+
+    return 0;
+}
 
 #endif // __linux__
 
@@ -872,8 +976,6 @@ _Py_RemoteDebug_PagedReadRemoteMemory(proc_handle_t *handle,
             return 0;
         }
     }
-
-    __asm__("int3");
 
     // Find reusable slot
     for (int i = 0; i < MAX_PAGES; i++) {

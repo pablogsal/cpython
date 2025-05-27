@@ -2309,6 +2309,19 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
     PyObject* result = NULL;
     // Read interpreter state into opaque buffer
     char interp_state_buffer[INTERP_STATE_BUFFER_SIZE];
+
+#if __linux__
+    if (_Py_RemoteDebug_ReadTwoRegions(
+            &self->handle,
+            self->interpreter_addr,
+            INTERP_STATE_BUFFER_SIZE,
+            interp_state_buffer,
+            self->interpreter_addr + self->debug_offsets.interpreter_state._initial_thread,
+            sizeof(self->debug_offsets.interpreter_state._initial_thread),
+            NULL) < 0) {
+        goto exit;
+    }
+#else
     if (_Py_RemoteDebug_PagedReadRemoteMemory(
             &self->handle,
             self->interpreter_addr,
@@ -2316,8 +2329,9 @@ _remote_debugging_RemoteUnwinder_get_stack_trace_impl(RemoteUnwinderObject *self
             interp_state_buffer) < 0) {
         goto exit;
     }
+#endif
 
-    // Get code object generation from buffer
+     //// Get code object generation from buffer
     uint64_t code_object_generation = GET_MEMBER(uint64_t, interp_state_buffer,
             self->debug_offsets.interpreter_state.code_object_generation);
 

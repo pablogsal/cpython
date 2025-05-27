@@ -1367,34 +1367,34 @@ alloc_threadstate(PyInterpreterState *interp)
     _PyThreadStateImpl *tstate;
 
     // Try the preallocated tstate first.
-    // tstate = _Py_atomic_exchange_ptr(&interp->threads.preallocated, NULL);
+    tstate = _Py_atomic_exchange_ptr(&interp->threads.preallocated, NULL);
 
     // Fall back to the allocator.
-    // if (tstate == NULL) {
+    if (tstate == NULL) {
         tstate = PyProfile_Calloc(interp, 1, sizeof(_PyThreadStateImpl));
         if (tstate == NULL) {
             return NULL;
         }
         reset_threadstate(tstate);
-    // }
+    }
     return tstate;
 }
 
 static void
 free_threadstate(_PyThreadStateImpl *tstate)
 {
-    // PyInterpreterState *interp = tstate->base.interp;
+    PyInterpreterState *interp = tstate->base.interp;
     // The initial thread state of the interpreter is allocated
     // as part of the interpreter state so should not be freed.
-    // if (tstate == &interp->_initial_thread) {
-    //     // Make it available again.
-    //     reset_threadstate(tstate);
-    //     assert(interp->threads.preallocated == NULL);
-    //     _Py_atomic_store_ptr(&interp->threads.preallocated, tstate);
-    // }
-    // else {
+    if (tstate == &interp->_initial_thread) {
+        // Make it available again.
+        reset_threadstate(tstate);
+        assert(interp->threads.preallocated == NULL);
+        _Py_atomic_store_ptr(&interp->threads.preallocated, tstate);
+    }
+    else {
         PyProfile_Free(tstate->base.interp, tstate);
-    // }
+    }
 }
 
 static void
