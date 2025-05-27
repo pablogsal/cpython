@@ -3587,7 +3587,7 @@ typedef struct {
 } ProfileAllocator;
 
 // Get size class index for a given size
-static int
+static inline int
 get_size_class(size_t size)
 {
     if (size < PROFILE_MIN_SIZE) {
@@ -3753,9 +3753,6 @@ profile_calloc(void *ctx, size_t nelem, size_t elsize)
     }
     return ptr;
 }
-
-// Define the profile allocator
-#define PROFILE_ALLOC {NULL, profile_malloc, profile_calloc, profile_realloc, profile_free}
 
 // Public API functions for profile allocator
 void *
