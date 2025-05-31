@@ -467,7 +467,10 @@ class Stats:
                 subheader = isinstance(value, tuple)
                 break
         if subheader:
-            print(" "*name_size + "    ncalls  tottime  cumtime", file=self.stream)
+            self.print_call_subheading(name_size)
+
+    def print_call_subheading(self, name_size):
+        print(" "*name_size + "    ncalls  tottime  cumtime", file=self.stream)
 
     def print_call_line(self, name_size, source, call_dict, arrow="->"):
         print(func_std_string(source).ljust(name_size) + arrow, end=' ', file=self.stream)
@@ -515,6 +518,35 @@ class Stats:
         else:
             print(f8(ct/cc), end=' ', file=self.stream)
         print(func_std_string(func), file=self.stream)
+
+
+class SampledStats(Stats):
+    def __init__(self, *args, stream=None):
+        super().__init__(*args, stream=stream)
+
+        self.sort_arg_dict = {
+              "samples"   : (((1,-1),              ), "sample count"),
+              "nsamples"  : (((1,-1),              ), "sample count"),
+              "cumtime"   : (((3,-1),              ), "cumulative time"),
+              "cumulative": (((3,-1),              ), "cumulative time"),
+              "filename"  : (((4, 1),              ), "file name"),
+              "line"      : (((5, 1),              ), "line number"),
+              "module"    : (((4, 1),              ), "file name"),
+              "name"      : (((6, 1),              ), "function name"),
+              "nfl"       : (((6, 1),(4, 1),(5, 1),), "name/file/line"),
+              "psamples"  : (((0,-1),              ), "primitive call count"),
+              "stdname"   : (((7, 1),              ), "standard name"),
+              "time"      : (((2,-1),              ), "internal time"),
+              "tottime"   : (((2,-1),              ), "internal time"),
+              }
+
+    def print_call_subheading(self, name_size):
+        print(" "*name_size + "    nsamples  tottime  cumtime", file=self.stream)
+
+    def print_title(self):
+        print(' nsamples  tottime persample cumtime persample', end=' ', file=self.stream)
+        print('filename:lineno(function)', file=self.stream)
+
 
 class TupleComp:
     """This class provides a generic function for comparing any two tuples.
