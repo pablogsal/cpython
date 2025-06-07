@@ -6,6 +6,7 @@ import _remote_debugging
 import argparse
 import _colorize
 from _colorize import ANSIColors
+import functools
 
 
 class SampleProfile:
@@ -20,6 +21,9 @@ class SampleProfile:
         self.callers = collections.defaultdict(
             lambda: collections.defaultdict(int)
         )
+        # NEW: Store actual call trees for flamegraph
+        self.call_trees = []
+        self.function_samples = collections.defaultdict(int)
 
     def sample(self, duration_sec=10):
         result = collections.defaultdict(
@@ -36,7 +40,9 @@ class SampleProfile:
                 try:
                     stack_frames = self.unwinder.get_stack_trace()
                     self.aggregate_stack_frames(result, stack_frames)
-                except RuntimeError, UnicodeDecodeError, OSError:
+                    # NEW: Store the actual stack traces for flamegraph
+                    self.store_call_trees(stack_frames)
+                except (RuntimeError, UnicodeDecodeError, OSError):
                     errors += 1
 
                 num_samples += 1
@@ -57,6 +63,18 @@ class SampleProfile:
             )
 
         self.stats = self.convert_to_pstats(result)
+
+    def store_call_trees(self, stack_frames):
+        """Store call trees from stack traces for flamegraph generation"""
+        for thread_id, frames in stack_frames:
+            if frames and len(frames) > 0:
+                # Store the complete call stack (reverse order - root first)
+                call_tree = list(reversed(frames))
+                self.call_trees.append(call_tree)
+                
+                # Count samples per function
+                for frame in frames:
+                    self.function_samples[frame] += 1
 
     def print_stats(self, sort=-1, limit=None, show_summary=True):
         if not isinstance(sort, tuple):
@@ -86,6 +104,8 @@ class SampleProfile:
             stats_list.sort(
                 key=lambda x: x[4] / x[2] if x[2] > 0 else 0, reverse=True
             )
+        elif sort_field == 5:  # name (alphabetical)
+            stats_list.sort(key=lambda x: str(x[0]))
 
         # Apply limit if specified
         if limit is not None:
@@ -255,6 +275,209 @@ class SampleProfile:
         with open(file, "wb") as f:
             marshal.dump(stats_with_marker, f)
 
+    def generate_flamegraph(self, output_path):
+        """Generate a beautiful Python-branded flamegraph HTML file"""
+        flamegraph_data = self._convert_to_flamegraph_format()
+        
+        # Debug output
+        num_functions = len(flamegraph_data.get("children", []))
+        total_time = flamegraph_data.get("value", 0)
+        print(f"Flamegraph data: {num_functions} root functions, total samples: {total_time}")
+        
+        if num_functions == 0:
+            print("Warning: No functions found in profiling data. Check if sampling captured any data.")
+            return
+        
+        html_content = self._create_flamegraph_html(flamegraph_data)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        
+        print(f"Flamegraph saved to: {output_path}")
+
+    @functools.lru_cache(maxsize=None)
+    def _format_function_name(self, func):
+        """Format function name for display in flamegraph - now cached!"""
+        filename, lineno, funcname = func
+        
+        # Shorten long file paths
+        if len(filename) > 50:
+            parts = filename.split('/')
+            if len(parts) > 2:
+                filename = f".../{'/'.join(parts[-2:])}"
+        
+        return f"{funcname} ({filename}:{lineno})"
+
+    def _convert_to_flamegraph_format(self):
+        """Convert call trees to d3-flamegraph format with optimized hierarchy building"""
+        if not self.call_trees:
+            return {"name": "No Data", "value": 0, "children": []}
+        
+        unique_functions = set()
+        for call_tree in self.call_trees:
+            unique_functions.update(call_tree)
+        
+        # Create a mapping from function tuples to their formatted names
+        func_to_name = {func: self._format_function_name(func) for func in unique_functions}
+        
+        # Build tree structure from all call stacks (following original algorithm exactly)
+        root = {"name": "root", "children": {}, "samples": 0}
+        
+        for call_tree in self.call_trees:
+            current_node = root
+            current_node["samples"] += 1
+            
+            # Walk down the call tree (from root to leaf) using pre-computed names
+            for func in call_tree:
+                func_name = func_to_name[func]  # Use pre-computed name (major speedup!)
+                
+                if func_name not in current_node["children"]:
+                    current_node["children"][func_name] = {
+                        "name": func_name,
+                        "func": func,
+                        "children": {},
+                        "samples": 0,
+                        "filename": func[0],
+                        "lineno": func[1], 
+                        "funcname": func[2]
+                    }
+                
+                current_node = current_node["children"][func_name]
+                current_node["samples"] += 1
+        
+        def convert_node(node, min_samples=1):
+            if node["samples"] < min_samples:
+                return None
+                
+            # Get source code for this function if it's not the root
+            source_code = None
+            if "func" in node:
+                source_code = self._get_source_lines(node["func"])
+            
+            result = {
+                "name": node["name"],
+                "value": node["samples"],  # Each sample represents time
+                "children": []
+            }
+            
+            # Add extra metadata if available
+            if "filename" in node:
+                result.update({
+                    "filename": node["filename"],
+                    "lineno": node["lineno"],
+                    "funcname": node["funcname"]
+                })
+            
+            if source_code:
+                result["source"] = source_code
+            
+            # Recursively convert children
+            child_nodes = []
+            for child_name, child_node in node["children"].items():
+                child_result = convert_node(child_node, min_samples)
+                if child_result:
+                    child_nodes.append(child_result)
+            
+            # Sort children by sample count (descending)
+            child_nodes.sort(key=lambda x: x["value"], reverse=True)
+            result["children"] = child_nodes
+            
+            return result
+        
+        # Filter out very small functions (less than 0.1% of total samples)
+        total_samples = len(self.call_trees)
+        min_samples = max(1, int(total_samples * 0.001))  # 0.1% threshold
+        
+        converted_root = convert_node(root, min_samples)
+        
+        if not converted_root or not converted_root["children"]:
+            return {"name": "No significant data", "value": 0, "children": []}
+        
+        # If we only have one root child, make it the root to avoid redundant level
+        if len(converted_root["children"]) == 1:
+            main_child = converted_root["children"][0]
+            main_child["name"] = f"Program Root: {main_child['name']}"
+            return main_child
+        
+        converted_root["name"] = "Program Root"
+        return converted_root
+    
+    def _get_source_lines(self, func):
+        """Get source code lines for a function using linecache"""
+        import linecache
+        
+        filename, lineno, funcname = func
+        
+        try:
+            # Get several lines around the function definition
+            lines = []
+            start_line = max(1, lineno - 2)
+            end_line = lineno + 3
+            
+            for line_num in range(start_line, end_line):
+                line = linecache.getline(filename, line_num)
+                if line.strip():  # Only include non-empty lines
+                    # Mark the actual function line
+                    marker = "→ " if line_num == lineno else "  "
+                    lines.append(f"{marker}{line_num}: {line.rstrip()}")
+            
+            return lines if lines else None
+            
+        except Exception:
+            # If we can't get source code, return None
+            return None
+
+    def _create_flamegraph_html(self, data):
+        """Create a beautiful Python-branded HTML template for the flamegraph"""
+        import json
+        import os
+        
+        data_json = json.dumps(data)
+        
+        # Get the template file path relative to this module
+        template_dir = os.path.dirname(__file__)
+        template_path = os.path.join(template_dir, 'flamegraph_template.html')
+        css_path = os.path.join(template_dir, 'flamegraph.css')
+        js_path = os.path.join(template_dir, 'flamegraph.js')
+        
+        try:
+            # Read all files
+            with open(template_path, 'r', encoding='utf-8') as f:
+                html_template = f.read()
+            with open(css_path, 'r', encoding='utf-8') as f:
+                css_content = f.read()
+            with open(js_path, 'r', encoding='utf-8') as f:
+                js_content = f.read()
+                
+            # Replace the placeholders with actual content
+            html_template = html_template.replace(
+                '<!-- INLINE_CSS -->',
+                f'<style>\n{css_content}\n</style>'
+            )
+            html_template = html_template.replace(
+                '<!-- INLINE_JS -->',
+                f'<script>\n{js_content}\n</script>'
+            )
+            
+            # Replace the placeholder with actual data
+            html_content = html_template.replace('{{FLAMEGRAPH_DATA}}', data_json)
+            
+            return html_content
+            
+        except FileNotFoundError as e:
+            # Fallback to a minimal template if any file is not found
+            return f'''<!DOCTYPE html>
+<html><head><title>Flamegraph Error</title></head>
+<body><h1>Error: Required files not found</h1>
+<p>Could not find required files: {str(e)}</p>
+<p>Required files:</p>
+<ul>
+    <li>flamegraph_template.html</li>
+    <li>flamegraph.css</li>
+    <li>flamegraph.js</li>
+</ul>
+</body></html>'''
+
     # Needed for compatibility with pstats.Stats
     def create_stats(self):
         pass
@@ -276,7 +499,6 @@ class SampleProfile:
                 cumulative,
                 callers,
             )
-
         return pstats
 
     def aggregate_stack_frames(self, result, stack_frames):
@@ -311,6 +533,7 @@ def sample(
     all_threads=False,
     limit=None,
     show_summary=True,
+    flamegraph=None,
 ):
     profile = SampleProfile(pid, sample_interval_usec, all_threads=all_threads)
     profile.sample(duration_sec)
@@ -318,6 +541,9 @@ def sample(
         profile.dump_stats(filename)
     else:
         profile.print_stats(sort, limit, show_summary)
+
+    if flamegraph:
+        profile.generate_flamegraph(flamegraph)
 
 
 def main():
@@ -331,7 +557,12 @@ def main():
             "  --sort-percall    Sort by time per call (functions with highest per-call overhead first)\n"
             "  --sort-cumpercall Sort by cumulative time per call (functions with highest cumulative overhead per call)\n"
             "  --sort-name       Sort by function name (alphabetical order)\n\n"
-            "The default sort is by cumulative time (--sort-cumulative)."
+            "The default sort is by cumulative time (--sort-cumulative).\n\n"
+            "Flamegraph output:\n"
+            "  --flamegraph FILE Generate an interactive HTML flamegraph visualization\n"
+            "                    and save it to FILE. The flamegraph provides a beautiful,\n"
+            "                    interactive way to explore function call performance with\n"
+            "                    Python branding and zooming capabilities."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -372,6 +603,10 @@ def main():
         "--no-summary",
         action="store_true",
         help="Disable the summary section at the end of the output",
+    )
+    parser.add_argument(
+        "--flamegraph",
+        help="Generate a flamegraph HTML file and save it to the specified path",
     )
 
     # Add sorting options
@@ -437,6 +672,7 @@ def main():
         limit=args.limit,
         sort=args.sort,
         show_summary=not args.no_summary,
+        flamegraph=args.flamegraph,
     )
 
 
