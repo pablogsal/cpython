@@ -62,8 +62,10 @@ class SampleProfile:
         pstats.SampledStats(self).strip_dirs().sort_stats(*sort).print_stats()
 
     def dump_stats(self, file):
+        stats_with_marker = dict(self.stats)
+        stats_with_marker[("__sampled__",)] = True
         with open(file, "wb") as f:
-            marshal.dump(self.stats, f)
+            marshal.dump(stats_with_marker, f)
 
     # Needed for compatibility with pstats.Stats
     def create_stats(self):

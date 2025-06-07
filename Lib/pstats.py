@@ -139,7 +139,11 @@ class Stats:
             return
         elif isinstance(arg, str):
             with open(arg, 'rb') as f:
-                self.stats = marshal.load(f)
+                stats = marshal.load(f)
+            if (('__sampled__',)) in stats:
+                stats.pop((('__sampled__',)))
+                self.__class__ = SampledStats
+            self.stats = stats
             try:
                 file_stats = os.stat(arg)
                 arg = time.ctime(file_stats.st_mtime) + "    " + arg
@@ -639,6 +643,24 @@ def f8(x):
 # Statistics browser added by ESR, April 2001
 #**************************************************************************
 
+class StatsLoaderShim:
+    """Compatibility shim implementing 'create_stats' needed by Stats classes
+    to handle already unmarshalled data."""
+    def __init__(self, raw_stats):
+        self.stats = raw_stats
+
+    def create_stats(self):
+        pass
+
+def stats_factory(raw_stats):
+    """Return a Stats or SampledStats instance based on the marker in raw_stats."""
+    if (('__sampled__',)) in raw_stats:
+        raw_stats = dict(raw_stats)  # avoid mutating caller's dict
+        raw_stats.pop((('__sampled__',)))
+        return SampledStats(StatsLoaderShim(raw_stats))
+    else:
+        return Stats(StatsLoaderShim(raw_stats))
+
 if __name__ == '__main__':
     import cmd
     try:
@@ -725,7 +747,15 @@ if __name__ == '__main__':
         def do_read(self, line):
             if line:
                 try:
-                    self.stats = Stats(line)
+                    with open(line, 'rb') as f:
+                        raw_stats = marshal.load(f)
+                    self.stats = stats_factory(raw_stats)
+                    try:
+                        file_stats = os.stat(line)
+                        arg = time.ctime(file_stats.st_mtime) + "    " + line
+                    except Exception:
+                        arg = line
+                    self.stats.files = [arg]
                 except OSError as err:
                     print(err.args[1], file=self.stream)
                     return
