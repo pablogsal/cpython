@@ -10,6 +10,8 @@ from _colorize import ANSIColors
 
 from .pstats_collector import PstatsCollector
 from .stack_collectors import CollapsedStackCollector
+from .async_stack_collector import AsyncStackCollector
+from .async_pstats_collector import AsyncPstatsCollector
 
 FREE_THREADED_BUILD = sysconfig.get_config_var("Py_GIL_DISABLED") is not None
 
@@ -460,6 +462,7 @@ def sample(
     show_summary=True,
     output_format="pstats",
     realtime_stats=False,
+    asyncio=False,
 ):
     profiler = SampleProfiler(
         pid, sample_interval_usec, all_threads=all_threads
@@ -469,9 +472,15 @@ def sample(
     collector = None
     match output_format:
         case "pstats":
-            collector = PstatsCollector(sample_interval_usec)
+            if asyncio:
+                collector = AsyncPstatsCollector(sample_interval_usec, profiler.unwinder)
+            else:
+                collector = PstatsCollector(sample_interval_usec)
         case "collapsed":
-            collector = CollapsedStackCollector()
+            if asyncio:
+                collector = AsyncStackCollector(profiler.unwinder)
+            else:
+                collector = CollapsedStackCollector()
             filename = filename or f"collapsed.{pid}.txt"
         case _:
             raise ValueError(f"Invalid output format: {output_format}")
@@ -615,6 +624,13 @@ def main():
         "or saves to collapsed.<pid>.txt for collapsed format)",
     )
 
+    # Async options
+    sampling_group.add_argument(
+        "--asyncio",
+        action="store_true",
+        help="Collect and display async task stacks (experimental)",
+    )
+
     # pstats-specific options
     pstats_group = parser.add_argument_group("pstats format options")
     sort_group = pstats_group.add_mutually_exclusive_group()
@@ -700,6 +716,7 @@ def main():
         show_summary=not args.no_summary,
         output_format=args.format,
         realtime_stats=args.realtime_stats,
+        asyncio=args.asyncio,
     )
 
 
