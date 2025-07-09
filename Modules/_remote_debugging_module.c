@@ -290,7 +290,16 @@ static int parse_frame_object(
     RemoteUnwinderObject *unwinder,
     PyObject** result,
     uintptr_t address,
+    uintptr_t* address_of_code_object,
     uintptr_t* previous_frame
+);
+
+static int
+parse_async_frame_chain(
+    RemoteUnwinderObject *unwinder,
+    PyObject *calls,
+    uintptr_t address_of_thread,
+    uintptr_t running_task_code_obj
 );
 
 static int read_py_ptr(RemoteUnwinderObject *unwinder, uintptr_t address, uintptr_t *ptr_addr);
@@ -299,6 +308,7 @@ static int read_Py_ssize_t(RemoteUnwinderObject *unwinder, uintptr_t address, Py
 static int process_task_and_waiters(RemoteUnwinderObject *unwinder, uintptr_t task_addr, PyObject *result);
 static int process_task_awaited_by(RemoteUnwinderObject *unwinder, uintptr_t task_address, set_entry_processor_func processor, void *context);
 static int find_running_task_in_thread(RemoteUnwinderObject *unwinder, uintptr_t thread_state_addr, uintptr_t *running_task_addr);
+static int get_task_code_object(RemoteUnwinderObject *unwinder, uintptr_t task_addr, uintptr_t *code_obj_addr);
 static int append_awaited_by(RemoteUnwinderObject *unwinder, unsigned long tid, uintptr_t head_addr, PyObject *result);
 
 /* ============================================================================
@@ -427,7 +437,7 @@ iterate_threads(
 ) {
     uintptr_t thread_state_addr;
     unsigned long tid = 0;
-    
+
     if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
                 &unwinder->handle,
                 unwinder->interpreter_addr + unwinder->debug_offsets.interpreter_state.threads_main,
@@ -465,7 +475,7 @@ iterate_threads(
             return -1;
         }
     }
-    
+
     return 0;
 }
 
@@ -515,7 +525,7 @@ iterate_set_entries(
         table_ptr += sizeof(void*) * 2;
         i++;
     }
-    
+
     return 0;
 }
 
@@ -1029,7 +1039,8 @@ parse_coro_chain(
     // Parse the previous frame using the gi_iframe from local copy
     uintptr_t prev_frame;
     uintptr_t gi_iframe_addr = coro_address + unwinder->debug_offsets.gen_object.gi_iframe;
-    if (parse_frame_object(unwinder, &name, gi_iframe_addr, &prev_frame) < 0) {
+    uintptr_t address_of_code_object = 0;
+    if (parse_frame_object(unwinder, &name, gi_iframe_addr, &address_of_code_object, &prev_frame) < 0) {
         set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to parse frame object in coro chain");
         return -1;
     }
@@ -1184,6 +1195,7 @@ static int
 process_single_task_node(
     RemoteUnwinderObject *unwinder,
     uintptr_t task_addr,
+    PyObject **task_info,
     PyObject *result
 ) {
     PyObject *tn = NULL;
@@ -1244,6 +1256,9 @@ process_single_task_node(
         Py_DECREF(result_item);
         set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to append result item in single task node");
         return -1;
+    }
+    if (task_info != NULL) {
+        *task_info = result_item;
     }
     Py_DECREF(result_item);
 
@@ -1312,6 +1327,55 @@ process_task_awaited_by(
     }
 }
 
+static int
+process_running_task_chain(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t running_task_addr,
+    uintptr_t thread_state_addr,
+    PyObject *result
+) {
+    uintptr_t running_task_code_obj = 0;
+    if(get_task_code_object(unwinder, running_task_addr, &running_task_code_obj) < 0) {
+        return -1;
+    }
+
+    // First, add this task to the result
+    PyObject *task_info = NULL;
+    if (process_single_task_node(unwinder, running_task_addr, &task_info, result) < 0) {
+        return -1;
+    }
+
+    // Get the chain from the current frame to this task
+    PyObject *coro_chain = PyStructSequence_GET_ITEM(task_info, 2);
+    assert(coro_chain != NULL);
+    if (PyList_GET_SIZE(coro_chain) != 1) {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Coro chain is not a single item");
+        return -1;
+    }
+    PyObject *coro_info = PyList_GET_ITEM(coro_chain, 0);
+    assert(coro_info != NULL);
+    PyObject *frame_chain = PyStructSequence_GET_ITEM(coro_info, 0);
+    assert(frame_chain != NULL);
+
+    // Clear the coro_chain
+    if(PyList_Clear(frame_chain) < 0) {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to clear coroutine chain");
+        return -1;
+    }
+
+    // Add the chain from the current frame to this task
+    if(parse_async_frame_chain(unwinder, frame_chain, thread_state_addr, running_task_code_obj) < 0) {
+        return -1;
+    }
+
+    // Now find all tasks that are waiting for this task and process them
+    if(process_task_awaited_by(unwinder, running_task_addr, process_waiter_task, result) < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
 // Thread processor for get_async_stack_trace
 static int
 process_thread_for_async_stack_trace(
@@ -1321,12 +1385,11 @@ process_thread_for_async_stack_trace(
     void *context
 ) {
     PyObject *result = (PyObject *)context;
-    
+
     // Find running task in this thread
     uintptr_t running_task_addr;
     if (find_running_task_in_thread(unwinder, thread_state_addr, &running_task_addr) < 0) {
-        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to find running task in thread");
-        return -1;
+        return 0;
     }
 
     // If we found a running task, process it and its waiters
@@ -1337,9 +1400,9 @@ process_thread_for_async_stack_trace(
             return -1;
         }
 
-        if (process_task_and_waiters(unwinder, running_task_addr, task_list) < 0) {
+        if (process_running_task_chain(unwinder, running_task_addr, thread_state_addr, task_list) < 0) {
             Py_DECREF(task_list);
-            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to process task and waiters");
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to process running task chain");
             return -1;
         }
 
@@ -1370,7 +1433,7 @@ process_thread_for_async_stack_trace(
         }
         Py_DECREF(awaited_info);
     }
-    
+
     return 0;
 }
 
@@ -1381,10 +1444,10 @@ process_task_and_waiters(
     PyObject *result
 ) {
     // First, add this task to the result
-    if (process_single_task_node(unwinder, task_addr, result) < 0) {
+    if (process_single_task_node(unwinder, task_addr, NULL, result) < 0) {
         return -1;
     }
-    
+
     // Now find all tasks that are waiting for this task and process them
     return process_task_awaited_by(unwinder, task_addr, process_waiter_task, result);
 }
@@ -1396,7 +1459,7 @@ find_running_task_in_thread(
     uintptr_t *running_task_addr
 ) {
     *running_task_addr = (uintptr_t)NULL;
-    
+
     uintptr_t address_of_running_loop;
     int bytes_read = read_py_ptr(
         unwinder,
@@ -1418,6 +1481,42 @@ find_running_task_in_thread(
         running_task_addr);
     if (err) {
         set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read running task address");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int
+get_task_code_object(RemoteUnwinderObject *unwinder, uintptr_t task_addr, uintptr_t *code_obj_addr) {
+    uintptr_t running_coro_addr = 0;
+
+    if(read_py_ptr(
+        unwinder,
+        task_addr + unwinder->async_debug_offsets.asyncio_task_object.task_coro,
+        &running_coro_addr) < 0) {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Running task coro read failed");
+        return -1;
+    }
+
+    if (running_coro_addr == 0) {
+        PyErr_SetString(PyExc_RuntimeError, "Running task coro is NULL");
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Running task coro address is NULL");
+        return -1;
+    }
+
+    // note: genobject's gi_iframe is an embedded struct so the address to
+    // the offset leads directly to its first field: f_executable
+    if (read_py_ptr(
+        unwinder,
+        running_coro_addr + unwinder->debug_offsets.gen_object.gi_iframe, code_obj_addr) < 0) {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read running task code object");
+        return -1;
+    }
+
+    if (*code_obj_addr == 0) {
+        PyErr_SetString(PyExc_RuntimeError, "Running task code object is NULL");
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Running task code object address is NULL");
         return -1;
     }
 
@@ -2004,6 +2103,29 @@ populate_initial_state_data(
     return 0;
 }
 
+
+static int
+find_running_frame(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t address_of_thread,
+    uintptr_t *frame
+) {
+    if ((void*)address_of_thread != NULL) {
+        int err = read_ptr(
+            unwinder,
+            address_of_thread + unwinder->debug_offsets.thread_state.current_frame,
+            frame);
+        if (err) {
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read current frame pointer");
+            return -1;
+        }
+        return 0;
+    }
+
+    *frame = (uintptr_t)NULL;
+    return 0;
+}
+
 /* ============================================================================
  * FRAME PARSING FUNCTIONS
  * ============================================================================ */
@@ -2040,9 +2162,11 @@ parse_frame_object(
     RemoteUnwinderObject *unwinder,
     PyObject** result,
     uintptr_t address,
+    uintptr_t* address_of_code_object,
     uintptr_t* previous_frame
 ) {
     char frame[SIZEOF_INTERP_FRAME];
+    *address_of_code_object = 0;
 
     Py_ssize_t bytes_read = _Py_RemoteDebug_PagedReadRemoteMemory(
         &unwinder->handle,
@@ -2072,7 +2196,63 @@ parse_frame_object(
     }
 #endif
 
-    return parse_code_object(unwinder, result, code_object,instruction_pointer, previous_frame, tlbc_index);
+    *address_of_code_object = code_object;
+    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index);
+}
+
+static int
+parse_async_frame_chain(
+    RemoteUnwinderObject *unwinder,
+    PyObject *calls,
+    uintptr_t address_of_thread,
+    uintptr_t running_task_code_obj
+) {
+    uintptr_t address_of_current_frame;
+    if (find_running_frame(unwinder, address_of_thread, &address_of_current_frame) < 0) {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Running frame search failed in async chain");
+        return -1;
+    }
+
+    PyObject *frames = PyList_New(0);
+    if (frames == NULL) {
+        set_exception_cause(unwinder, PyExc_MemoryError, "Failed to create frames list");
+        return -1;
+    }
+
+    while ((void*)address_of_current_frame != NULL) {
+        PyObject* frame_info = NULL;
+        uintptr_t address_of_code_object;
+        int res = parse_frame_object(
+            unwinder,
+            &frame_info,
+            address_of_current_frame,
+            &address_of_code_object,
+            &address_of_current_frame
+        );
+
+        if (res < 0) {
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Async frame object parsing failed in chain");
+            return -1;
+        }
+
+        if (!frame_info) {
+            continue;
+        }
+
+        if (PyList_Append(calls, frame_info) == -1) {
+            Py_DECREF(frame_info);
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to append frame info to async chain");
+            return -1;
+        }
+
+        Py_DECREF(frame_info);
+
+        if (address_of_code_object == running_task_code_obj) {
+            break;
+        }
+    }
+
+    return 0;
 }
 
 /* ============================================================================
@@ -2113,7 +2293,7 @@ append_awaited_by_for_thread(
         uintptr_t task_addr = (uintptr_t)GET_MEMBER(uintptr_t, task_node, unwinder->debug_offsets.llist_node.next)
             - unwinder->async_debug_offsets.asyncio_task_object.task_node;
 
-        if (process_single_task_node(unwinder, task_addr, result) < 0) {
+        if (process_single_task_node(unwinder, task_addr, NULL, result) < 0) {
             set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to process task node in awaited_by");
             return -1;
         }
@@ -2208,7 +2388,8 @@ process_frame_chain(
         // Try chunks first, fallback to direct memory read
         if (parse_frame_from_chunks(unwinder, &frame, frame_addr, &next_frame_addr, chunks) < 0) {
             PyErr_Clear();
-            if (parse_frame_object(unwinder, &frame, frame_addr, &next_frame_addr) < 0) {
+            uintptr_t address_of_code_object = 0;
+            if (parse_frame_object(unwinder, &frame, frame_addr, &address_of_code_object ,&next_frame_addr) < 0) {
                 set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to parse frame object in chain");
                 return -1;
             }
@@ -2686,7 +2867,7 @@ Get the currently running async tasks and their dependency graphs from the remot
 This returns information about running tasks and all tasks that are waiting for them,
 forming a complete dependency graph for each thread's active task.
 
-For each thread with a running task, returns the running task plus all tasks that 
+For each thread with a running task, returns the running task plus all tasks that
 transitively depend on it (tasks waiting for the running task, tasks waiting for
 those tasks, etc.).
 
@@ -2696,7 +2877,7 @@ Returns a list of per-thread results, where each thread result contains:
 
 Each task info contains:
 - Task ID (memory address)
-- Task name 
+- Task name
 - Call stack frames: List of (func_name, filename, lineno)
 - List of tasks waiting for this task (recursive structure)
 
@@ -2710,7 +2891,7 @@ Example output (similar structure to get_all_awaited_by but only for running tas
     # Thread 140234 results
     (140234, [
         # Running task and its complete waiter dependency graph
-        (4345585712, 'main_task', 
+        (4345585712, 'main_task',
          [("run_server", "server.py", 127), ("main", "app.py", 23)],
          [
              # Tasks waiting for main_task
@@ -2740,12 +2921,15 @@ _remote_debugging_RemoteUnwinder_get_async_stack_trace_impl(RemoteUnwinderObject
 
     // Process all threads
     if (iterate_threads(self, process_thread_for_async_stack_trace, result) < 0) {
-        Py_DECREF(result);
-        return NULL;
+        goto result_err;
     }
 
     _Py_RemoteDebug_ClearCache(&self->handle);
     return result;
+result_err:
+    _Py_RemoteDebug_ClearCache(&self->handle);
+    Py_XDECREF(result);
+    return NULL;
 }
 
 static PyMethodDef RemoteUnwinder_methods[] = {

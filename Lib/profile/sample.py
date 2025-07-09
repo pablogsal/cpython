@@ -38,7 +38,7 @@ class SampleProfiler:
         sample_interval_sec = self.sample_interval_usec / 1_000_000
         running_time = 0
         num_samples = 0
-        errors = 0
+        self.errors = 0
         start_time = next_time = time.perf_counter()
         last_sample_time = start_time
         realtime_update_interval = 1.0  # Update every second
@@ -49,8 +49,9 @@ class SampleProfiler:
             if next_time < current_time:
                 try:
                     collector.collect(self.unwinder)
-                except (RuntimeError, UnicodeDecodeError, OSError):
-                    errors += 1
+                except (RuntimeError, UnicodeDecodeError, OSError) as e:
+                    print(e)
+                    self.errors += 1
 
                 # Track actual sampling intervals for real-time stats
                 if num_samples > 0:
@@ -81,7 +82,7 @@ class SampleProfiler:
 
         print(f"Captured {num_samples} samples in {running_time:.2f} seconds")
         print(f"Sample rate: {num_samples / running_time:.2f} samples/sec")
-        print(f"Error rate: {(errors / num_samples) * 100:.2f}%")
+        print(f"Error rate: {(self.errors / num_samples) * 100:.2f}%")
 
         expected_samples = int(duration_sec / sample_interval_sec)
         if num_samples < expected_samples:
@@ -118,6 +119,7 @@ class SampleProfiler:
             f"{ANSIColors.GREEN}Min: {min_hz:.1f}Hz ({max_us_per_sample:.2f}µs){ANSIColors.RESET} "
             f"{ANSIColors.RED}Max: {max_hz:.1f}Hz ({min_us_per_sample:.2f}µs){ANSIColors.RESET} "
             f"{ANSIColors.CYAN}Samples: {self.total_samples}{ANSIColors.RESET}",
+            f"{ANSIColors.CYAN}Errors: {self.errors/self.total_samples*100}{ANSIColors.RESET}",
             end="",
             flush=True,
         )
