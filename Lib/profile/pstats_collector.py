@@ -15,8 +15,9 @@ class PstatsCollector(Collector):
             lambda: collections.defaultdict(int)
         )
 
-    def collect(self, stack_frames):
-        for thread_id, frames in stack_frames:
+    def collect(self, unwinder):
+        frames = unwinder.get_stack_frames()
+        for thread_id, frames in frames:
             if not frames:
                 continue
 

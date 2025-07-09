@@ -2,23 +2,18 @@ from .pstats_collector import PstatsCollector
 
 
 class AsyncPstatsCollector(PstatsCollector):
-    def __init__(self, sample_interval_usec, unwinder):
+    def __init__(self, sample_interval_usec, only_current_task=True):
         super().__init__(sample_interval_usec)
-        self.unwinder = unwinder
+        self.only_current_task = only_current_task
         self.async_sample_count = 0
         
-    def collect(self, stack_frames):
-        # First collect regular stack frames
-        super().collect(stack_frames)
-        
-        # Now collect async task information
-        try:
-            awaited_info = self.unwinder.get_all_awaited_by()
-            if awaited_info:
-                self._process_async_stats(awaited_info)
-        except Exception:
-            # If async collection fails, continue with regular profiling
-            pass
+    def collect(self, unwinder):
+        if self.only_current_task:
+            awaited_info = unwinder.get_async_stack_trace()
+        else:
+            awaited_info = unwinder.get_all_awaited_by()
+        if awaited_info:
+            self._process_async_stats(awaited_info)
     
     def _process_async_stats(self, awaited_info):
         """Process the async task information and update stats."""

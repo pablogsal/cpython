@@ -48,8 +48,7 @@ class SampleProfiler:
             current_time = time.perf_counter()
             if next_time < current_time:
                 try:
-                    stack_frames = self.unwinder.get_stack_trace()
-                    collector.collect(stack_frames)
+                    collector.collect(self.unwinder)
                 except (RuntimeError, UnicodeDecodeError, OSError):
                     errors += 1
 
@@ -462,7 +461,7 @@ def sample(
     show_summary=True,
     output_format="pstats",
     realtime_stats=False,
-    asyncio=False,
+    asyncio=None,
 ):
     profiler = SampleProfiler(
         pid, sample_interval_usec, all_threads=all_threads
@@ -472,13 +471,17 @@ def sample(
     collector = None
     match output_format:
         case "pstats":
-            if asyncio:
-                collector = AsyncPstatsCollector(sample_interval_usec, profiler.unwinder)
+            if asyncio == "current":
+                collector = AsyncPstatsCollector(sample_interval_usec, only_current_task=True)
+            elif asyncio == "all":
+                collector = AsyncPstatsCollector(sample_interval_usec, only_current_task=False)
             else:
                 collector = PstatsCollector(sample_interval_usec)
         case "collapsed":
-            if asyncio:
-                collector = AsyncStackCollector(profiler.unwinder)
+            if asyncio == "current":
+                collector = AsyncStackCollector(only_current_task=True)
+            elif asyncio == "all":
+                collector = AsyncStackCollector(only_current_task=False)
             else:
                 collector = CollapsedStackCollector()
             filename = filename or f"collapsed.{pid}.txt"
@@ -561,7 +564,13 @@ def main():
             "  python -m profile.sample --sort-sample-pct 1234\n"
             "\n"
             "  # Sort by cumulative samples to find functions most on call stack\n"
-            "  python -m profile.sample --sort-nsamples-cumul 1234"
+            "  python -m profile.sample --sort-nsamples-cumul 1234\n"
+            "\n"
+            "  # Profile async code - current task only\n"
+            "  python -m profile.sample --asyncio current 1234\n"
+            "\n"
+            "  # Profile async code - all tasks\n"
+            "  python -m profile.sample --asyncio all 1234"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -627,8 +636,8 @@ def main():
     # Async options
     sampling_group.add_argument(
         "--asyncio",
-        action="store_true",
-        help="Collect and display async task stacks (experimental)",
+        choices=["current", "all"],
+        help="Collect and display async task stacks: 'current' for only current task, 'all' for all tasks (experimental)",
     )
 
     # pstats-specific options

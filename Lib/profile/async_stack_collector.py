@@ -4,23 +4,19 @@ from .stack_collectors import StackTraceCollector
 
 
 class AsyncStackCollector(StackTraceCollector):
-    def __init__(self, unwinder):
+    def __init__(self, only_current_task=True):
         super().__init__()
-        self.unwinder = unwinder
         self.async_stacks = []
-        
-    def collect(self, stack_frames):
-        # First collect regular stack frames
-        super().collect(stack_frames)
-        
+        self.only_current_task = only_current_task
+
+    def collect(self, unwinder):
         # Now collect async task information
-        try:
-            awaited_info = self.unwinder.get_all_awaited_by()
-            if awaited_info:
-                self._process_async_stacks(awaited_info)
-        except Exception:
-            # If async collection fails, continue with regular profiling
-            pass
+        if self.only_current_task:
+            awaited_info = unwinder.get_async_stack_trace()
+        else:
+            awaited_info = unwinder.get_all_awaited_by()
+        if awaited_info:
+            self._process_async_stacks(awaited_info)
     
     def _process_async_stacks(self, awaited_info):
         """Process the async task information and reconstruct full stacks."""

@@ -9,7 +9,8 @@ class StackTraceCollector(Collector):
         self.call_trees = []
         self.function_samples = collections.defaultdict(int)
 
-    def collect(self, stack_frames):
+    def collect(self, unwinder):
+        frames = unwinder.get_stack_frames()
         for thread_id, frames in stack_frames:
             if frames and len(frames) > 0:
                 # Store the complete call stack (reverse order - root first)
