@@ -257,11 +257,62 @@ is_frame_valid(
     uintptr_t code_object_addr
 );
 
-static int
-parse_tasks_in_set(
+typedef int (*thread_processor_func)(
     RemoteUnwinderObject *unwinder,
-    uintptr_t set_addr,
-    PyObject *awaited_by
+    uintptr_t thread_state_addr,
+    unsigned long tid,
+    void *context
+);
+
+typedef int (*set_entry_processor_func)(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t key_addr,
+    void *context
+);
+
+static int iterate_threads(
+    RemoteUnwinderObject *unwinder,
+    thread_processor_func processor,
+    void *context
+);
+
+static int process_task_and_waiters(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t task_addr,
+    PyObject *result
+);
+
+static int find_running_task_in_thread(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t thread_state_addr,
+    uintptr_t *running_task_addr
+);
+
+static int process_task_parser(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t key_addr,
+    void *context
+);
+
+static int process_task_awaited_by(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t task_address,
+    set_entry_processor_func processor,
+    void *context
+);
+
+static int process_thread_for_awaited_by(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t thread_state_addr,
+    unsigned long tid,
+    void *context
+);
+
+static int process_thread_for_async_stack_trace(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t thread_state_addr,
+    unsigned long tid,
+    void *context
 );
 
 static int
@@ -799,36 +850,7 @@ static int parse_task_awaited_by(
     uintptr_t task_address,
     PyObject *awaited_by
 ) {
-    // Read the entire TaskObj at once
-    char task_obj[SIZEOF_TASK_OBJ];
-    if (_Py_RemoteDebug_PagedReadRemoteMemory(&unwinder->handle, task_address,
-                                              unwinder->async_debug_offsets.asyncio_task_object.size,
-                                              task_obj) < 0) {
-        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read task object in awaited_by parsing");
-        return -1;
-    }
-
-    uintptr_t task_ab_addr = GET_MEMBER_NO_TAG(uintptr_t, task_obj, unwinder->async_debug_offsets.asyncio_task_object.task_awaited_by);
-
-    if ((void*)task_ab_addr == NULL) {
-        return 0;
-    }
-
-    char awaited_by_is_a_set = GET_MEMBER(char, task_obj, unwinder->async_debug_offsets.asyncio_task_object.task_awaited_by_is_set);
-
-    if (awaited_by_is_a_set) {
-        if (parse_tasks_in_set(unwinder, task_ab_addr, awaited_by)) {
-            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to parse tasks in awaited_by set");
-            return -1;
-        }
-    } else {
-        if (parse_task(unwinder, task_ab_addr, awaited_by) < 0) {
-            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to parse single awaited_by task");
-            return -1;
-        }
-    }
-
-    return 0;
+    return process_task_awaited_by(unwinder, task_address, process_task_parser, awaited_by);
 }
 
 static int
@@ -1088,76 +1110,7 @@ error:
     return -1;
 }
 
-static int
-process_set_entry(
-    RemoteUnwinderObject *unwinder,
-    uintptr_t table_ptr,
-    PyObject *awaited_by
-) {
-    uintptr_t key_addr;
-    if (read_py_ptr(unwinder, table_ptr, &key_addr)) {
-        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set entry key");
-        return -1;
-    }
 
-    if ((void*)key_addr != NULL) {
-        Py_ssize_t ref_cnt;
-        if (read_Py_ssize_t(unwinder, table_ptr, &ref_cnt)) {
-            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set entry reference count");
-            return -1;
-        }
-
-        if (ref_cnt) {
-            // if 'ref_cnt=0' it's a set dummy marker
-            if (parse_task(unwinder, key_addr, awaited_by) < 0) {
-                set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to parse task in set entry");
-                return -1;
-            }
-            return 1; // Successfully processed a valid entry
-        }
-    }
-    return 0; // Entry was NULL or dummy marker
-}
-
-static int
-parse_tasks_in_set(
-    RemoteUnwinderObject *unwinder,
-    uintptr_t set_addr,
-    PyObject *awaited_by
-) {
-    char set_object[SIZEOF_SET_OBJ];
-    int err = _Py_RemoteDebug_PagedReadRemoteMemory(
-        &unwinder->handle,
-        set_addr,
-        SIZEOF_SET_OBJ,
-        set_object);
-    if (err < 0) {
-        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set object");
-        return -1;
-    }
-
-    Py_ssize_t num_els = GET_MEMBER(Py_ssize_t, set_object, unwinder->debug_offsets.set_object.used);
-    Py_ssize_t set_len = GET_MEMBER(Py_ssize_t, set_object, unwinder->debug_offsets.set_object.mask) + 1; // The set contains the `mask+1` element slots.
-    uintptr_t table_ptr = GET_MEMBER(uintptr_t, set_object, unwinder->debug_offsets.set_object.table);
-
-    Py_ssize_t i = 0;
-    Py_ssize_t els = 0;
-    while (i < set_len && els < num_els) {
-        int result = process_set_entry(unwinder, table_ptr, awaited_by);
-
-        if (result < 0) {
-            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to process set entry");
-            return -1;
-        }
-        if (result > 0) {
-            els++;
-        }
-
-        table_ptr += sizeof(void*) * 2;
-        i++;
-    }
-    return 0;
-}
 
 
 static int
@@ -2472,53 +2425,12 @@ _remote_debugging_RemoteUnwinder_get_all_awaited_by_impl(RemoteUnwinderObject *s
         goto result_err;
     }
 
-    uintptr_t thread_state_addr;
-    unsigned long tid = 0;
-    if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
-                &self->handle,
-                self->interpreter_addr
-                + self->debug_offsets.interpreter_state.threads_main,
-                sizeof(void*),
-                &thread_state_addr))
-    {
-        set_exception_cause(self, PyExc_RuntimeError, "Failed to read main thread state in get_all_awaited_by");
+    // Process all threads
+    if (iterate_threads(self, process_thread_for_awaited_by, result) < 0) {
         goto result_err;
     }
 
-    uintptr_t head_addr;
-    while (thread_state_addr != 0) {
-        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
-                    &self->handle,
-                    thread_state_addr
-                    + self->debug_offsets.thread_state.native_thread_id,
-                    sizeof(tid),
-                    &tid))
-        {
-            set_exception_cause(self, PyExc_RuntimeError, "Failed to read thread ID in get_all_awaited_by");
-            goto result_err;
-        }
-
-        head_addr = thread_state_addr
-            + self->async_debug_offsets.asyncio_thread_state.asyncio_tasks_head;
-
-        if (append_awaited_by(self, tid, head_addr, result))
-        {
-            set_exception_cause(self, PyExc_RuntimeError, "Failed to append awaited_by for thread in get_all_awaited_by");
-            goto result_err;
-        }
-
-        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
-                    &self->handle,
-                    thread_state_addr + self->debug_offsets.thread_state.next,
-                    sizeof(void*),
-                    &thread_state_addr))
-        {
-            set_exception_cause(self, PyExc_RuntimeError, "Failed to read next thread state in get_all_awaited_by");
-            goto result_err;
-        }
-    }
-
-    head_addr = self->interpreter_addr
+    uintptr_t head_addr = self->interpreter_addr
         + self->async_debug_offsets.asyncio_interpreter_state.asyncio_tasks_head;
 
     // On top of a per-thread task lists used by default by asyncio to avoid
@@ -2541,24 +2453,156 @@ result_err:
     return NULL;
 }
 
+// Generic function to iterate through all threads
 static int
-process_task_and_waiters(
+iterate_threads(
     RemoteUnwinderObject *unwinder,
-    uintptr_t task_addr,
-    PyObject *result
+    thread_processor_func processor,
+    void *context
 ) {
-    // First, add this task to the result
-    if (process_single_task_node(unwinder, task_addr, result) < 0) {
+    uintptr_t thread_state_addr;
+    unsigned long tid = 0;
+    
+    if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
+                &unwinder->handle,
+                unwinder->interpreter_addr + unwinder->debug_offsets.interpreter_state.threads_main,
+                sizeof(void*),
+                &thread_state_addr))
+    {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read main thread state");
         return -1;
     }
+
+    while (thread_state_addr != 0) {
+        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
+                    &unwinder->handle,
+                    thread_state_addr + unwinder->debug_offsets.thread_state.native_thread_id,
+                    sizeof(tid),
+                    &tid))
+        {
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read thread ID");
+            return -1;
+        }
+
+        // Call the processor function for this thread
+        if (processor(unwinder, thread_state_addr, tid, context) < 0) {
+            return -1;
+        }
+
+        // Move to next thread
+        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
+                    &unwinder->handle,
+                    thread_state_addr + unwinder->debug_offsets.thread_state.next,
+                    sizeof(void*),
+                    &thread_state_addr))
+        {
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read next thread state");
+            return -1;
+        }
+    }
     
-    // Now find all tasks that are waiting for this task
+    return 0;
+}
+
+// Generic function to iterate through set entries
+static int
+iterate_set_entries(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t set_addr,
+    set_entry_processor_func processor,
+    void *context
+) {
+    char set_object[SIZEOF_SET_OBJ];
+    if (_Py_RemoteDebug_PagedReadRemoteMemory(&unwinder->handle, set_addr,
+                                              SIZEOF_SET_OBJ, set_object) < 0) {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set object");
+        return -1;
+    }
+
+    Py_ssize_t num_els = GET_MEMBER(Py_ssize_t, set_object, unwinder->debug_offsets.set_object.used);
+    Py_ssize_t set_len = GET_MEMBER(Py_ssize_t, set_object, unwinder->debug_offsets.set_object.mask) + 1;
+    uintptr_t table_ptr = GET_MEMBER(uintptr_t, set_object, unwinder->debug_offsets.set_object.table);
+
+    Py_ssize_t i = 0;
+    Py_ssize_t els = 0;
+    while (i < set_len && els < num_els) {
+        uintptr_t key_addr;
+        if (read_py_ptr(unwinder, table_ptr, &key_addr) < 0) {
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set entry key");
+            return -1;
+        }
+
+        if ((void*)key_addr != NULL) {
+            Py_ssize_t ref_cnt;
+            if (read_Py_ssize_t(unwinder, table_ptr, &ref_cnt) < 0) {
+                set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set entry ref count");
+                return -1;
+            }
+
+            if (ref_cnt) {
+                // Process this valid set entry
+                if (processor(unwinder, key_addr, context) < 0) {
+                    return -1;
+                }
+                els++;
+            }
+        }
+        table_ptr += sizeof(void*) * 2;
+        i++;
+    }
+    
+    return 0;
+}
+
+// Processor function for task waiters
+static int
+process_waiter_task(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t key_addr,
+    void *context
+) {
+    PyObject *result = (PyObject *)context;
+    return process_task_and_waiters(unwinder, key_addr, result);
+}
+
+// Processor function for parsing tasks in sets
+static int
+process_task_parser(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t key_addr,
+    void *context
+) {
+    PyObject *awaited_by = (PyObject *)context;
+    return parse_task(unwinder, key_addr, awaited_by);
+}
+
+// Thread processor for get_all_awaited_by
+static int
+process_thread_for_awaited_by(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t thread_state_addr,
+    unsigned long tid,
+    void *context
+) {
+    PyObject *result = (PyObject *)context;
+    uintptr_t head_addr = thread_state_addr + unwinder->async_debug_offsets.asyncio_thread_state.asyncio_tasks_head;
+    return append_awaited_by(unwinder, tid, head_addr, result);
+}
+
+// Generic function to process task awaited_by
+static int
+process_task_awaited_by(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t task_address,
+    set_entry_processor_func processor,
+    void *context
+) {
     // Read the entire TaskObj at once
     char task_obj[SIZEOF_TASK_OBJ];
-    if (_Py_RemoteDebug_PagedReadRemoteMemory(&unwinder->handle, task_addr,
+    if (_Py_RemoteDebug_PagedReadRemoteMemory(&unwinder->handle, task_address,
                                               unwinder->async_debug_offsets.asyncio_task_object.size,
                                               task_obj) < 0) {
-        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read task object for waiters");
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read task object");
         return -1;
     }
 
@@ -2570,53 +2614,88 @@ process_task_and_waiters(
     char awaited_by_is_a_set = GET_MEMBER(char, task_obj, unwinder->async_debug_offsets.asyncio_task_object.task_awaited_by_is_set);
 
     if (awaited_by_is_a_set) {
-        // Process all tasks in the set
-        char set_object[SIZEOF_SET_OBJ];
-        if (_Py_RemoteDebug_PagedReadRemoteMemory(&unwinder->handle, task_ab_addr,
-                                                  SIZEOF_SET_OBJ, set_object) < 0) {
-            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set object for waiters");
-            return -1;
-        }
-
-        Py_ssize_t num_els = GET_MEMBER(Py_ssize_t, set_object, unwinder->debug_offsets.set_object.used);
-        Py_ssize_t set_len = GET_MEMBER(Py_ssize_t, set_object, unwinder->debug_offsets.set_object.mask) + 1;
-        uintptr_t table_ptr = GET_MEMBER(uintptr_t, set_object, unwinder->debug_offsets.set_object.table);
-
-        Py_ssize_t i = 0;
-        Py_ssize_t els = 0;
-        while (i < set_len && els < num_els) {
-            uintptr_t key_addr;
-            if (read_py_ptr(unwinder, table_ptr, &key_addr) < 0) {
-                set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set entry key");
-                return -1;
-            }
-
-            if ((void*)key_addr != NULL) {
-                Py_ssize_t ref_cnt;
-                if (read_Py_ssize_t(unwinder, table_ptr, &ref_cnt) < 0) {
-                    set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to read set entry ref count");
-                    return -1;
-                }
-
-                if (ref_cnt) {
-                    // Recursively process this waiting task
-                    if (process_task_and_waiters(unwinder, key_addr, result) < 0) {
-                        return -1;
-                    }
-                    els++;
-                }
-            }
-            table_ptr += sizeof(void*) * 2;
-            i++;
-        }
+        return iterate_set_entries(unwinder, task_ab_addr, processor, context);
     } else {
         // Single task waiting
-        if (process_task_and_waiters(unwinder, task_ab_addr, result) < 0) {
-            return -1;
-        }
+        return processor(unwinder, task_ab_addr, context);
+    }
+}
+
+// Thread processor for get_async_stack_trace
+static int
+process_thread_for_async_stack_trace(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t thread_state_addr,
+    unsigned long tid,
+    void *context
+) {
+    PyObject *result = (PyObject *)context;
+    
+    // Find running task in this thread
+    uintptr_t running_task_addr;
+    if (find_running_task_in_thread(unwinder, thread_state_addr, &running_task_addr) < 0) {
+        set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to find running task in thread");
+        return -1;
     }
 
+    // If we found a running task, process it and its waiters
+    if ((void*)running_task_addr != NULL) {
+        PyObject *task_list = PyList_New(0);
+        if (task_list == NULL) {
+            set_exception_cause(unwinder, PyExc_MemoryError, "Failed to create task list for thread");
+            return -1;
+        }
+
+        if (process_task_and_waiters(unwinder, running_task_addr, task_list) < 0) {
+            Py_DECREF(task_list);
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to process task and waiters");
+            return -1;
+        }
+
+        // Create AwaitedInfo structure for this thread
+        PyObject *tid_py = PyLong_FromUnsignedLong(tid);
+        if (tid_py == NULL) {
+            Py_DECREF(task_list);
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to create thread ID");
+            return -1;
+        }
+
+        RemoteDebuggingState *state = RemoteDebugging_GetStateFromObject((PyObject*)unwinder);
+        PyObject *awaited_info = PyStructSequence_New(state->AwaitedInfo_Type);
+        if (awaited_info == NULL) {
+            Py_DECREF(tid_py);
+            Py_DECREF(task_list);
+            set_exception_cause(unwinder, PyExc_MemoryError, "Failed to create AwaitedInfo");
+            return -1;
+        }
+
+        PyStructSequence_SetItem(awaited_info, 0, tid_py);  // steals ref
+        PyStructSequence_SetItem(awaited_info, 1, task_list);  // steals ref
+
+        if (PyList_Append(result, awaited_info)) {
+            Py_DECREF(awaited_info);
+            set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to append AwaitedInfo to result");
+            return -1;
+        }
+        Py_DECREF(awaited_info);
+    }
+    
     return 0;
+}
+
+static int
+process_task_and_waiters(
+    RemoteUnwinderObject *unwinder,
+    uintptr_t task_addr,
+    PyObject *result
+) {
+    // First, add this task to the result
+    if (process_single_task_node(unwinder, task_addr, result) < 0) {
+        return -1;
+    }
+    
+    // Now find all tasks that are waiting for this task and process them
+    return process_task_awaited_by(unwinder, task_addr, process_waiter_task, result);
 }
 
 
@@ -2659,32 +2738,50 @@ find_running_task_in_thread(
 @critical_section
 _remote_debugging.RemoteUnwinder.get_async_stack_trace
 
-Returns information about the currently running async task and its stack trace.
+Get the currently running async tasks and their dependency graphs from the remote process.
 
-Returns a tuple of (task_info, stack_frames) where:
-- task_info is a tuple of (task_id, task_name) identifying the task
-- stack_frames is a list of tuples (function_name, filename, line_number) representing
-  the Python stack frames for the task, ordered from most recent to oldest
+This returns information about running tasks and all tasks that are waiting for them,
+forming a complete dependency graph for each thread's active task.
 
-Example:
-    ((4345585712, 'Task-1'), [
-        ('run_echo_server', 'server.py', 127),
-        ('serve_forever', 'server.py', 45),
-        ('main', 'app.py', 23)
-    ])
+For each thread with a running task, returns the running task plus all tasks that 
+transitively depend on it (tasks waiting for the running task, tasks waiting for
+those tasks, etc.).
+
+Returns a list of per-thread results, where each thread result contains:
+- Thread ID
+- List of task information for the running task and all its waiters
+
+Each task info contains:
+- Task ID (memory address)
+- Task name 
+- Call stack frames: List of (func_name, filename, lineno)
+- List of tasks waiting for this task (recursive structure)
 
 Raises:
     RuntimeError: If AsyncioDebug section is not available in the target process
-    RuntimeError: If there is an error copying memory from the target process
-    OSError: If there is an error accessing the target process
-    PermissionError: If access to the target process is denied
-    UnicodeDecodeError: If there is an error decoding strings from the target process
+    MemoryError: If memory allocation fails
+    OSError: If reading from the remote process fails
+
+Example output (similar structure to get_all_awaited_by but only for running tasks):
+[
+    # Thread 140234 results
+    (140234, [
+        # Running task and its complete waiter dependency graph
+        (4345585712, 'main_task', 
+         [("run_server", "server.py", 127), ("main", "app.py", 23)],
+         [
+             # Tasks waiting for main_task
+             (4345585800, 'worker_1', [...], [...]),
+             (4345585900, 'worker_2', [...], [...])
+         ])
+    ])
+]
 
 [clinic start generated code]*/
 
 static PyObject *
 _remote_debugging_RemoteUnwinder_get_async_stack_trace_impl(RemoteUnwinderObject *self)
-/*[clinic end generated code: output=6433d52b55e87bbe input=11b7150c59d4c60f]*/
+/*[clinic end generated code: output=6433d52b55e87bbe input=a11801219bcd08b6]*/
 {
     if (!self->async_debug_offsets_available) {
         PyErr_SetString(PyExc_RuntimeError, "AsyncioDebug section not available");
@@ -2698,98 +2795,10 @@ _remote_debugging_RemoteUnwinder_get_async_stack_trace_impl(RemoteUnwinderObject
         return NULL;
     }
 
-    // Iterate through all threads like get_all_awaited_by does
-    uintptr_t thread_state_addr;
-    unsigned long tid = 0;
-    if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
-                &self->handle,
-                self->interpreter_addr + self->debug_offsets.interpreter_state.threads_main,
-                sizeof(void*),
-                &thread_state_addr))
-    {
-        set_exception_cause(self, PyExc_RuntimeError, "Failed to read main thread state in get_async_stack_trace");
+    // Process all threads
+    if (iterate_threads(self, process_thread_for_async_stack_trace, result) < 0) {
         Py_DECREF(result);
         return NULL;
-    }
-
-    while (thread_state_addr != 0) {
-        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
-                    &self->handle,
-                    thread_state_addr + self->debug_offsets.thread_state.native_thread_id,
-                    sizeof(tid),
-                    &tid))
-        {
-            set_exception_cause(self, PyExc_RuntimeError, "Failed to read thread ID in get_async_stack_trace");
-            Py_DECREF(result);
-            return NULL;
-        }
-
-        // Find running task in this thread
-        uintptr_t running_task_addr;
-        if (find_running_task_in_thread(self, thread_state_addr, &running_task_addr) < 0) {
-            set_exception_cause(self, PyExc_RuntimeError, "Failed to find running task in thread");
-            Py_DECREF(result);
-            return NULL;
-        }
-
-        // If we found a running task, process it and its waiters
-        if ((void*)running_task_addr != NULL) {
-            PyObject *task_list = PyList_New(0);
-            if (task_list == NULL) {
-                set_exception_cause(self, PyExc_MemoryError, "Failed to create task list for thread");
-                Py_DECREF(result);
-                return NULL;
-            }
-
-            if (process_task_and_waiters(self, running_task_addr, task_list) < 0) {
-                set_exception_cause(self, PyExc_RuntimeError, "Failed to process task and waiters");
-                Py_DECREF(task_list);
-                Py_DECREF(result);
-                return NULL;
-            }
-
-            // Create AwaitedInfo structure for this thread
-            PyObject *tid_py = PyLong_FromUnsignedLong(tid);
-            if (tid_py == NULL) {
-                Py_DECREF(task_list);
-                Py_DECREF(result);
-                set_exception_cause(self, PyExc_RuntimeError, "Failed to create thread ID");
-                return NULL;
-            }
-
-            RemoteDebuggingState *state = RemoteDebugging_GetStateFromObject((PyObject*)self);
-            PyObject *awaited_info = PyStructSequence_New(state->AwaitedInfo_Type);
-            if (awaited_info == NULL) {
-                Py_DECREF(tid_py);
-                Py_DECREF(task_list);
-                Py_DECREF(result);
-                set_exception_cause(self, PyExc_MemoryError, "Failed to create AwaitedInfo");
-                return NULL;
-            }
-
-            PyStructSequence_SetItem(awaited_info, 0, tid_py);  // steals ref
-            PyStructSequence_SetItem(awaited_info, 1, task_list);  // steals ref
-
-            if (PyList_Append(result, awaited_info)) {
-                Py_DECREF(awaited_info);
-                Py_DECREF(result);
-                set_exception_cause(self, PyExc_RuntimeError, "Failed to append AwaitedInfo to result");
-                return NULL;
-            }
-            Py_DECREF(awaited_info);
-        }
-
-        // Move to next thread
-        if (0 > _Py_RemoteDebug_PagedReadRemoteMemory(
-                    &self->handle,
-                    thread_state_addr + self->debug_offsets.thread_state.next,
-                    sizeof(void*),
-                    &thread_state_addr))
-        {
-            set_exception_cause(self, PyExc_RuntimeError, "Failed to read next thread state in get_async_stack_trace");
-            Py_DECREF(result);
-            return NULL;
-        }
     }
 
     _Py_RemoteDebug_ClearCache(&self->handle);
