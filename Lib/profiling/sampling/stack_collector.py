@@ -5,9 +5,12 @@ import importlib.resources
 import json
 import linecache
 import os
+import platform
+import time
 
-from .collector import Collector
+from .collector import Collector, THREAD_STATE_RUNNING
 from .string_table import StringTable
+from .gecko_format import GeckoBuilder
 
 
 class StackTraceCollector(Collector):
@@ -287,3 +290,64 @@ class FlamegraphCollector(StackTraceCollector):
         )
 
         return html_content
+
+
+# Simple category configuration for Gecko profiles
+# TODO: This simple categorization should be enhanced once each frame includes category information
+#       from the collector. Currently we only detect Python files by .py extension.
+PYTHON_CATEGORY = 0
+OTHER_CATEGORY = 1
+
+GECKO_CATEGORIES = [
+    {"name": "Python", "color": "blue", "subcategories": ["Other"]},
+    {"name": "Other", "color": "grey", "subcategories": ["Other"]},
+]
+
+
+class GeckoCollector(StackTraceCollector):
+    """Collector that exports profiling data in Gecko Profile format for web-based profilers."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.samples = []
+        self.start_time = None
+        self._string_table = StringTable()
+        self._func_intern = {}
+
+    def process_frames(self, frames, thread_id):
+        current_time = time.time()
+        if self.start_time is None:
+            self.start_time = current_time
+
+        # Intern frames to avoid storing duplicates
+        interned_frames = [
+            self._func_intern.setdefault(frame, frame) for frame in frames
+        ]
+
+        self.samples.append({
+            'timestamp': current_time,
+            'thread_id': thread_id,
+            'frames': interned_frames
+        })
+
+    def export(self, filename):
+        if not self.samples:
+            print("No samples to export")
+            return
+
+        builder = GeckoBuilder(self._string_table, self.start_time)
+
+        for sample in self.samples:
+            builder.add_sample(
+                sample['frames'],
+                sample['timestamp'],
+                sample['thread_id']
+            )
+
+        profile = builder.build_profile()
+
+        with open(filename, 'w', encoding='utf-8') as file:
+            json.dump(profile, file, indent=2)
+
+        thread_count = len(set(sample['thread_id'] for sample in self.samples))
+        print(f"Gecko profile exported: {filename} ({thread_count} threads, {len(self.samples)} samples)")
