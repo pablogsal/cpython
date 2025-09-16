@@ -124,6 +124,7 @@ simple_stmt[stmt_ty] (memo):
     | e=star_expressions { _PyAST_Expr(e, EXTRA) }
     | &'return' return_stmt
     | &('import' | 'from') import_stmt
+    | &'lazy' import_stmt
     | &'raise' raise_stmt
     | &'pass' pass_stmt
     | &'del' del_stmt
@@ -224,13 +225,18 @@ import_stmt[stmt_ty]:
 # Import statements
 # -----------------
 
-import_name[stmt_ty]: 'import' a=dotted_as_names { _PyAST_Import(a, EXTRA) }
+import_name[stmt_ty]:
+    | 'import' a=dotted_as_names { _PyAST_Import(a, 0, EXTRA) }
+    | 'lazy' 'import' a=dotted_as_names { _PyAST_Import(a, 1, EXTRA) }
+
 # note below: the ('.' | '...') is necessary because '...' is tokenized as ELLIPSIS
 import_from[stmt_ty]:
     | 'from' a=('.' | '...')* b=dotted_name 'import' c=import_from_targets {
         _PyPegen_checked_future_import(p, b->v.Name.id, c, _PyPegen_seq_count_dots(a), EXTRA) }
     | 'from' a=('.' | '...')+ 'import' b=import_from_targets {
-        _PyAST_ImportFrom(NULL, b, _PyPegen_seq_count_dots(a), EXTRA) }
+        _PyAST_ImportFrom(NULL, b, _PyPegen_seq_count_dots(a), 0, EXTRA) }
+    | 'from' a=('.' | '...')+ 'lazy' 'import' b=import_from_targets {
+        _PyAST_ImportFrom(NULL, b, _PyPegen_seq_count_dots(a), 1, EXTRA) }
 import_from_targets[asdl_alias_seq*]:
     | '(' a=import_from_as_names [','] ')' { a }
     | import_from_as_names !','
