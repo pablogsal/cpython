@@ -35,6 +35,7 @@ SET_FUNCTION_ATTRIBUTE = opmap['SET_FUNCTION_ATTRIBUTE']
 FUNCTION_ATTR_FLAGS = ('defaults', 'kwdefaults', 'annotations', 'closure', 'annotate')
 
 ENTER_EXECUTOR = opmap['ENTER_EXECUTOR']
+IMPORT_NAME = opmap['IMPORT_NAME']
 LOAD_GLOBAL = opmap['LOAD_GLOBAL']
 LOAD_SMALL_INT = opmap['LOAD_SMALL_INT']
 BINARY_OP = opmap['BINARY_OP']
@@ -601,7 +602,14 @@ class ArgResolver:
                     argval, argrepr = _get_name_info(arg//4, get_name)
                     if (arg & 1) and argrepr:
                         argrepr = f"{argrepr} + NULL|self"
+                elif deop == IMPORT_NAME:
+                    argval, argrepr = _get_name_info(arg//4, get_name)
+                    if (arg & 1) and argrepr:
+                        argrepr = f"{argrepr} + lazy"
+                    elif (arg & 2) and argrepr:
+                        argrepr = f"{argrepr} + eager"
                 else:
+                    print(deop)
                     argval, argrepr = _get_name_info(arg, get_name)
             elif deop in hasjump or deop in hasexc:
                 argval = self.offset_from_jump_arg(op, arg, offset)
