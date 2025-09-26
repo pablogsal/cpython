@@ -309,45 +309,21 @@ class GeckoCollector(StackTraceCollector):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.samples = []
-        self.start_time = None
         self._string_table = StringTable()
-        self._func_intern = {}
+        self._builder = GeckoBuilder(self._string_table, time.time())
 
     def process_frames(self, frames, thread_id):
         current_time = time.time()
-        if self.start_time is None:
-            self.start_time = current_time
-
-        # Intern frames to avoid storing duplicates
-        interned_frames = [
-            self._func_intern.setdefault(frame, frame) for frame in frames
-        ]
-
-        self.samples.append({
-            'timestamp': current_time,
-            'thread_id': thread_id,
-            'frames': interned_frames
-        })
+        self._builder.add_sample(frames, current_time, thread_id)
 
     def export(self, filename):
-        if not self.samples:
+        if not self._builder.threads_data:
             print("No samples to export")
             return
 
-        builder = GeckoBuilder(self._string_table, self.start_time)
-
-        for sample in self.samples:
-            builder.add_sample(
-                sample['frames'],
-                sample['timestamp'],
-                sample['thread_id']
-            )
-
-        profile = builder.build_profile()
+        profile = self._builder.build_profile()
 
         with open(filename, 'w', encoding='utf-8') as file:
             json.dump(profile, file, indent=2)
 
-        thread_count = len(set(sample['thread_id'] for sample in self.samples))
-        print(f"Gecko profile exported: {filename} ({thread_count} threads, {len(self.samples)} samples)")
+        print(f"Gecko profile exported: {filename}")

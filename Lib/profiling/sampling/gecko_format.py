@@ -7,7 +7,7 @@ import platform
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 
-from Lib.profiling.sampling.string_table import StringTable
+from .string_table import StringTable
 
 PYTHON_CATEGORY = 0
 OTHER_CATEGORY = 1
@@ -267,7 +267,7 @@ class GeckoProfile:
         }
 
 class GeckoBuilder:
-    def __init__(self, string_table: StringTable, start_time: float = None):
+    def __init__(self, string_table: StringTable, start_time: float):
         self.string_table = string_table
         self.start_time = start_time
         self.threads_data = {}
@@ -359,7 +359,7 @@ class GeckoBuilder:
                 isMainThread=(thread_id == 0),
                 processType="default",
                 processName="Python",
-                processStartupTime=(self.start_time or 0) * 1000,
+                processStartupTime=None,
                 processShutdownTime=None,
                 registerTime=0,
                 unregisterTime=None,
@@ -376,7 +376,7 @@ class GeckoBuilder:
             threads.append(gecko_thread.to_dict())
 
         gecko_meta = GeckoMeta(
-            startTime=(self.start_time or 0) * 1000
+            startTime=self.start_time * 1000
         )
 
         gecko_profile = GeckoProfile(
