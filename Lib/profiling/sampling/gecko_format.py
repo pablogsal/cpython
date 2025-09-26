@@ -335,9 +335,6 @@ class GeckoBuilder:
     def _get_frame_category(self, frame):
         """
         Determine frame category based on frame information.
-        Frame is a tuple: (filename, lineno, funcname)
-        Can be extended to use any part of the frame for categorization.
-
         TODO: Change this once frames have a type/category field
         """
         filename, _, _ = frame

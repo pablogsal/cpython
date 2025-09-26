@@ -292,17 +292,6 @@ class FlamegraphCollector(StackTraceCollector):
         return html_content
 
 
-# Simple category configuration for Gecko profiles
-# TODO: This simple categorization should be enhanced once each frame includes category information
-#       from the collector. Currently we only detect Python files by .py extension.
-PYTHON_CATEGORY = 0
-OTHER_CATEGORY = 1
-
-GECKO_CATEGORIES = [
-    {"name": "Python", "color": "blue", "subcategories": ["Other"]},
-    {"name": "Other", "color": "grey", "subcategories": ["Other"]},
-]
-
 
 class GeckoCollector(StackTraceCollector):
     """Collector that exports profiling data in Gecko Profile format for web-based profilers."""
