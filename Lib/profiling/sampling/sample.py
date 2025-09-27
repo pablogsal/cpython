@@ -12,7 +12,8 @@ from collections import deque
 from _colorize import ANSIColors
 
 from .pstats_collector import PstatsCollector
-from .stack_collector import CollapsedStackCollector, FlamegraphCollector, GeckoCollector
+from .stack_collector import CollapsedStackCollector, FlamegraphCollector
+from .gecko_collector import GeckoCollector
 
 _FREE_THREADED_BUILD = sysconfig.get_config_var("Py_GIL_DISABLED") is not None
 
@@ -40,7 +41,6 @@ Supports the following output formats:
   - --pstats: Detailed profiling statistics with sorting options
   - --collapsed: Stack traces for generating flamegraphs
   - --flamegraph Interactive HTML flamegraph visualization (requires web browser)
-  - --gecko: Gecko profile JSON for web-based visualization (requires web browser)
 
 Examples:
   # Profile process 1234 for 10 seconds with default settings
@@ -60,9 +60,6 @@ Examples:
 
   # Generate a HTML flamegraph
   python -m profiling.sampling --flamegraph -p 1234
-
-  # Generate Gecko profile for web-based profilers
-  python -m profiling.sampling --gecko -p 1234
 
   # Profile all threads, sort by total time
   python -m profiling.sampling -a --sort-tottime -p 1234
@@ -636,7 +633,7 @@ def sample(
             collector = FlamegraphCollector(skip_idle=skip_idle)
             filename = filename or f"flamegraph.{pid}.html"
         case "gecko":
-            collector = GeckoCollector()
+            collector = GeckoCollector(skip_idle=skip_idle)
             filename = filename or f"gecko.{pid}.json"
         case _:
             raise ValueError(f"Invalid output format: {output_format}")
@@ -682,10 +679,13 @@ def _validate_collapsed_format_args(args, parser):
 
 def wait_for_process_and_sample(pid, sort_value, args):
     """Sample the process immediately since it has already signaled readiness."""
-    # Set default collapsed filename with subprocess PID if not already set
+    # Set default filename with subprocess PID if not already set
     filename = args.outfile
-    if not filename and args.format == "collapsed":
-        filename = f"collapsed.{pid}.txt"
+    if not filename:
+        if args.format == "collapsed":
+            filename = f"collapsed.{pid}.txt"
+        elif args.format == "gecko":
+            filename = f"gecko.{pid}.json"
 
     mode = _parse_mode(args.mode)
 
@@ -794,14 +794,14 @@ def main():
         action="store_const",
         const="gecko",
         dest="format",
-        help="Generate Gecko profile format for web-based profilers",
+        help="Generate Gecko format for Firefox Profiler",
     )
 
     output_group.add_argument(
         "-o",
         "--outfile",
         help="Save output to a file (if omitted, prints to stdout for pstats, "
-        "or saves to collapsed.<pid>.txt, flamegraph.<pid>.html, or gecko.<pid>.json for the "
+        "or saves to collapsed.<pid>.txt or flamegraph.<pid>.html for the "
         "respective output formats)"
     )
 
@@ -874,7 +874,7 @@ def main():
     args = parser.parse_args()
 
     # Validate format-specific arguments
-    if args.format == "collapsed":
+    if args.format in ("collapsed", "gecko"):
         _validate_collapsed_format_args(args, parser)
 
     sort_value = args.sort if args.sort is not None else 2

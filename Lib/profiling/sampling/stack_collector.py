@@ -10,7 +10,6 @@ import time
 
 from .collector import Collector, THREAD_STATE_RUNNING
 from .string_table import StringTable
-from .gecko_format import GeckoBuilder
 
 
 class StackTraceCollector(Collector):
@@ -290,29 +289,3 @@ class FlamegraphCollector(StackTraceCollector):
         )
 
         return html_content
-
-
-
-class GeckoCollector(StackTraceCollector):
-    """Collector that exports profiling data in Gecko Profile format for web-based profilers."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._string_table = StringTable()
-        self._builder = GeckoBuilder(self._string_table, time.time())
-
-    def process_frames(self, frames, thread_id):
-        current_time = time.time()
-        self._builder.add_sample(frames, current_time, thread_id)
-
-    def export(self, filename):
-        if not self._builder.threads_data:
-            print("No samples to export")
-            return
-
-        profile = self._builder.build_profile()
-
-        with open(filename, 'w', encoding='utf-8') as file:
-            json.dump(profile, file, indent=2)
-
-        print(f"Gecko profile exported: {filename}")
