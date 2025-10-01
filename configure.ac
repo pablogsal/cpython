@@ -3742,6 +3742,23 @@ AS_VAR_IF([ac_cv_require_ldl], [yes], [
   ])
 ])
 
+dnl Check for libunwind for native frame support in sampling profiler (Linux only)
+case $host in
+  *-*-linux*)
+    AC_CHECK_HEADERS([libunwind.h], [
+      AC_CHECK_LIB([unwind-ptrace], [_UPT_create], [
+        AC_DEFINE([HAVE_LIBUNWIND], [1], [Define to 1 if you have libunwind.])
+        # Need architecture-specific libunwind library
+        case $host_cpu in
+          x86_64) LIBUNWIND_LIBS="-lunwind-ptrace -lunwind-x86_64 -lunwind" ;;
+          aarch64) LIBUNWIND_LIBS="-lunwind-ptrace -lunwind-aarch64 -lunwind" ;;
+          *) LIBUNWIND_LIBS="-lunwind-ptrace -lunwind" ;;
+        esac
+      ], [], [-lunwind])
+    ])
+    ;;
+esac
+AC_SUBST([LIBUNWIND_LIBS])
 
 dnl check for uuid dependencies
 AH_TEMPLATE([HAVE_UUID_H], [Define to 1 if you have the <uuid.h> header file.])
@@ -7867,7 +7884,7 @@ PY_STDLIB_MOD_SIMPLE([_pickle])
 PY_STDLIB_MOD_SIMPLE([_posixsubprocess])
 PY_STDLIB_MOD_SIMPLE([_queue])
 PY_STDLIB_MOD_SIMPLE([_random])
-PY_STDLIB_MOD_SIMPLE([_remote_debugging])
+PY_STDLIB_MOD([_remote_debugging], [], [], [], [$LIBUNWIND_LIBS])
 PY_STDLIB_MOD_SIMPLE([select])
 PY_STDLIB_MOD_SIMPLE([_struct])
 PY_STDLIB_MOD_SIMPLE([_types])

@@ -893,6 +893,7 @@ LIBEXPAT_CFLAGS
 TZPATH
 LIBUUID_LIBS
 LIBUUID_CFLAGS
+LIBUNWIND_LIBS
 PERF_TRAMPOLINE_OBJ
 SHLIBS
 CFLAGSFORSHARED
@@ -14066,6 +14067,80 @@ esac
 fi
 
 fi
+
+case $host in
+  *-*-linux*)
+           for ac_header in libunwind.h
+do :
+  ac_fn_c_check_header_compile "$LINENO" "libunwind.h" "ac_cv_header_libunwind_h" "$ac_includes_default"
+if test "x$ac_cv_header_libunwind_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_LIBUNWIND_H 1" >>confdefs.h
+
+      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for _UPT_create in -lunwind-ptrace" >&5
+printf %s "checking for _UPT_create in -lunwind-ptrace... " >&6; }
+if test ${ac_cv_lib_unwind_ptrace__UPT_create+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e) ac_check_lib_save_LIBS=$LIBS
+LIBS="-lunwind-ptrace -lunwind $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.
+   The 'extern "C"' is for builds by C++ compilers;
+   although this is not generally supported in C code supporting it here
+   has little cost and some practical benefit (sr 110532).  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char _UPT_create (void);
+int
+main (void)
+{
+return _UPT_create ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_lib_unwind_ptrace__UPT_create=yes
+else case e in #(
+  e) ac_cv_lib_unwind_ptrace__UPT_create=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_unwind_ptrace__UPT_create" >&5
+printf "%s\n" "$ac_cv_lib_unwind_ptrace__UPT_create" >&6; }
+if test "x$ac_cv_lib_unwind_ptrace__UPT_create" = xyes
+then :
+
+
+printf "%s\n" "#define HAVE_LIBUNWIND 1" >>confdefs.h
+
+        # Need architecture-specific libunwind library
+        case $host_cpu in
+          x86_64) LIBUNWIND_LIBS="-lunwind-ptrace -lunwind-x86_64 -lunwind" ;;
+          aarch64) LIBUNWIND_LIBS="-lunwind-ptrace -lunwind-aarch64 -lunwind" ;;
+          *) LIBUNWIND_LIBS="-lunwind-ptrace -lunwind" ;;
+        esac
+
+fi
+
+
+fi
+
+done
+    ;;
+esac
 
 
 
@@ -31471,9 +31546,33 @@ then :
 fi
 
 
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for stdlib extension module _remote_debugging" >&5
+printf %s "checking for stdlib extension module _remote_debugging... " >&6; }
         if test "$py_cv_module__remote_debugging" != "n/a"
 then :
+
+    if true
+then :
+  if true
+then :
   py_cv_module__remote_debugging=yes
+else case e in #(
+  e) py_cv_module__remote_debugging=missing ;;
+esac
+fi
+else case e in #(
+  e) py_cv_module__remote_debugging=disabled ;;
+esac
+fi
+
+fi
+  as_fn_append MODULE_BLOCK "MODULE__REMOTE_DEBUGGING_STATE=$py_cv_module__remote_debugging$as_nl"
+  if test "x$py_cv_module__remote_debugging" = xyes
+then :
+
+
+    as_fn_append MODULE_BLOCK "MODULE__REMOTE_DEBUGGING_LDFLAGS=$LIBUNWIND_LIBS$as_nl"
+
 fi
    if test "$py_cv_module__remote_debugging" = yes; then
   MODULE__REMOTE_DEBUGGING_TRUE=
@@ -31483,14 +31582,8 @@ else
   MODULE__REMOTE_DEBUGGING_FALSE=
 fi
 
-  as_fn_append MODULE_BLOCK "MODULE__REMOTE_DEBUGGING_STATE=$py_cv_module__remote_debugging$as_nl"
-  if test "x$py_cv_module__remote_debugging" = xyes
-then :
-
-
-
-
-fi
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $py_cv_module__remote_debugging" >&5
+printf "%s\n" "$py_cv_module__remote_debugging" >&6; }
 
 
         if test "$py_cv_module_select" != "n/a"

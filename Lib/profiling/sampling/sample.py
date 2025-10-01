@@ -137,25 +137,28 @@ def _run_with_sync(original_cmd):
 
 
 class SampleProfiler:
-    def __init__(self, pid, sample_interval_usec, all_threads, *, mode=PROFILING_MODE_WALL, skip_non_matching_threads=True):
+    def __init__(self, pid, sample_interval_usec, all_threads, *, mode=PROFILING_MODE_WALL, skip_non_matching_threads=True, native=False):
         self.pid = pid
         self.sample_interval_usec = sample_interval_usec
         self.all_threads = all_threads
+        self.native = native
         if _FREE_THREADED_BUILD:
             self.unwinder = _remote_debugging.RemoteUnwinder(
                 self.pid, all_threads=self.all_threads, mode=mode,
-                skip_non_matching_threads=skip_non_matching_threads
+                skip_non_matching_threads=skip_non_matching_threads, native=native
             )
         else:
             only_active_threads = bool(self.all_threads)
             self.unwinder = _remote_debugging.RemoteUnwinder(
                 self.pid, only_active_thread=only_active_threads, mode=mode,
-                skip_non_matching_threads=skip_non_matching_threads
+                skip_non_matching_threads=skip_non_matching_threads, native=native
             )
         # Track sample intervals and total sample count
         self.sample_intervals = deque(maxlen=100)
         self.total_samples = 0
         self.realtime_stats = False
+        # For batch symbolization of native IPs
+        self.native_ips = set() if native else None
 
     def sample(self, collector, duration_sec=10):
         sample_interval_sec = self.sample_interval_usec / 1_000_000
@@ -172,6 +175,12 @@ class SampleProfiler:
             if next_time < current_time:
                 try:
                     stack_frames = self.unwinder.get_stack_trace()
+                    # Collect native IPs if native mode is enabled
+                    if self.native and self.native_ips is not None:
+                        for interp_info in stack_frames:
+                            for thread_info in interp_info.threads:
+                                if thread_info.native_backtrace:
+                                    self.native_ips.update(thread_info.native_backtrace)
                     collector.collect(stack_frames)
                 except ProcessLookupError:
                     duration_sec = current_time - start_time
@@ -220,6 +229,31 @@ class SampleProfiler:
         # Pass stats to flamegraph collector if it's the right type
         if hasattr(collector, 'set_stats'):
             collector.set_stats(self.sample_interval_usec, running_time, sample_rate, error_rate)
+
+        # Batch symbolize native IPs if native mode was enabled
+        if self.native and self.native_ips:
+            try:
+                # Get any thread ID for symbolization (they all share the same address space)
+                thread_id = None
+                for interp_info in stack_frames:
+                    if interp_info.threads:
+                        thread_id = interp_info.threads[0].thread_id
+                        break
+
+                if thread_id and self.native_ips:
+                    native_ip_list = list(self.native_ips)
+                    symbol_map = {}
+                    try:
+                        symbols = self.unwinder.symbolize_native_backtrace(native_ip_list, thread_id)
+                        symbol_map = dict(zip(native_ip_list, symbols))
+                    except Exception as e:
+                        print(f"Warning: Failed to symbolize native frames: {e}", file=sys.stderr)
+
+                    # Store symbol map for collectors to use
+                    if hasattr(collector, 'set_native_symbol_map'):
+                        collector.set_native_symbol_map(symbol_map)
+            except Exception as e:
+                print(f"Warning: Error during native symbolization: {e}", file=sys.stderr)
 
         expected_samples = int(duration_sec / sample_interval_sec)
         if num_samples < expected_samples:
@@ -616,6 +650,7 @@ def sample(
     output_format="pstats",
     realtime_stats=False,
     mode=PROFILING_MODE_WALL,
+    native=False,
 ):
     # PROFILING_MODE_ALL implies no skipping at all
     if mode == PROFILING_MODE_ALL:
@@ -628,7 +663,7 @@ def sample(
 
     profiler = SampleProfiler(
         pid, sample_interval_usec, all_threads=all_threads, mode=mode,
-        skip_non_matching_threads=skip_non_matching_threads
+        skip_non_matching_threads=skip_non_matching_threads, native=native
     )
     profiler.realtime_stats = realtime_stats
 
@@ -712,6 +747,7 @@ def wait_for_process_and_sample(pid, sort_value, args):
         output_format=args.format,
         realtime_stats=args.realtime_stats,
         mode=mode,
+        native=args.native,
     )
 
 
@@ -773,6 +809,12 @@ def main():
         choices=["wall", "cpu", "gil"],
         default="wall",
         help="Sampling mode: wall (all threads), cpu (only CPU-running threads), gil (only GIL-holding threads) (default: wall)",
+    )
+    mode_group.add_argument(
+        "--native",
+        action="store_true",
+        default=False,
+        help="Capture native (C/C++) stack frames in addition to Python frames (Linux only, requires CAP_SYS_PTRACE)",
     )
 
     # Output format selection

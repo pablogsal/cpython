@@ -706,6 +706,12 @@
 /* Define to 1 if you have the 'sqlite3' library (-lsqlite3). */
 #undef HAVE_LIBSQLITE3
 
+/* Define to 1 if you have libunwind. */
+#undef HAVE_LIBUNWIND
+
+/* Define to 1 if you have the <libunwind.h> header file. */
+#undef HAVE_LIBUNWIND_H
+
 /* Define to 1 if you have the <libutil.h> header file. */
 #undef HAVE_LIBUTIL_H
 

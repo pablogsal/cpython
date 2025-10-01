@@ -11,7 +11,8 @@ preserve
 
 PyDoc_STRVAR(_remote_debugging_RemoteUnwinder___init____doc__,
 "RemoteUnwinder(pid, *, all_threads=False, only_active_thread=False,\n"
-"               mode=0, debug=False, skip_non_matching_threads=True)\n"
+"               mode=0, debug=False, skip_non_matching_threads=True,\n"
+"               native=False)\n"
 "--\n"
 "\n"
 "Initialize a new RemoteUnwinder object for debugging a remote Python process.\n"
@@ -27,6 +28,7 @@ PyDoc_STRVAR(_remote_debugging_RemoteUnwinder___init____doc__,
 "           lead to the exception.\n"
 "    skip_non_matching_threads: If True, skip threads that don\'t match the selected mode.\n"
 "                              If False, include all threads regardless of mode.\n"
+"    native: If True, capture native (C/C++) stack frames using libunwind (Linux only).\n"
 "\n"
 "The RemoteUnwinder provides functionality to inspect and debug a running Python\n"
 "process, including examining thread states, stack frames and other runtime data.\n"
@@ -42,7 +44,8 @@ _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
                                                int pid, int all_threads,
                                                int only_active_thread,
                                                int mode, int debug,
-                                               int skip_non_matching_threads);
+                                               int skip_non_matching_threads,
+                                               int native);
 
 static int
 _remote_debugging_RemoteUnwinder___init__(PyObject *self, PyObject *args, PyObject *kwargs)
@@ -50,7 +53,7 @@ _remote_debugging_RemoteUnwinder___init__(PyObject *self, PyObject *args, PyObje
     int return_value = -1;
     #if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
 
-    #define NUM_KEYWORDS 6
+    #define NUM_KEYWORDS 7
     static struct {
         PyGC_Head _this_is_not_used;
         PyObject_VAR_HEAD
@@ -59,7 +62,7 @@ _remote_debugging_RemoteUnwinder___init__(PyObject *self, PyObject *args, PyObje
     } _kwtuple = {
         .ob_base = PyVarObject_HEAD_INIT(&PyTuple_Type, NUM_KEYWORDS)
         .ob_hash = -1,
-        .ob_item = { &_Py_ID(pid), &_Py_ID(all_threads), &_Py_ID(only_active_thread), &_Py_ID(mode), &_Py_ID(debug), &_Py_ID(skip_non_matching_threads), },
+        .ob_item = { &_Py_ID(pid), &_Py_ID(all_threads), &_Py_ID(only_active_thread), &_Py_ID(mode), &_Py_ID(debug), &_Py_ID(skip_non_matching_threads), &_Py_ID(native), },
     };
     #undef NUM_KEYWORDS
     #define KWTUPLE (&_kwtuple.ob_base.ob_base)
@@ -68,14 +71,14 @@ _remote_debugging_RemoteUnwinder___init__(PyObject *self, PyObject *args, PyObje
     #  define KWTUPLE NULL
     #endif  // !Py_BUILD_CORE
 
-    static const char * const _keywords[] = {"pid", "all_threads", "only_active_thread", "mode", "debug", "skip_non_matching_threads", NULL};
+    static const char * const _keywords[] = {"pid", "all_threads", "only_active_thread", "mode", "debug", "skip_non_matching_threads", "native", NULL};
     static _PyArg_Parser _parser = {
         .keywords = _keywords,
         .fname = "RemoteUnwinder",
         .kwtuple = KWTUPLE,
     };
     #undef KWTUPLE
-    PyObject *argsbuf[6];
+    PyObject *argsbuf[7];
     PyObject * const *fastargs;
     Py_ssize_t nargs = PyTuple_GET_SIZE(args);
     Py_ssize_t noptargs = nargs + (kwargs ? PyDict_GET_SIZE(kwargs) : 0) - 1;
@@ -85,6 +88,7 @@ _remote_debugging_RemoteUnwinder___init__(PyObject *self, PyObject *args, PyObje
     int mode = 0;
     int debug = 0;
     int skip_non_matching_threads = 1;
+    int native = 0;
 
     fastargs = _PyArg_UnpackKeywords(_PyTuple_CAST(args)->ob_item, nargs, kwargs, NULL, &_parser,
             /*minpos*/ 1, /*maxpos*/ 1, /*minkw*/ 0, /*varpos*/ 0, argsbuf);
@@ -134,12 +138,21 @@ _remote_debugging_RemoteUnwinder___init__(PyObject *self, PyObject *args, PyObje
             goto skip_optional_kwonly;
         }
     }
-    skip_non_matching_threads = PyObject_IsTrue(fastargs[5]);
-    if (skip_non_matching_threads < 0) {
+    if (fastargs[5]) {
+        skip_non_matching_threads = PyObject_IsTrue(fastargs[5]);
+        if (skip_non_matching_threads < 0) {
+            goto exit;
+        }
+        if (!--noptargs) {
+            goto skip_optional_kwonly;
+        }
+    }
+    native = PyObject_IsTrue(fastargs[6]);
+    if (native < 0) {
         goto exit;
     }
 skip_optional_kwonly:
-    return_value = _remote_debugging_RemoteUnwinder___init___impl((RemoteUnwinderObject *)self, pid, all_threads, only_active_thread, mode, debug, skip_non_matching_threads);
+    return_value = _remote_debugging_RemoteUnwinder___init___impl((RemoteUnwinderObject *)self, pid, all_threads, only_active_thread, mode, debug, skip_non_matching_threads, native);
 
 exit:
     return return_value;
@@ -321,4 +334,96 @@ _remote_debugging_RemoteUnwinder_get_async_stack_trace(PyObject *self, PyObject 
 
     return return_value;
 }
-/*[clinic end generated code: output=2caefeddf7683d32 input=a9049054013a1b77]*/
+
+PyDoc_STRVAR(_remote_debugging_RemoteUnwinder_symbolize_native_backtrace__doc__,
+"symbolize_native_backtrace($self, /, ip_list, thread_id)\n"
+"--\n"
+"\n"
+"Symbolize native instruction pointers to function names.\n"
+"\n"
+"Args:\n"
+"    ip_list: A list of instruction pointers (integers) to symbolize\n"
+"    thread_id: The thread ID where these IPs came from\n"
+"\n"
+"Returns:\n"
+"    A list of tuples (function_name, offset, module_path) for each IP.\n"
+"    If symbolization fails for an IP, returns (None, ip_value, None).\n"
+"\n"
+"This method uses libunwind to symbolize native (C/C++) instruction pointers\n"
+"captured during native frame unwinding. It requires native=True to be set\n"
+"during RemoteUnwinder initialization and is only available on Linux.\n"
+"\n"
+"Example:\n"
+"    unwinder = RemoteUnwinder(pid, native=True)\n"
+"    traces = unwinder.get_stack_trace()\n"
+"    for interp_id, threads in traces:\n"
+"        for thread_info in threads:\n"
+"            native_ips = thread_info.native_backtrace\n"
+"            if native_ips is not None:\n"
+"                symbols = unwinder.symbolize_native_backtrace(native_ips, thread_info.thread_id)\n"
+"                for func, offset, module in symbols:\n"
+"                    print(f\"{func}+{offset:#x} in {module}\")\n"
+"\n"
+"Raises:\n"
+"    RuntimeError: If libunwind is not available or fails to symbolize\n"
+"    TypeError: If ip_list is not a list");
+
+#define _REMOTE_DEBUGGING_REMOTEUNWINDER_SYMBOLIZE_NATIVE_BACKTRACE_METHODDEF    \
+    {"symbolize_native_backtrace", _PyCFunction_CAST(_remote_debugging_RemoteUnwinder_symbolize_native_backtrace), METH_FASTCALL|METH_KEYWORDS, _remote_debugging_RemoteUnwinder_symbolize_native_backtrace__doc__},
+
+static PyObject *
+_remote_debugging_RemoteUnwinder_symbolize_native_backtrace_impl(RemoteUnwinderObject *self,
+                                                                 PyObject *ip_list,
+                                                                 long thread_id);
+
+static PyObject *
+_remote_debugging_RemoteUnwinder_symbolize_native_backtrace(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
+{
+    PyObject *return_value = NULL;
+    #if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
+
+    #define NUM_KEYWORDS 2
+    static struct {
+        PyGC_Head _this_is_not_used;
+        PyObject_VAR_HEAD
+        Py_hash_t ob_hash;
+        PyObject *ob_item[NUM_KEYWORDS];
+    } _kwtuple = {
+        .ob_base = PyVarObject_HEAD_INIT(&PyTuple_Type, NUM_KEYWORDS)
+        .ob_hash = -1,
+        .ob_item = { &_Py_ID(ip_list), &_Py_ID(thread_id), },
+    };
+    #undef NUM_KEYWORDS
+    #define KWTUPLE (&_kwtuple.ob_base.ob_base)
+
+    #else  // !Py_BUILD_CORE
+    #  define KWTUPLE NULL
+    #endif  // !Py_BUILD_CORE
+
+    static const char * const _keywords[] = {"ip_list", "thread_id", NULL};
+    static _PyArg_Parser _parser = {
+        .keywords = _keywords,
+        .fname = "symbolize_native_backtrace",
+        .kwtuple = KWTUPLE,
+    };
+    #undef KWTUPLE
+    PyObject *argsbuf[2];
+    PyObject *ip_list;
+    long thread_id;
+
+    args = _PyArg_UnpackKeywords(args, nargs, NULL, kwnames, &_parser,
+            /*minpos*/ 2, /*maxpos*/ 2, /*minkw*/ 0, /*varpos*/ 0, argsbuf);
+    if (!args) {
+        goto exit;
+    }
+    ip_list = args[0];
+    thread_id = PyLong_AsLong(args[1]);
+    if (thread_id == -1 && PyErr_Occurred()) {
+        goto exit;
+    }
+    return_value = _remote_debugging_RemoteUnwinder_symbolize_native_backtrace_impl((RemoteUnwinderObject *)self, ip_list, thread_id);
+
+exit:
+    return return_value;
+}
+/*[clinic end generated code: output=19b7a7a2b56e6c03 input=a9049054013a1b77]*/

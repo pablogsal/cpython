@@ -42,6 +42,15 @@
 #define MAX_NATIVE_THREADS 4096
 #endif
 
+#if defined(__linux__) && defined(HAVE_LIBUNWIND)
+// Do NOT define UNW_LOCAL_ONLY - we need remote unwinding via ptrace
+#include <libunwind.h>
+#include <libunwind-ptrace.h>
+#include <dlfcn.h>
+#include <sys/ptrace.h>
+#include <sys/wait.h>
+#endif
+
 #ifdef MS_WINDOWS
 #include <windows.h>
 #include <winternl.h>
@@ -154,6 +163,7 @@ static PyStructSequence_Field FrameInfo_fields[] = {
     {"filename", "Source code filename"},
     {"lineno", "Line number"},
     {"funcname", "Function name"},
+    {"is_entry_frame", "Whether this is an entry frame from native code (corresponds to _PyEval_EvalFrameDefault)"},
     {NULL}
 };
 
@@ -161,7 +171,7 @@ static PyStructSequence_Desc FrameInfo_desc = {
     "_remote_debugging.FrameInfo",
     "Information about a frame",
     FrameInfo_fields,
-    3
+    4
 };
 
 // CoroInfo structseq type - replaces 2-tuple (call_stack, task_name)
@@ -184,6 +194,7 @@ static PyStructSequence_Field ThreadInfo_fields[] = {
     {"status", "Thread status (flags: HAS_GIL, ON_CPU, UNKNOWN or legacy enum)"},
     {"frame_info", "Frame information"},
     {"gc_collecting", "Whether GC is collecting (interpreter-level)"},
+    {"native_backtrace", "Native (C/C++) backtrace instruction pointers (Linux only)"},
     {NULL}
 };
 
@@ -191,7 +202,7 @@ static PyStructSequence_Desc ThreadInfo_desc = {
     "_remote_debugging.ThreadInfo",
     "Information about a thread",
     ThreadInfo_fields,
-    3
+    5
 };
 
 // InterpreterInfo structseq type - replaces 2-tuple (interpreter_id, thread_list)
@@ -276,6 +287,7 @@ typedef struct {
     int only_active_thread;
     int mode;  // Use enum _ProfilingMode values
     int skip_non_matching_threads;  // New option to skip threads that don't match mode
+    int native_mode;  // Enable native frame unwinding (Linux only with libunwind)
     RemoteDebuggingState *cached_state;  // Cached module state
 #ifdef Py_GIL_DISABLED
     // TLBC cache invalidation tracking
@@ -1818,7 +1830,8 @@ parse_code_object(RemoteUnwinderObject *unwinder,
                   uintptr_t address,
                   uintptr_t instruction_pointer,
                   uintptr_t *previous_frame,
-                  int32_t tlbc_index)
+                  int32_t tlbc_index,
+                  int is_entry_frame)
 {
     void *key = (void *)address;
     CachedCodeMetadata *meta = NULL;
@@ -1966,6 +1979,7 @@ done_tlbc:
     PyStructSequence_SetItem(tuple, 0, meta->file_name);
     PyStructSequence_SetItem(tuple, 1, lineno);
     PyStructSequence_SetItem(tuple, 2, meta->func_name);
+    PyStructSequence_SetItem(tuple, 3, PyBool_FromLong(is_entry_frame));
 
     *result = tuple;
     return 0;
@@ -2142,7 +2156,11 @@ parse_frame_from_chunks(
     }
 #endif
 
-    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index);
+    // Check if this is an entry frame (owned by C stack)
+    char frame_owner = GET_MEMBER(char, frame, unwinder->debug_offsets.interpreter_frame.owner);
+    int is_entry_frame = (frame_owner == FRAME_OWNED_BY_CSTACK);
+
+    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index, is_entry_frame);
 }
 
 /* ============================================================================
@@ -2292,8 +2310,12 @@ parse_frame_object(
     }
 #endif
 
+    // Check if this is an entry frame (owned by C stack)
+    char frame_owner = GET_MEMBER(char, frame, unwinder->debug_offsets.interpreter_frame.owner);
+    int is_entry_frame = (frame_owner == FRAME_OWNED_BY_CSTACK);
+
     *address_of_code_object = code_object;
-    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index);
+    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index, is_entry_frame);
 }
 
 static int
@@ -2628,6 +2650,377 @@ get_thread_status(RemoteUnwinderObject *unwinder, uint64_t tid, uint64_t pthread
 #endif
 }
 
+#if defined(__linux__) && defined(HAVE_LIBUNWIND)
+/* Capture native backtrace using libunwind for a remote thread.
+ * Returns a Python list of instruction pointers as integers, or NULL on error.
+ * The list contains the native stack frames (C/C++ frames) for the thread.
+ */
+static PyObject*
+get_native_backtrace(RemoteUnwinderObject *unwinder, long tid) {
+    unw_cursor_t cursor;
+    unw_word_t ip;
+    PyObject *backtrace = NULL;
+    PyObject *ip_obj = NULL;
+    int attached = 0;
+    unw_addr_space_t addr_space = NULL;
+
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Starting for tid=%ld\n", tid);
+    }
+
+    // Create the libunwind address space
+    // According to libunwind docs, byteorder should be 0 for default
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Creating libunwind address space\n");
+        fprintf(stderr, "DEBUG: sizeof(_UPT_accessors) = %zu\n", sizeof(_UPT_accessors));
+        fprintf(stderr, "DEBUG: _UPT_accessors address: %p\n", (void*)&_UPT_accessors);
+        fprintf(stderr, "DEBUG: _UPT_accessors.find_proc_info: %p\n", (void*)_UPT_accessors.find_proc_info);
+        fprintf(stderr, "DEBUG: _UPT_accessors.put_unwind_info: %p\n", (void*)_UPT_accessors.put_unwind_info);
+        fprintf(stderr, "DEBUG: _UPT_accessors.get_dyn_info_list_addr: %p\n", (void*)_UPT_accessors.get_dyn_info_list_addr);
+        fprintf(stderr, "DEBUG: _UPT_accessors.access_mem: %p\n", (void*)_UPT_accessors.access_mem);
+        fprintf(stderr, "DEBUG: _UPT_accessors.access_reg: %p\n", (void*)_UPT_accessors.access_reg);
+        fprintf(stderr, "DEBUG: _UPT_accessors.access_fpreg: %p\n", (void*)_UPT_accessors.access_fpreg);
+        fprintf(stderr, "DEBUG: _UPT_accessors.resume: %p\n", (void*)_UPT_accessors.resume);
+        fprintf(stderr, "DEBUG: _UPT_accessors.get_proc_name: %p\n", (void*)_UPT_accessors.get_proc_name);
+    }
+
+    // Use 0 for byteorder to request default (local machine) byte order
+    addr_space = unw_create_addr_space(&_UPT_accessors, 0);
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: unw_create_addr_space returned: %p\n", (void*)addr_space);
+    }
+    if (addr_space == NULL) {
+        PyErr_Format(PyExc_RuntimeError,
+                    "Failed to create libunwind address space. errno=%d (%s). "
+                    "_UPT_accessors may not be properly initialized.",
+                    errno, strerror(errno));
+        return NULL;
+    }
+
+    // Now attach to the thread with ptrace for sampling
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Attaching to thread with ptrace\n");
+    }
+    if (ptrace(PTRACE_ATTACH, tid, NULL, NULL) == -1) {
+        PyErr_Format(PyExc_RuntimeError,
+                    "Failed to attach to thread %ld with ptrace: %s (errno=%d)",
+                    tid, strerror(errno), errno);
+        unw_destroy_addr_space(addr_space);
+        return NULL;
+    }
+    attached = 1;
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Successfully attached to thread\n");
+    }
+
+    // Wait for the thread to stop
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Waiting for thread to stop\n");
+    }
+    int status;
+    if (waitpid(tid, &status, __WALL) == -1) {
+        PyErr_Format(PyExc_RuntimeError,
+                    "Failed to wait for thread %ld: %s (errno=%d)",
+                    tid, strerror(errno), errno);
+        if (unwinder->debug) {
+            fprintf(stderr, "ERROR: ");
+            PyErr_Print();
+        }
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        unw_destroy_addr_space(addr_space);
+        return NULL;
+    }
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Thread stopped (status=%d)\n", status);
+    }
+
+    // Create ptrace context for this thread
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Creating UPT context\n");
+    }
+    void *context = _UPT_create(tid);
+    if (context == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create libunwind ptrace context");
+        if (unwinder->debug) {
+            fprintf(stderr, "ERROR: ");
+            PyErr_Print();
+        }
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        unw_destroy_addr_space(addr_space);
+        return NULL;
+    }
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: UPT context created\n");
+    }
+
+    // Initialize cursor for remote unwinding
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Initializing remote cursor\n");
+    }
+    if (unw_init_remote(&cursor, addr_space, context) != 0) {
+        _UPT_destroy(context);
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        unw_destroy_addr_space(addr_space);
+        PyErr_SetString(PyExc_RuntimeError, "Failed to initialize libunwind cursor");
+        if (unwinder->debug) {
+            fprintf(stderr, "ERROR: ");
+            PyErr_Print();
+        }
+        return NULL;
+    }
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Remote cursor initialized\n");
+    }
+
+    // Create list to store instruction pointers
+    backtrace = PyList_New(0);
+    if (backtrace == NULL) {
+        _UPT_destroy(context);
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        unw_destroy_addr_space(addr_space);
+        return NULL;
+    }
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Starting stack walk\n");
+    }
+
+    // Walk the stack and collect instruction pointers
+    int max_frames = 1024;  // Reasonable limit to prevent infinite loops
+    int frame_count = 0;
+
+    do {
+        if (frame_count >= max_frames) {
+            if (unwinder->debug) {
+                fprintf(stderr, "DEBUG: get_native_backtrace: Reached max frames (%d)\n", max_frames);
+            }
+            break;
+        }
+
+        // Get instruction pointer for current frame
+        int ret = unw_get_reg(&cursor, UNW_REG_IP, &ip);
+        if (ret != 0) {
+            if (unwinder->debug) {
+                fprintf(stderr, "DEBUG: get_native_backtrace: unw_get_reg failed at frame %d (ret=%d)\n", frame_count, ret);
+            }
+            break;
+        }
+
+        if (unwinder->debug && frame_count < 5) {
+            fprintf(stderr, "DEBUG: get_native_backtrace: Frame %d: IP=0x%lx\n", frame_count, (unsigned long)ip);
+        }
+
+        // Convert IP to Python integer and add to list
+        ip_obj = PyLong_FromUnsignedLongLong((unsigned long long)ip);
+        if (ip_obj == NULL) {
+            Py_DECREF(backtrace);
+            _UPT_destroy(context);
+            ptrace(PTRACE_DETACH, tid, NULL, NULL);
+            unw_destroy_addr_space(addr_space);
+            return NULL;
+        }
+
+        if (PyList_Append(backtrace, ip_obj) < 0) {
+            Py_DECREF(ip_obj);
+            Py_DECREF(backtrace);
+            _UPT_destroy(context);
+            ptrace(PTRACE_DETACH, tid, NULL, NULL);
+            unw_destroy_addr_space(addr_space);
+            return NULL;
+        }
+        Py_DECREF(ip_obj);
+
+        frame_count++;
+
+        // Move to next frame
+        ret = unw_step(&cursor);
+        if (ret <= 0) {
+            // ret == 0 means end of stack, ret < 0 means error
+            if (unwinder->debug) {
+                fprintf(stderr, "DEBUG: get_native_backtrace: unw_step returned %d at frame %d\n", ret, frame_count);
+            }
+            break;
+        }
+    } while (1);
+
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Collected %d frames\n", frame_count);
+    }
+
+    _UPT_destroy(context);
+
+    // Detach from the thread
+    if (attached) {
+        if (unwinder->debug) {
+            fprintf(stderr, "DEBUG: get_native_backtrace: Detaching from thread\n");
+        }
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+    }
+
+    // Clean up the address space
+    unw_destroy_addr_space(addr_space);
+
+    if (unwinder->debug) {
+        fprintf(stderr, "DEBUG: get_native_backtrace: Completed successfully\n");
+    }
+
+    return backtrace;
+}
+
+/* Symbolize a list of instruction pointers using libunwind and dladdr.
+ * Returns a list of tuples (function_name, offset, module_path) for each IP.
+ * If symbolization fails for an IP, returns (None, ip_value, None).
+ */
+static PyObject*
+symbolize_native_ips(RemoteUnwinderObject *unwinder, PyObject *ip_list, long tid) {
+    PyObject *result = NULL;
+    PyObject *symbol_info = NULL;
+    unw_cursor_t cursor;
+    char sym_name[256];
+    unw_word_t offset;
+    int attached = 0;
+    unw_addr_space_t addr_space = NULL;
+
+    if (!PyList_Check(ip_list)) {
+        PyErr_SetString(PyExc_TypeError, "Expected a list of instruction pointers");
+        return NULL;
+    }
+
+    Py_ssize_t num_ips = PyList_Size(ip_list);
+    result = PyList_New(num_ips);
+    if (result == NULL) {
+        return NULL;
+    }
+
+    // Create the libunwind address space
+    addr_space = unw_create_addr_space(&_UPT_accessors, 0);
+    if (addr_space == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create libunwind address space");
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    // Attach to the thread with ptrace
+    if (ptrace(PTRACE_ATTACH, tid, NULL, NULL) == -1) {
+        PyErr_Format(PyExc_RuntimeError,
+                    "Failed to attach to thread %ld with ptrace: %s",
+                    tid, strerror(errno));
+        unw_destroy_addr_space(addr_space);
+        Py_DECREF(result);
+        return NULL;
+    }
+    attached = 1;
+
+    // Wait for the thread to stop
+    int status;
+    if (waitpid(tid, &status, __WALL) == -1) {
+        PyErr_Format(PyExc_RuntimeError,
+                    "Failed to wait for thread %ld: %s",
+                    tid, strerror(errno));
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    // Create ptrace context for this thread
+    void *context = _UPT_create(tid);
+    if (context == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create libunwind ptrace context");
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    // Initialize cursor for remote unwinding
+    if (unw_init_remote(&cursor, addr_space, context) != 0) {
+        _UPT_destroy(context);
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        unw_destroy_addr_space(addr_space);
+        PyErr_SetString(PyExc_RuntimeError, "Failed to initialize libunwind cursor");
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    for (Py_ssize_t i = 0; i < num_ips; i++) {
+        PyObject *ip_obj = PyList_GetItem(ip_list, i);
+        if (ip_obj == NULL) {
+            _UPT_destroy(context);
+            ptrace(PTRACE_DETACH, tid, NULL, NULL);
+            unw_destroy_addr_space(addr_space);
+            Py_DECREF(result);
+            return NULL;
+        }
+
+        unsigned long long ip = PyLong_AsUnsignedLongLong(ip_obj);
+        if (PyErr_Occurred()) {
+            _UPT_destroy(context);
+            ptrace(PTRACE_DETACH, tid, NULL, NULL);
+            unw_destroy_addr_space(addr_space);
+            Py_DECREF(result);
+            return NULL;
+        }
+
+        // Try to get symbol name using libunwind
+        const char *function_name = NULL;
+        PyObject *py_function = Py_None;
+        PyObject *py_offset = Py_None;
+        PyObject *py_module = Py_None;
+
+        // Set the cursor to this IP
+        if (unw_set_reg(&cursor, UNW_REG_IP, (unw_word_t)ip) == 0) {
+            if (unw_get_proc_name(&cursor, sym_name, sizeof(sym_name), &offset) == 0) {
+                py_function = PyUnicode_FromString(sym_name);
+                py_offset = PyLong_FromUnsignedLongLong((unsigned long long)offset);
+
+                // Try to get module information using dladdr
+                Dl_info dl_info;
+                if (dladdr((void*)ip, &dl_info) != 0 && dl_info.dli_fname != NULL) {
+                    py_module = PyUnicode_FromString(dl_info.dli_fname);
+                }
+            }
+        }
+
+        // If symbolization failed, create a tuple with None, ip, None
+        if (py_function == Py_None) {
+            Py_INCREF(Py_None);
+            py_function = Py_None;
+            py_offset = PyLong_FromUnsignedLongLong(ip);
+            Py_INCREF(Py_None);
+            py_module = Py_None;
+        } else if (py_module == Py_None) {
+            Py_INCREF(Py_None);
+        }
+
+        symbol_info = PyTuple_Pack(3, py_function, py_offset, py_module);
+
+        if (py_function != Py_None) Py_DECREF(py_function);
+        if (py_offset != Py_None) Py_DECREF(py_offset);
+        if (py_module != Py_None) Py_DECREF(py_module);
+
+        if (symbol_info == NULL) {
+            _UPT_destroy(context);
+            ptrace(PTRACE_DETACH, tid, NULL, NULL);
+            unw_destroy_addr_space(addr_space);
+            Py_DECREF(result);
+            return NULL;
+        }
+
+        PyList_SetItem(result, i, symbol_info);  // Steals reference
+    }
+
+    _UPT_destroy(context);
+
+    // Detach from the thread
+    if (attached) {
+        ptrace(PTRACE_DETACH, tid, NULL, NULL);
+    }
+
+    // Clean up the address space
+    unw_destroy_addr_space(addr_space);
+
+    return result;
+}
+#endif
+
 typedef struct {
     unsigned int initialized:1;
     unsigned int bound:1;
@@ -2789,6 +3182,35 @@ unwind_stack_for_thread(
         Py_DECREF(py_status);
         goto error;
     }
+
+    // Capture native backtrace if native mode is enabled
+    PyObject *native_backtrace = Py_None;
+    Py_INCREF(Py_None);
+#if defined(__linux__) && defined(HAVE_LIBUNWIND)
+    fprintf(stderr, "DEBUG: Linux and HAVE_LIBUNWIND are defined\n");
+    if (unwinder->native_mode) {
+        fprintf(stderr, "DEBUG: Attempting to capture native backtrace for tid=%ld\n", tid);
+        PyObject *bt = get_native_backtrace(unwinder, tid);
+        if (bt != NULL) {
+            fprintf(stderr, "DEBUG: Successfully captured %zd native frames\n", PyList_Size(bt));
+            Py_DECREF(native_backtrace);
+            native_backtrace = bt;
+        } else {
+            // If get_native_backtrace fails, print the error
+            fprintf(stderr, "DEBUG: Failed to capture native backtrace\n");
+            if (PyErr_Occurred()) {
+                fprintf(stderr, "ERROR: Native backtrace capture failed: ");
+                PyErr_Print();
+            }
+            PyErr_Clear();
+        }
+    } else {
+        fprintf(stderr, "DEBUG: Native mode is disabled (native_mode=%d)\n", unwinder->native_mode);
+    }
+#else
+    fprintf(stderr, "WARNING: HAVE_LIBUNWIND is not defined or not on Linux\n");
+#endif
+
     PyErr_Print();
 
     // In PROFILING_MODE_ALL, py_status contains flags, otherwise it contains legacy enum
@@ -2796,6 +3218,7 @@ unwind_stack_for_thread(
     PyStructSequence_SetItem(result, 1, py_status);  // Steals reference
     PyStructSequence_SetItem(result, 2, frame_info); // Steals reference
     PyStructSequence_SetItem(result, 3, py_gc_collecting); // Steals reference
+    PyStructSequence_SetItem(result, 4, native_backtrace); // Steals reference
 
     cleanup_stack_chunks(&chunks);
     return result;
@@ -2829,6 +3252,7 @@ _remote_debugging.RemoteUnwinder.__init__
     mode: int = 0
     debug: bool = False
     skip_non_matching_threads: bool = True
+    native: bool = False
 
 Initialize a new RemoteUnwinder object for debugging a remote Python process.
 
@@ -2843,6 +3267,7 @@ Args:
            lead to the exception.
     skip_non_matching_threads: If True, skip threads that don't match the selected mode.
                               If False, include all threads regardless of mode.
+    native: If True, capture native (C/C++) stack frames using libunwind (Linux only).
 
 The RemoteUnwinder provides functionality to inspect and debug a running Python
 process, including examining thread states, stack frames and other runtime data.
@@ -2859,8 +3284,9 @@ _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
                                                int pid, int all_threads,
                                                int only_active_thread,
                                                int mode, int debug,
-                                               int skip_non_matching_threads)
-/*[clinic end generated code: output=abf5ea5cd58bcb36 input=08fb6ace023ec3b5]*/
+                                               int skip_non_matching_threads,
+                                               int native)
+/*[clinic end generated code: output=e659a6e1ba0abb8f input=585af8c70c0f2d62]*/
 {
     // Validate that all_threads and only_active_thread are not both True
     if (all_threads && only_active_thread) {
@@ -2881,6 +3307,7 @@ _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
     self->only_active_thread = only_active_thread;
     self->mode = mode;
     self->skip_non_matching_threads = skip_non_matching_threads;
+    self->native_mode = native;
     self->cached_state = NULL;
     if (_Py_RemoteDebug_InitProcHandle(&self->handle, pid) < 0) {
         set_exception_cause(self, PyExc_RuntimeError, "Failed to initialize process handle");
@@ -3339,10 +3766,69 @@ result_err:
     return NULL;
 }
 
+/*[clinic input]
+@permit_long_docstring_body
+_remote_debugging.RemoteUnwinder.symbolize_native_backtrace
+    ip_list: object
+    thread_id: long
+
+Symbolize native instruction pointers to function names.
+
+Args:
+    ip_list: A list of instruction pointers (integers) to symbolize
+    thread_id: The thread ID where these IPs came from
+
+Returns:
+    A list of tuples (function_name, offset, module_path) for each IP.
+    If symbolization fails for an IP, returns (None, ip_value, None).
+
+This method uses libunwind to symbolize native (C/C++) instruction pointers
+captured during native frame unwinding. It requires native=True to be set
+during RemoteUnwinder initialization and is only available on Linux.
+
+Example:
+    unwinder = RemoteUnwinder(pid, native=True)
+    traces = unwinder.get_stack_trace()
+    for interp_id, threads in traces:
+        for thread_info in threads:
+            native_ips = thread_info.native_backtrace
+            if native_ips is not None:
+                symbols = unwinder.symbolize_native_backtrace(native_ips, thread_info.thread_id)
+                for func, offset, module in symbols:
+                    print(f"{func}+{offset:#x} in {module}")
+
+Raises:
+    RuntimeError: If libunwind is not available or fails to symbolize
+    TypeError: If ip_list is not a list
+
+[clinic start generated code]*/
+
+static PyObject *
+_remote_debugging_RemoteUnwinder_symbolize_native_backtrace_impl(RemoteUnwinderObject *self,
+                                                                 PyObject *ip_list,
+                                                                 long thread_id)
+/*[clinic end generated code: output=1a403a8b1b38e7bf input=ea749c7b5a2d516c]*/
+{
+#if defined(__linux__) && defined(HAVE_LIBUNWIND)
+    if (!self->native_mode) {
+        PyErr_SetString(PyExc_RuntimeError,
+                       "Native mode must be enabled to symbolize native backtraces. "
+                       "Initialize RemoteUnwinder with native=True.");
+        return NULL;
+    }
+    return symbolize_native_ips(self, ip_list, thread_id);
+#else
+    PyErr_SetString(PyExc_RuntimeError,
+                   "Native backtrace symbolization is only available on Linux with libunwind");
+    return NULL;
+#endif
+}
+
 static PyMethodDef RemoteUnwinder_methods[] = {
     _REMOTE_DEBUGGING_REMOTEUNWINDER_GET_STACK_TRACE_METHODDEF
     _REMOTE_DEBUGGING_REMOTEUNWINDER_GET_ALL_AWAITED_BY_METHODDEF
     _REMOTE_DEBUGGING_REMOTEUNWINDER_GET_ASYNC_STACK_TRACE_METHODDEF
+    _REMOTE_DEBUGGING_REMOTEUNWINDER_SYMBOLIZE_NATIVE_BACKTRACE_METHODDEF
     {NULL, NULL}
 };
 
@@ -3480,6 +3966,20 @@ _remote_debugging_exec(PyObject *m)
         return -1;
     }
     if (PyModule_AddIntConstant(m, "THREAD_STATUS_GIL_REQUESTED", THREAD_STATUS_GIL_REQUESTED) < 0) {
+        return -1;
+    }
+
+    // Add thread state enum constants
+    if (PyModule_AddIntConstant(m, "THREAD_STATE_RUNNING", THREAD_STATE_RUNNING) < 0) {
+        return -1;
+    }
+    if (PyModule_AddIntConstant(m, "THREAD_STATE_IDLE", THREAD_STATE_IDLE) < 0) {
+        return -1;
+    }
+    if (PyModule_AddIntConstant(m, "THREAD_STATE_GIL_WAIT", THREAD_STATE_GIL_WAIT) < 0) {
+        return -1;
+    }
+    if (PyModule_AddIntConstant(m, "THREAD_STATE_UNKNOWN", THREAD_STATE_UNKNOWN) < 0) {
         return -1;
     }
 
