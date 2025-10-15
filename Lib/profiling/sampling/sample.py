@@ -14,6 +14,8 @@ from _colorize import ANSIColors
 from .pstats_collector import PstatsCollector
 from .stack_collector import CollapsedStackCollector, FlamegraphCollector
 from .gecko_collector import GeckoCollector
+from .binary_collector import BinaryCollector
+from .binary_reader import BinaryReader
 
 _FREE_THREADED_BUILD = sysconfig.get_config_var("Py_GIL_DISABLED") is not None
 
@@ -635,6 +637,9 @@ def sample(
         case "gecko":
             collector = GeckoCollector(skip_idle=skip_idle)
             filename = filename or f"gecko.{pid}.json"
+        case "binary":
+            filename = filename or f"profile.{pid}.pydb"
+            collector = BinaryCollector(filename, sample_interval_usec, skip_idle=skip_idle)
         case _:
             raise ValueError(f"Invalid output format: {output_format}")
 
@@ -645,8 +650,131 @@ def sample(
         print_sampled_stats(
             stats, sort, limit, show_summary, sample_interval_usec
         )
+    elif output_format == "binary":
+        collector.export(filename)
+        print(f"Binary profiling data saved to: {filename}")
     else:
         collector.export(filename)
+
+
+def replay_from_binary(
+    binary_file,
+    *,
+    sort=2,
+    filename=None,
+    limit=None,
+    show_summary=True,
+    output_format="pstats",
+    mode=PROFILING_MODE_WALL,
+):
+    """Replay profiling data from a binary file and generate output.
+
+    Args:
+        binary_file: Path to the binary file to replay
+        sort: Sort order for pstats output
+        filename: Output filename (optional)
+        limit: Row limit for output
+        show_summary: Whether to show summary
+        output_format: Output format (pstats, collapsed, flamegraph, gecko)
+        mode: Profiling mode (for skip_idle determination)
+    """
+    # Determine skip_idle for collector compatibility
+    skip_idle = mode != PROFILING_MODE_WALL
+
+    # Create collector
+    collector = None
+    match output_format:
+        case "pstats":
+            with BinaryReader(binary_file) as reader:
+                info = reader.get_info()
+                sample_interval_usec = info['sample_interval_us']
+            collector = PstatsCollector(sample_interval_usec, skip_idle=skip_idle)
+        case "collapsed":
+            collector = CollapsedStackCollector(skip_idle=skip_idle)
+            filename = filename or "collapsed.replay.txt"
+        case "flamegraph":
+            collector = FlamegraphCollector(skip_idle=skip_idle)
+            filename = filename or "flamegraph.replay.html"
+        case "gecko":
+            collector = GeckoCollector(skip_idle=skip_idle)
+            filename = filename or "gecko.replay.json"
+        case "binary":
+            print("Error: Cannot use --output-binary with --replay")
+            sys.exit(1)
+        case _:
+            raise ValueError(f"Invalid output format: {output_format}")
+
+    # Try to use C implementation for speed
+    try:
+        import _remote_debugging
+        has_c_impl = hasattr(_remote_debugging, 'replay_binary_file')
+    except ImportError:
+        has_c_impl = False
+
+    if has_c_impl:
+        # Use fast C implementation
+        with BinaryReader(binary_file) as reader:
+            info = reader.get_info()
+
+        print(f"Replaying from: {binary_file}")
+        print(f"Samples: {info['sample_count']}, Threads: {info['thread_count']}")
+
+        start_time = time.time()
+
+        def progress_callback(current, total):
+            """Print progress during replay."""
+            elapsed = time.time() - start_time
+            rate = current / elapsed if elapsed > 0 else 0
+            pct = current * 100.0 / total
+            print(f"\rReplaying: {current}/{total} ({pct:.1f}%) - {rate:.0f} samples/sec", end='', flush=True)
+            if current == total:
+                print()  # Newline at end
+
+        num_samples = _remote_debugging.replay_binary_file(binary_file, collector, progress_callback)
+        elapsed = time.time() - start_time
+
+        print(f"Replayed {num_samples} samples in {elapsed:.2f}s ({num_samples/elapsed:.0f} samples/sec)")
+    else:
+        # Fall back to Python implementation
+        with BinaryReader(binary_file) as reader:
+            info = reader.get_info()
+            sample_interval_usec = info['sample_interval_us']
+
+            print(f"Replaying from: {binary_file}")
+            print(f"Samples: {info['sample_count']}, Threads: {info['thread_count']}")
+
+            num_samples = 0
+            last_print = 0
+            start_time = time.time()
+
+            for stack_frames in reader.replay_samples(realtime=False):
+                collector.collect(stack_frames)
+                num_samples += 1
+
+                # Show progress every 5000 samples
+                if num_samples - last_print >= 5000:
+                    elapsed = time.time() - start_time
+                    rate = num_samples / elapsed if elapsed > 0 else 0
+
+                    # Use \r to overwrite the line
+                    print(f"\rReplaying: {num_samples} samples - {rate:.0f} samples/sec",
+                          end='', flush=True)
+                    last_print = num_samples
+
+            # Final newline
+            print()
+            elapsed = time.time() - start_time
+            print(f"Replayed {num_samples} samples in {elapsed:.2f}s ({num_samples/elapsed:.0f} samples/sec)")
+
+    # Output results
+    if output_format == "pstats" and not filename:
+        stats = pstats.SampledStats(collector).strip_dirs()
+        print_sampled_stats(
+            stats, sort, limit, show_summary, sample_interval_usec
+        )
+    else:
+        collector.export(filename)
+        print(f"Output saved to: {filename}")
 
 
 def _validate_collapsed_format_args(args, parser):
@@ -719,6 +847,10 @@ def main():
     target_group.add_argument(
         "-m", "--module",
         help="Run and profile a module as python -m module [ARGS...]"
+    )
+    target_group.add_argument(
+        "--replay", metavar="FILE",
+        help="Replay profiling data from a binary file instead of sampling a live process"
     )
     parser.add_argument(
         "args",
@@ -795,6 +927,13 @@ def main():
         const="gecko",
         dest="format",
         help="Generate Gecko format for Firefox Profiler",
+    )
+    output_format.add_argument(
+        "--output-binary",
+        action="store_const",
+        const="binary",
+        dest="format",
+        help="Save profiling data to a binary file for later replay (efficient storage format)",
     )
 
     output_group.add_argument(
@@ -887,15 +1026,29 @@ def main():
     has_pid = args.pid is not None
     has_module = args.module is not None
     has_script = bool(args.args) and args.module is None
+    has_replay = args.replay is not None
 
-    target_count = sum([has_pid, has_module, has_script])
+    target_count = sum([has_pid, has_module, has_script, has_replay])
 
     if target_count == 0:
-        parser.error("one of the arguments -p/--pid -m/--module or script name is required")
+        parser.error("one of the arguments -p/--pid -m/--module --replay or script name is required")
     elif target_count > 1:
-        parser.error("only one target type can be specified: -p/--pid, -m/--module, or script")
+        parser.error("only one target type can be specified: -p/--pid, -m/--module, --replay, or script")
 
     mode = _parse_mode(args.mode)
+
+    # Handle replay mode
+    if args.replay:
+        replay_from_binary(
+            args.replay,
+            sort=sort_value,
+            filename=args.outfile,
+            limit=args.limit,
+            show_summary=not args.no_summary,
+            output_format=args.format,
+            mode=mode,
+        )
+        return
 
     if args.pid:
         sample(

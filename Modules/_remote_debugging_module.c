@@ -3448,7 +3448,1093 @@ static PyModuleDef_Slot remote_debugging_slots[] = {
     {0, NULL},
 };
 
+/* ============================================================================
+ * BINARY FILE REPLAY SUPPORT
+ * ============================================================================ */
+
+// Binary format constants
+#define BINARY_FORMAT_MAGIC 0x50594442  // "PYDB"
+#define BINARY_FORMAT_VERSION 1
+
+// Decode unsigned 64-bit varint from buffer
+static inline uint64_t
+decode_varint_u64(const uint8_t *data, size_t *offset, size_t max_size)
+{
+    size_t pos = *offset;
+    uint8_t byte;
+
+    // Fast path for 1-5 bytes (most common)
+    byte = data[pos];
+    if ((byte & 0x80) == 0) {
+        *offset = pos + 1;
+        return byte;
+    }
+
+    uint64_t result = byte & 0x7F;
+    byte = data[pos + 1];
+    if ((byte & 0x80) == 0) {
+        *offset = pos + 2;
+        return result | ((uint64_t)byte << 7);
+    }
+
+    result |= (uint64_t)(byte & 0x7F) << 7;
+    byte = data[pos + 2];
+    if ((byte & 0x80) == 0) {
+        *offset = pos + 3;
+        return result | ((uint64_t)byte << 14);
+    }
+
+    result |= (uint64_t)(byte & 0x7F) << 14;
+    byte = data[pos + 3];
+    if ((byte & 0x80) == 0) {
+        *offset = pos + 4;
+        return result | ((uint64_t)byte << 21);
+    }
+
+    result |= (uint64_t)(byte & 0x7F) << 21;
+    byte = data[pos + 4];
+    if ((byte & 0x80) == 0) {
+        *offset = pos + 5;
+        return result | ((uint64_t)byte << 28);
+    }
+
+    // Slow path for 6-10 bytes (rare)
+    result |= (uint64_t)(byte & 0x7F) << 28;
+    pos += 5;
+    int shift = 35;
+
+    while (pos < max_size) {
+        byte = data[pos++];
+        result |= (uint64_t)(byte & 0x7F) << shift;
+        if ((byte & 0x80) == 0) {
+            *offset = pos;
+            return result;
+        }
+        shift += 7;
+        if (shift >= 64) {
+            PyErr_SetString(PyExc_ValueError, "Varint overflow");
+            return 0;
+        }
+    }
+
+    PyErr_SetString(PyExc_ValueError, "Incomplete varint");
+    return 0;
+}
+
+// Decode unsigned 32-bit varint
+static inline uint32_t
+decode_varint_u32(const uint8_t *data, size_t *offset, size_t max_size)
+{
+    uint64_t value = decode_varint_u64(data, offset, max_size);
+    if (value > 0xFFFFFFFF) {
+        PyErr_SetString(PyExc_ValueError, "Varint exceeds 32-bit range");
+        return 0;
+    }
+    return (uint32_t)value;
+}
+
+// Decode signed 32-bit zigzag varint
+static inline int32_t
+decode_varint_i32(const uint8_t *data, size_t *offset, size_t max_size)
+{
+    uint32_t zigzag = decode_varint_u32(data, offset, max_size);
+    // Zigzag decoding
+    return (int32_t)((zigzag >> 1) ^ -(zigzag & 1));
+}
+
+// Binary writer structure
+typedef struct {
+    FILE *fp;
+    char *filename;
+    uint64_t start_time_us;
+    uint64_t sample_interval_us;
+    uint32_t total_samples;
+
+    // String table
+    PyObject *string_dict;  // Maps string -> index
+    PyObject *string_list;  // List of strings
+
+    // Frame table
+    PyObject *frame_dict;   // Maps (filename_idx, funcname_idx, lineno) -> index
+    PyObject *frame_list;   // List of (filename_idx, funcname_idx, lineno)
+
+    // Thread tracking for timestamp deltas
+    PyObject *thread_prev_timestamp;  // Maps thread_id -> prev_timestamp
+} BinaryWriter;
+
+PyDoc_STRVAR(create_binary_writer_doc,
+"create_binary_writer(filename, sample_interval_us)\n\
+--\n\
+\n\
+Create a binary writer for profiling data.\n\
+\n\
+Opens the file and writes a placeholder header. Returns a writer object.\n\
+\n\
+Args:\n\
+    filename: Path to the binary file to write\n\
+    sample_interval_us: Sampling interval in microseconds\n\
+\n\
+Returns:\n\
+    Writer object (opaque capsule)\n\
+\n\
+Raises:\n\
+    OSError: If file cannot be opened");
+
+static PyObject *
+create_binary_writer(PyObject *self, PyObject *args)
+{
+    const char *filename;
+    uint64_t sample_interval_us;
+
+    if (!PyArg_ParseTuple(args, "sK:create_binary_writer", &filename, &sample_interval_us)) {
+        return NULL;
+    }
+
+    // Allocate writer structure
+    BinaryWriter *writer = PyMem_Calloc(1, sizeof(BinaryWriter));
+    if (!writer) {
+        return PyErr_NoMemory();
+    }
+
+    writer->filename = PyMem_Malloc(strlen(filename) + 1);
+    if (!writer->filename) {
+        PyMem_Free(writer);
+        return PyErr_NoMemory();
+    }
+    strcpy(writer->filename, filename);
+
+    writer->start_time_us = (uint64_t)(time(NULL) * 1000000);
+    writer->sample_interval_us = sample_interval_us;
+    writer->total_samples = 0;
+
+    // Create Python objects for tracking
+    writer->string_dict = PyDict_New();
+    writer->string_list = PyList_New(0);
+    writer->frame_dict = PyDict_New();
+    writer->frame_list = PyList_New(0);
+    writer->thread_prev_timestamp = PyDict_New();
+
+    if (!writer->string_dict || !writer->string_list || !writer->frame_dict ||
+        !writer->frame_list || !writer->thread_prev_timestamp) {
+        Py_XDECREF(writer->string_dict);
+        Py_XDECREF(writer->string_list);
+        Py_XDECREF(writer->frame_dict);
+        Py_XDECREF(writer->frame_list);
+        Py_XDECREF(writer->thread_prev_timestamp);
+        PyMem_Free(writer->filename);
+        PyMem_Free(writer);
+        return NULL;
+    }
+
+    // Open file and write placeholder header
+    writer->fp = fopen(filename, "wb");
+    if (!writer->fp) {
+        Py_DECREF(writer->string_dict);
+        Py_DECREF(writer->string_list);
+        Py_DECREF(writer->frame_dict);
+        Py_DECREF(writer->frame_list);
+        Py_DECREF(writer->thread_prev_timestamp);
+        PyMem_Free(writer->filename);
+        PyMem_Free(writer);
+        return PyErr_SetFromErrnoWithFilename(PyExc_OSError, filename);
+    }
+
+    // Write placeholder header (64 bytes)
+    uint8_t header[64] = {0};
+    if (fwrite(header, 1, 64, writer->fp) != 64) {
+        fclose(writer->fp);
+        Py_DECREF(writer->string_dict);
+        Py_DECREF(writer->string_list);
+        Py_DECREF(writer->frame_dict);
+        Py_DECREF(writer->frame_list);
+        Py_DECREF(writer->thread_prev_timestamp);
+        PyMem_Free(writer->filename);
+        PyMem_Free(writer);
+        PyErr_SetString(PyExc_OSError, "Failed to write header");
+        return NULL;
+    }
+
+    // Return as capsule
+    return PyCapsule_New(writer, "BinaryWriter", NULL);
+}
+
+PyDoc_STRVAR(write_sample_doc,
+"write_sample(writer, stack_frames)\n\
+--\n\
+\n\
+Write a sample to the binary file.\n\
+\n\
+Args:\n\
+    writer: Writer object from create_binary_writer\n\
+    stack_frames: List of InterpreterInfo objects\n\
+\n\
+Returns:\n\
+    None\n\
+\n\
+Raises:\n\
+    OSError: If write fails");
+
+static PyObject *
+write_sample(PyObject *self, PyObject *args)
+{
+    PyObject *capsule;
+    PyObject *stack_frames;
+
+    if (!PyArg_ParseTuple(args, "OO:write_sample", &capsule, &stack_frames)) {
+        return NULL;
+    }
+
+    BinaryWriter *writer = PyCapsule_GetPointer(capsule, "BinaryWriter");
+    if (!writer) {
+        return NULL;
+    }
+
+    uint64_t timestamp_us = (uint64_t)(time(NULL) * 1000000);
+
+    // Iterate over interpreter frames
+    Py_ssize_t num_interpreters = PyList_Size(stack_frames);
+    for (Py_ssize_t i = 0; i < num_interpreters; i++) {
+        PyObject *interp_info = PyList_GetItem(stack_frames, i);
+
+        // Get interpreter_id and threads
+        PyObject *interp_id_obj = PyStructSequence_GetItem(interp_info, 0);
+        PyObject *threads = PyStructSequence_GetItem(interp_info, 1);
+        uint32_t interpreter_id = (uint32_t)PyLong_AsUnsignedLong(interp_id_obj);
+
+        // Iterate over threads
+        Py_ssize_t num_threads = PyList_Size(threads);
+        for (Py_ssize_t j = 0; j < num_threads; j++) {
+            PyObject *thread_info = PyList_GetItem(threads, j);
+
+            // Get thread_id, status, frame_info
+            PyObject *thread_id_obj = PyStructSequence_GetItem(thread_info, 0);
+            PyObject *status_obj = PyStructSequence_GetItem(thread_info, 1);
+            PyObject *frame_list = PyStructSequence_GetItem(thread_info, 2);
+
+            uint64_t thread_id = PyLong_AsUnsignedLongLong(thread_id_obj);
+            uint8_t status = (uint8_t)PyLong_AsLong(status_obj);
+
+            // Get previous timestamp for this thread
+            PyObject *thread_id_key = PyLong_FromUnsignedLongLong(thread_id);
+            PyObject *prev_ts_obj = PyDict_GetItem(writer->thread_prev_timestamp, thread_id_key);
+            uint64_t prev_timestamp;
+
+            if (prev_ts_obj) {
+                prev_timestamp = PyLong_AsUnsignedLongLong(prev_ts_obj);
+            } else {
+                prev_timestamp = writer->start_time_us;
+            }
+
+            // Build frame indices by interning strings and frames
+            Py_ssize_t stack_depth = PyList_Size(frame_list);
+            uint32_t *frame_indices = PyMem_Malloc(stack_depth * sizeof(uint32_t));
+            if (!frame_indices) {
+                Py_DECREF(thread_id_key);
+                return PyErr_NoMemory();
+            }
+
+            for (Py_ssize_t k = 0; k < stack_depth; k++) {
+                PyObject *frame_info = PyList_GetItem(frame_list, k);
+
+                // Get filename, lineno, funcname
+                PyObject *filename = PyStructSequence_GetItem(frame_info, 0);
+                PyObject *lineno_obj = PyStructSequence_GetItem(frame_info, 1);
+                PyObject *funcname = PyStructSequence_GetItem(frame_info, 2);
+                int32_t lineno = (int32_t)PyLong_AsLong(lineno_obj);
+
+                // Intern filename
+                PyObject *filename_idx_obj = PyDict_GetItem(writer->string_dict, filename);
+                uint32_t filename_idx;
+                if (filename_idx_obj) {
+                    filename_idx = (uint32_t)PyLong_AsUnsignedLong(filename_idx_obj);
+                } else {
+                    filename_idx = (uint32_t)PyList_Size(writer->string_list);
+                    PyObject *idx_obj = PyLong_FromUnsignedLong(filename_idx);
+                    PyDict_SetItem(writer->string_dict, filename, idx_obj);
+                    PyList_Append(writer->string_list, filename);
+                    Py_DECREF(idx_obj);
+                }
+
+                // Intern funcname
+                PyObject *funcname_idx_obj = PyDict_GetItem(writer->string_dict, funcname);
+                uint32_t funcname_idx;
+                if (funcname_idx_obj) {
+                    funcname_idx = (uint32_t)PyLong_AsUnsignedLong(funcname_idx_obj);
+                } else {
+                    funcname_idx = (uint32_t)PyList_Size(writer->string_list);
+                    PyObject *idx_obj = PyLong_FromUnsignedLong(funcname_idx);
+                    PyDict_SetItem(writer->string_dict, funcname, idx_obj);
+                    PyList_Append(writer->string_list, funcname);
+                    Py_DECREF(idx_obj);
+                }
+
+                // Intern frame
+                PyObject *frame_key = Py_BuildValue("(IIi)", filename_idx, funcname_idx, lineno);
+                PyObject *frame_idx_obj = PyDict_GetItem(writer->frame_dict, frame_key);
+                uint32_t frame_idx;
+                if (frame_idx_obj) {
+                    frame_idx = (uint32_t)PyLong_AsUnsignedLong(frame_idx_obj);
+                } else {
+                    frame_idx = (uint32_t)PyList_Size(writer->frame_list);
+                    PyObject *idx_obj = PyLong_FromUnsignedLong(frame_idx);
+                    PyDict_SetItem(writer->frame_dict, frame_key, idx_obj);
+                    PyList_Append(writer->frame_list, frame_key);
+                    Py_DECREF(idx_obj);
+                }
+                Py_DECREF(frame_key);
+
+                frame_indices[k] = frame_idx;
+            }
+
+            // Write sample to disk
+            // Write thread_id (8 bytes)
+            if (fwrite(&thread_id, 8, 1, writer->fp) != 1) {
+                PyMem_Free(frame_indices);
+                Py_DECREF(thread_id_key);
+                PyErr_SetString(PyExc_OSError, "Failed to write thread_id");
+                return NULL;
+            }
+
+            // Write interpreter_id (4 bytes)
+            if (fwrite(&interpreter_id, 4, 1, writer->fp) != 1) {
+                PyMem_Free(frame_indices);
+                Py_DECREF(thread_id_key);
+                PyErr_SetString(PyExc_OSError, "Failed to write interpreter_id");
+                return NULL;
+            }
+
+            // Write timestamp delta (varint)
+            uint64_t delta = timestamp_us - prev_timestamp;
+            uint8_t varint_buf[10];
+            size_t varint_len = 0;
+            uint64_t val = delta;
+            while (val >= 0x80) {
+                varint_buf[varint_len++] = (val & 0x7F) | 0x80;
+                val >>= 7;
+            }
+            varint_buf[varint_len++] = val & 0x7F;
+            if (fwrite(varint_buf, 1, varint_len, writer->fp) != varint_len) {
+                PyMem_Free(frame_indices);
+                Py_DECREF(thread_id_key);
+                PyErr_SetString(PyExc_OSError, "Failed to write timestamp");
+                return NULL;
+            }
+
+            // Update prev timestamp
+            PyObject *new_ts = PyLong_FromUnsignedLongLong(timestamp_us);
+            PyDict_SetItem(writer->thread_prev_timestamp, thread_id_key, new_ts);
+            Py_DECREF(new_ts);
+            Py_DECREF(thread_id_key);
+
+            // Write status (1 byte)
+            if (fwrite(&status, 1, 1, writer->fp) != 1) {
+                PyMem_Free(frame_indices);
+                PyErr_SetString(PyExc_OSError, "Failed to write status");
+                return NULL;
+            }
+
+            // Write stack depth (varint)
+            val = stack_depth;
+            varint_len = 0;
+            while (val >= 0x80) {
+                varint_buf[varint_len++] = (val & 0x7F) | 0x80;
+                val >>= 7;
+            }
+            varint_buf[varint_len++] = val & 0x7F;
+            if (fwrite(varint_buf, 1, varint_len, writer->fp) != varint_len) {
+                PyMem_Free(frame_indices);
+                PyErr_SetString(PyExc_OSError, "Failed to write stack depth");
+                return NULL;
+            }
+
+            // Write frame indices (varints)
+            for (Py_ssize_t k = 0; k < stack_depth; k++) {
+                val = frame_indices[k];
+                varint_len = 0;
+                while (val >= 0x80) {
+                    varint_buf[varint_len++] = (val & 0x7F) | 0x80;
+                    val >>= 7;
+                }
+                varint_buf[varint_len++] = val & 0x7F;
+                if (fwrite(varint_buf, 1, varint_len, writer->fp) != varint_len) {
+                    PyMem_Free(frame_indices);
+                    PyErr_SetString(PyExc_OSError, "Failed to write frame index");
+                    return NULL;
+                }
+            }
+
+            PyMem_Free(frame_indices);
+            writer->total_samples++;
+        }
+    }
+
+    Py_RETURN_NONE;
+}
+
+PyDoc_STRVAR(finalize_binary_writer_doc,
+"finalize_binary_writer(writer)\n\
+--\n\
+\n\
+Finalize and close the binary file.\n\
+\n\
+Writes string table, frame table, footer, and updates header.\n\
+\n\
+Args:\n\
+    writer: Writer object from create_binary_writer\n\
+\n\
+Returns:\n\
+    None\n\
+\n\
+Raises:\n\
+    OSError: If write fails");
+
+static PyObject *
+finalize_binary_writer(PyObject *self, PyObject *args)
+{
+    PyObject *capsule;
+
+    if (!PyArg_ParseTuple(args, "O:finalize_binary_writer", &capsule)) {
+        return NULL;
+    }
+
+    BinaryWriter *writer = PyCapsule_GetPointer(capsule, "BinaryWriter");
+    if (!writer) {
+        return NULL;
+    }
+
+    // Write string table
+    long string_table_offset = ftell(writer->fp);
+    Py_ssize_t string_count = PyList_Size(writer->string_list);
+
+    for (Py_ssize_t i = 0; i < string_count; i++) {
+        PyObject *string = PyList_GetItem(writer->string_list, i);
+        Py_ssize_t str_len;
+        const char *str_data = PyUnicode_AsUTF8AndSize(string, &str_len);
+
+        // Write length as varint
+        uint8_t varint_buf[10];
+        size_t varint_len = 0;
+        uint64_t val = str_len;
+        while (val >= 0x80) {
+            varint_buf[varint_len++] = (val & 0x7F) | 0x80;
+            val >>= 7;
+        }
+        varint_buf[varint_len++] = val & 0x7F;
+        fwrite(varint_buf, 1, varint_len, writer->fp);
+
+        // Write string data
+        fwrite(str_data, 1, str_len, writer->fp);
+    }
+
+    // Write frame table
+    long frame_table_offset = ftell(writer->fp);
+    Py_ssize_t frame_count = PyList_Size(writer->frame_list);
+
+    for (Py_ssize_t i = 0; i < frame_count; i++) {
+        PyObject *frame_tuple = PyList_GetItem(writer->frame_list, i);
+        uint32_t filename_idx = (uint32_t)PyLong_AsUnsignedLong(PyTuple_GetItem(frame_tuple, 0));
+        uint32_t funcname_idx = (uint32_t)PyLong_AsUnsignedLong(PyTuple_GetItem(frame_tuple, 1));
+        int32_t lineno = (int32_t)PyLong_AsLong(PyTuple_GetItem(frame_tuple, 2));
+
+        // Write filename_idx (varint)
+        uint8_t varint_buf[10];
+        size_t varint_len = 0;
+        uint64_t val = filename_idx;
+        while (val >= 0x80) {
+            varint_buf[varint_len++] = (val & 0x7F) | 0x80;
+            val >>= 7;
+        }
+        varint_buf[varint_len++] = val & 0x7F;
+        fwrite(varint_buf, 1, varint_len, writer->fp);
+
+        // Write funcname_idx (varint)
+        varint_len = 0;
+        val = funcname_idx;
+        while (val >= 0x80) {
+            varint_buf[varint_len++] = (val & 0x7F) | 0x80;
+            val >>= 7;
+        }
+        varint_buf[varint_len++] = val & 0x7F;
+        fwrite(varint_buf, 1, varint_len, writer->fp);
+
+        // Write lineno (zigzag varint)
+        uint32_t zigzag = (lineno << 1) ^ (lineno >> 31);
+        varint_len = 0;
+        val = zigzag;
+        while (val >= 0x80) {
+            varint_buf[varint_len++] = (val & 0x7F) | 0x80;
+            val >>= 7;
+        }
+        varint_buf[varint_len++] = val & 0x7F;
+        fwrite(varint_buf, 1, varint_len, writer->fp);
+    }
+
+    // Write footer
+    long footer_offset = ftell(writer->fp);
+    uint64_t file_size = footer_offset + 32;
+
+    fwrite(&string_count, 4, 1, writer->fp);
+    fwrite(&frame_count, 4, 1, writer->fp);
+    fwrite(&file_size, 8, 1, writer->fp);
+
+    // Write placeholder checksum
+    uint8_t checksum[16] = {0};
+    fwrite(checksum, 1, 16, writer->fp);
+
+    // Update header
+    fseek(writer->fp, 0, SEEK_SET);
+    uint32_t magic = BINARY_FORMAT_MAGIC;
+    uint32_t version = BINARY_FORMAT_VERSION;
+    uint32_t thread_count = (uint32_t)PyDict_Size(writer->thread_prev_timestamp);
+
+    fwrite(&magic, 4, 1, writer->fp);
+    fwrite(&version, 4, 1, writer->fp);
+    fwrite(&writer->start_time_us, 8, 1, writer->fp);
+    fwrite(&writer->sample_interval_us, 8, 1, writer->fp);
+    fwrite(&writer->total_samples, 4, 1, writer->fp);
+    fwrite(&thread_count, 4, 1, writer->fp);
+    fwrite(&string_table_offset, 8, 1, writer->fp);
+    fwrite(&frame_table_offset, 8, 1, writer->fp);
+
+    // Close file
+    fclose(writer->fp);
+    writer->fp = NULL;
+
+    // Clean up
+    Py_DECREF(writer->string_dict);
+    Py_DECREF(writer->string_list);
+    Py_DECREF(writer->frame_dict);
+    Py_DECREF(writer->frame_list);
+    Py_DECREF(writer->thread_prev_timestamp);
+    PyMem_Free(writer->filename);
+    PyMem_Free(writer);
+
+    Py_RETURN_NONE;
+}
+
+PyDoc_STRVAR(replay_binary_file_doc,
+"replay_binary_file(filename, collector, progress_callback=None)\n\
+--\n\
+\n\
+Replay samples from a binary profiling file through a collector.\n\
+\n\
+This is a high-performance C implementation that reads binary profiling\n\
+data and calls the collector's collect() method for each sample.\n\
+\n\
+Args:\n\
+    filename: Path to the binary file to replay\n\
+    collector: Collector object with a collect() method\n\
+    progress_callback: Optional callable(current, total) for progress reporting\n\
+\n\
+Returns:\n\
+    Number of samples replayed\n\
+\n\
+Raises:\n\
+    ValueError: If the file format is invalid\n\
+    OSError: If there's an error reading the file");
+
+static PyObject *
+replay_binary_file(PyObject *self, PyObject *args)
+{
+    const char *filename;
+    PyObject *collector;
+    PyObject *progress_callback = Py_None;
+
+    if (!PyArg_ParseTuple(args, "sO|O:replay_binary_file", &filename, &collector, &progress_callback)) {
+        return NULL;
+    }
+
+    // Validate progress_callback if provided
+    if (progress_callback != Py_None && !PyCallable_Check(progress_callback)) {
+        PyErr_SetString(PyExc_TypeError, "progress_callback must be callable");
+        return NULL;
+    }
+
+    // Open file
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) {
+        return PyErr_SetFromErrnoWithFilename(PyExc_OSError, filename);
+    }
+
+    // Read header (64 bytes)
+    uint8_t header[64];
+    if (fread(header, 1, 64, fp) != 64) {
+        fclose(fp);
+        PyErr_SetString(PyExc_ValueError, "Failed to read header");
+        return NULL;
+    }
+
+    // Parse header
+    uint32_t magic = *(uint32_t*)&header[0];
+    uint32_t version = *(uint32_t*)&header[4];
+    uint64_t start_time_us = *(uint64_t*)&header[8];
+    uint32_t sample_count = *(uint32_t*)&header[24];
+    uint64_t string_table_offset = *(uint64_t*)&header[32];
+    uint64_t frame_table_offset = *(uint64_t*)&header[40];
+
+    // Unused but in header
+    (void)*(uint64_t*)&header[16];  // sample_interval_us
+    (void)*(uint32_t*)&header[28];  // thread_count
+
+    if (magic != BINARY_FORMAT_MAGIC) {
+        fclose(fp);
+        PyErr_Format(PyExc_ValueError, "Invalid magic number: 0x%08x", magic);
+        return NULL;
+    }
+
+    if (version != BINARY_FORMAT_VERSION) {
+        fclose(fp);
+        PyErr_Format(PyExc_ValueError, "Unsupported version: %u", version);
+        return NULL;
+    }
+
+    // Read string table
+    if (fseek(fp, string_table_offset, SEEK_SET) != 0) {
+        fclose(fp);
+        PyErr_SetString(PyExc_OSError, "Failed to seek to string table");
+        return NULL;
+    }
+
+    size_t string_table_size = frame_table_offset - string_table_offset;
+    uint8_t *string_table_data = PyMem_Malloc(string_table_size);
+    if (!string_table_data) {
+        fclose(fp);
+        return PyErr_NoMemory();
+    }
+
+    if (fread(string_table_data, 1, string_table_size, fp) != string_table_size) {
+        PyMem_Free(string_table_data);
+        fclose(fp);
+        PyErr_SetString(PyExc_ValueError, "Failed to read string table");
+        return NULL;
+    }
+
+    // Read footer to get string count
+    if (fseek(fp, -32, SEEK_END) != 0) {
+        PyMem_Free(string_table_data);
+        fclose(fp);
+        PyErr_SetString(PyExc_OSError, "Failed to seek to footer");
+        return NULL;
+    }
+
+    uint8_t footer[32];
+    if (fread(footer, 1, 32, fp) != 32) {
+        PyMem_Free(string_table_data);
+        fclose(fp);
+        PyErr_SetString(PyExc_ValueError, "Failed to read footer");
+        return NULL;
+    }
+
+    uint32_t string_count = *(uint32_t*)&footer[0];
+    uint32_t frame_count = *(uint32_t*)&footer[4];
+
+    // Parse string table into Python strings
+    PyObject **strings = PyMem_Calloc(string_count, sizeof(PyObject*));
+    if (!strings) {
+        PyMem_Free(string_table_data);
+        fclose(fp);
+        return PyErr_NoMemory();
+    }
+
+    size_t offset = 0;
+    for (uint32_t i = 0; i < string_count; i++) {
+        uint32_t str_len = decode_varint_u32(string_table_data, &offset, string_table_size);
+        if (PyErr_Occurred()) {
+            for (uint32_t j = 0; j < i; j++) {
+                Py_XDECREF(strings[j]);
+            }
+            PyMem_Free(strings);
+            PyMem_Free(string_table_data);
+            fclose(fp);
+            return NULL;
+        }
+
+        strings[i] = PyUnicode_DecodeUTF8((char*)&string_table_data[offset], str_len, "replace");
+        if (!strings[i]) {
+            for (uint32_t j = 0; j < i; j++) {
+                Py_DECREF(strings[j]);
+            }
+            PyMem_Free(strings);
+            PyMem_Free(string_table_data);
+            fclose(fp);
+            return NULL;
+        }
+        offset += str_len;
+    }
+
+    PyMem_Free(string_table_data);
+
+    // Read frame table
+    if (fseek(fp, frame_table_offset, SEEK_SET) != 0) {
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        PyErr_SetString(PyExc_OSError, "Failed to seek to frame table");
+        return NULL;
+    }
+
+    long footer_offset;
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        PyErr_SetString(PyExc_OSError, "Failed to seek to end");
+        return NULL;
+    }
+    footer_offset = ftell(fp) - 32;
+
+    size_t frame_table_size = footer_offset - frame_table_offset;
+    uint8_t *frame_table_data = PyMem_Malloc(frame_table_size);
+    if (!frame_table_data) {
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        return PyErr_NoMemory();
+    }
+
+    if (fseek(fp, frame_table_offset, SEEK_SET) != 0) {
+        PyMem_Free(frame_table_data);
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        PyErr_SetString(PyExc_OSError, "Failed to seek to frame table");
+        return NULL;
+    }
+
+    if (fread(frame_table_data, 1, frame_table_size, fp) != frame_table_size) {
+        PyMem_Free(frame_table_data);
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        PyErr_SetString(PyExc_ValueError, "Failed to read frame table");
+        return NULL;
+    }
+
+    // Parse frame table
+    typedef struct {
+        uint32_t filename_idx;
+        uint32_t funcname_idx;
+        int32_t lineno;
+    } FrameData;
+
+    FrameData *frames = PyMem_Calloc(frame_count, sizeof(FrameData));
+    if (!frames) {
+        PyMem_Free(frame_table_data);
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        return PyErr_NoMemory();
+    }
+
+    offset = 0;
+    for (uint32_t i = 0; i < frame_count; i++) {
+        frames[i].filename_idx = decode_varint_u32(frame_table_data, &offset, frame_table_size);
+        if (PyErr_Occurred()) goto error;
+        frames[i].funcname_idx = decode_varint_u32(frame_table_data, &offset, frame_table_size);
+        if (PyErr_Occurred()) goto error;
+        frames[i].lineno = decode_varint_i32(frame_table_data, &offset, frame_table_size);
+        if (PyErr_Occurred()) goto error;
+    }
+
+    PyMem_Free(frame_table_data);
+
+    // Now read and replay samples
+    if (fseek(fp, 64, SEEK_SET) != 0) {
+        PyMem_Free(frames);
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        PyErr_SetString(PyExc_OSError, "Failed to seek to sample data");
+        return NULL;
+    }
+
+    // Read sample data (from 64 to string_table_offset)
+    size_t sample_data_size = string_table_offset - 64;
+    uint8_t *sample_data = NULL;
+    sample_data = PyMem_Malloc(sample_data_size);
+    if (!sample_data) {
+        PyMem_Free(frames);
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        return PyErr_NoMemory();
+    }
+
+    if (fread(sample_data, 1, sample_data_size, fp) != sample_data_size) {
+        PyMem_Free(sample_data);
+        PyMem_Free(frames);
+        for (uint32_t i = 0; i < string_count; i++) {
+            Py_DECREF(strings[i]);
+        }
+        PyMem_Free(strings);
+        fclose(fp);
+        PyErr_SetString(PyExc_ValueError, "Failed to read sample data");
+        return NULL;
+    }
+
+    fclose(fp);
+
+    // Get FrameInfo, ThreadInfo, InterpreterInfo types from module state
+    RemoteDebuggingState *state = RemoteDebugging_GetState(self);
+
+    // Parse and replay samples
+    offset = 0;
+    uint64_t replayed_count = 0;
+
+    // Track previous timestamp per thread for delta decoding
+    // Simple linear search for small number of threads (typically 1-10)
+    typedef struct {
+        uint64_t thread_id;
+        uint64_t prev_timestamp;
+    } ThreadTimestamp;
+
+    ThreadTimestamp *thread_timestamps = NULL;
+    uint32_t num_threads = 0;
+    uint32_t thread_capacity = 16;  // Initial capacity
+
+    thread_timestamps = PyMem_Calloc(thread_capacity, sizeof(ThreadTimestamp));
+    if (!thread_timestamps) {
+        PyErr_NoMemory();
+        goto error;
+    }
+
+    // Process each sample sequentially
+    for (uint32_t sample_idx = 0; sample_idx < sample_count; sample_idx++) {
+        // Read thread_id (8 bytes)
+        if (offset + 8 > sample_data_size) {
+            PyErr_SetString(PyExc_ValueError, "Unexpected end of sample data");
+            goto error_with_timestamps;
+        }
+        uint64_t thread_id = *(uint64_t*)&sample_data[offset];
+        offset += 8;
+
+        // Read interpreter_id (4 bytes)
+        if (offset + 4 > sample_data_size) {
+            PyErr_SetString(PyExc_ValueError, "Unexpected end of sample data");
+            goto error_with_timestamps;
+        }
+        uint32_t interpreter_id = *(uint32_t*)&sample_data[offset];
+        offset += 4;
+
+        // Find or add thread timestamp
+        uint64_t prev_timestamp = start_time_us;
+        for (uint32_t i = 0; i < num_threads; i++) {
+            if (thread_timestamps[i].thread_id == thread_id) {
+                prev_timestamp = thread_timestamps[i].prev_timestamp;
+                break;
+            }
+        }
+
+        // Decode timestamp delta
+        uint64_t delta = decode_varint_u64(sample_data, &offset, sample_data_size);
+        if (PyErr_Occurred()) goto error_with_timestamps;
+        uint64_t timestamp_us = prev_timestamp + delta;
+
+        // Update thread timestamp
+        int found = 0;
+        for (uint32_t i = 0; i < num_threads; i++) {
+            if (thread_timestamps[i].thread_id == thread_id) {
+                thread_timestamps[i].prev_timestamp = timestamp_us;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            // Add new thread
+            if (num_threads >= thread_capacity) {
+                thread_capacity *= 2;
+                ThreadTimestamp *new_timestamps = PyMem_Realloc(thread_timestamps, thread_capacity * sizeof(ThreadTimestamp));
+                if (!new_timestamps) {
+                    PyErr_NoMemory();
+                    goto error_with_timestamps;
+                }
+                thread_timestamps = new_timestamps;
+            }
+            thread_timestamps[num_threads].thread_id = thread_id;
+            thread_timestamps[num_threads].prev_timestamp = timestamp_us;
+            num_threads++;
+        }
+
+        // Read status
+        if (offset >= sample_data_size) {
+            PyErr_SetString(PyExc_ValueError, "Unexpected end of sample data");
+            goto error_with_timestamps;
+        }
+        uint8_t status = sample_data[offset++];
+
+        // Read stack depth
+        uint32_t stack_depth = decode_varint_u32(sample_data, &offset, sample_data_size);
+        if (PyErr_Occurred()) goto error_with_timestamps;
+
+        // Build frame_info list
+        PyObject *frame_list = PyList_New(stack_depth);
+        if (!frame_list) goto error_with_timestamps;
+
+        for (uint32_t frame_idx = 0; frame_idx < stack_depth; frame_idx++) {
+            uint32_t frame_id = decode_varint_u32(sample_data, &offset, sample_data_size);
+            if (PyErr_Occurred()) {
+                Py_DECREF(frame_list);
+                goto error_with_timestamps;
+            }
+
+            if (frame_id >= frame_count) {
+                Py_DECREF(frame_list);
+                PyErr_Format(PyExc_ValueError, "Invalid frame index: %u", frame_id);
+                goto error_with_timestamps;
+            }
+
+            FrameData *frame = &frames[frame_id];
+
+            if (frame->filename_idx >= string_count || frame->funcname_idx >= string_count) {
+                Py_DECREF(frame_list);
+                PyErr_SetString(PyExc_ValueError, "Invalid string index in frame");
+                goto error_with_timestamps;
+            }
+
+            // Create FrameInfo(filename, lineno, funcname)
+            PyObject *frame_info = PyStructSequence_New(state->FrameInfo_Type);
+            if (!frame_info) {
+                Py_DECREF(frame_list);
+                goto error_with_timestamps;
+            }
+
+            PyObject *lineno_obj = PyLong_FromLong(frame->lineno);
+            if (!lineno_obj) {
+                Py_DECREF(frame_info);
+                Py_DECREF(frame_list);
+                goto error_with_timestamps;
+            }
+
+            Py_INCREF(strings[frame->filename_idx]);
+            Py_INCREF(strings[frame->funcname_idx]);
+            PyStructSequence_SetItem(frame_info, 0, strings[frame->filename_idx]);
+            PyStructSequence_SetItem(frame_info, 1, lineno_obj);
+            PyStructSequence_SetItem(frame_info, 2, strings[frame->funcname_idx]);
+
+            PyList_SET_ITEM(frame_list, frame_idx, frame_info);
+        }
+
+        // Create ThreadInfo(thread_id, status, frame_info)
+        PyObject *thread_info = PyStructSequence_New(state->ThreadInfo_Type);
+        if (!thread_info) {
+            Py_DECREF(frame_list);
+            goto error_with_timestamps;
+        }
+
+        PyObject *thread_id_obj = PyLong_FromUnsignedLongLong(thread_id);
+        PyObject *status_obj = PyLong_FromLong(status);
+        if (!thread_id_obj || !status_obj) {
+            Py_XDECREF(thread_id_obj);
+            Py_XDECREF(status_obj);
+            Py_DECREF(thread_info);
+            Py_DECREF(frame_list);
+            goto error_with_timestamps;
+        }
+
+        PyStructSequence_SetItem(thread_info, 0, thread_id_obj);
+        PyStructSequence_SetItem(thread_info, 1, status_obj);
+        PyStructSequence_SetItem(thread_info, 2, frame_list);
+
+        PyObject *thread_list = PyList_New(1);
+        if (!thread_list) {
+            Py_DECREF(thread_info);
+            goto error_with_timestamps;
+        }
+        PyList_SET_ITEM(thread_list, 0, thread_info);
+
+        // Create InterpreterInfo(interpreter_id, threads)
+        PyObject *interp_info = PyStructSequence_New(state->InterpreterInfo_Type);
+        if (!interp_info) {
+            Py_DECREF(thread_list);
+            goto error_with_timestamps;
+        }
+
+        PyObject *interpreter_id_obj = PyLong_FromUnsignedLong(interpreter_id);
+        if (!interpreter_id_obj) {
+            Py_DECREF(interp_info);
+            Py_DECREF(thread_list);
+            goto error_with_timestamps;
+        }
+
+        PyStructSequence_SetItem(interp_info, 0, interpreter_id_obj);
+        PyStructSequence_SetItem(interp_info, 1, thread_list);
+
+        PyObject *sample_data_list = PyList_New(1);
+        if (!sample_data_list) {
+            Py_DECREF(interp_info);
+            goto error_with_timestamps;
+        }
+        PyList_SET_ITEM(sample_data_list, 0, interp_info);
+
+        // Call collector.collect(sample_data)
+        PyObject *result = PyObject_CallMethod(collector, "collect", "O", sample_data_list);
+        Py_DECREF(sample_data_list);
+
+        if (!result) goto error_with_timestamps;
+        Py_DECREF(result);
+
+        replayed_count++;
+
+        // Call progress callback every 10000 samples
+        if (progress_callback != Py_None &&
+            (replayed_count % 10000 == 0 || replayed_count == sample_count)) {
+            PyObject *cb_result = PyObject_CallFunction(progress_callback, "KI",
+                                                        replayed_count, sample_count);
+            if (!cb_result) {
+                // Progress callback failed, continue anyway but clear error
+                PyErr_Clear();
+            } else {
+                Py_DECREF(cb_result);
+            }
+        }
+    }
+
+    // Cleanup thread timestamps
+    PyMem_Free(thread_timestamps);
+
+    // Cleanup
+    PyMem_Free(sample_data);
+    PyMem_Free(frames);
+    for (uint32_t i = 0; i < string_count; i++) {
+        Py_DECREF(strings[i]);
+    }
+    PyMem_Free(strings);
+
+    return PyLong_FromUnsignedLongLong(replayed_count);
+
+error_with_timestamps:
+    PyMem_Free(thread_timestamps);
+error:
+    PyMem_Free(sample_data);
+    PyMem_Free(frames);
+    for (uint32_t i = 0; i < string_count; i++) {
+        Py_DECREF(strings[i]);
+    }
+    PyMem_Free(strings);
+    return NULL;
+}
+
 static PyMethodDef remote_debugging_methods[] = {
+    {"create_binary_writer", create_binary_writer, METH_VARARGS, create_binary_writer_doc},
+    {"write_sample", write_sample, METH_VARARGS, write_sample_doc},
+    {"finalize_binary_writer", finalize_binary_writer, METH_VARARGS, finalize_binary_writer_doc},
+    {"replay_binary_file", replay_binary_file, METH_VARARGS, replay_binary_file_doc},
     {NULL, NULL, 0, NULL},
 };
 
