@@ -442,6 +442,7 @@ def _call_reprcompare(
     expls: Sequence[str],
     each_obj: Sequence[object],
 ) -> str:
+    print("------------------>")
     for i, res, expl in zip(range(len(ops)), results, expls):
         try:
             done = not res
@@ -458,6 +459,7 @@ def _saferepr(arg: ast.expr) -> ast.expr:
 
 
 def _format_explanation(arg: ast.expr) -> ast.expr:
+    print("---------------------------------------->"
     return arg
 
 
