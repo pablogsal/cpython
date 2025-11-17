@@ -1926,7 +1926,7 @@ _PyPegen_checked_future_import(Parser *p, identifier module, asdl_alias_seq * na
             }
         }
     }
-    return _PyAST_ImportFrom(module, names, level, lineno, col_offset, end_lineno, end_col_offset, arena);
+    return _PyAST_ImportFrom(module, names, level, 0, lineno, col_offset, end_lineno, end_col_offset, arena);
 }
 
 asdl_stmt_seq*
