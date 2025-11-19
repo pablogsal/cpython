@@ -197,7 +197,6 @@ def benchmark(unwinder, duration_seconds=10):
             total_work_time += work_end - work_start
 
             if total_attempts % 100 == 0:
-                breakpoint()
                 avg_work_time_us = (total_work_time / total_attempts) * 1e6
                 work_rate = (
                     total_attempts / total_work_time if total_work_time > 0 else 0
@@ -435,7 +434,7 @@ def main():
                     elif args.threads == "only_active":
                         kwargs["only_active_thread"] = True
                     unwinder = _remote_debugging.RemoteUnwinder(
-                        process.pid, cache_frames=True, native=True, **kwargs
+                        process.pid, cache_frames=True, native=True, native_unwind=True, **kwargs
                     )
                     results = benchmark(unwinder, duration_seconds=args.duration)
                 finally:
