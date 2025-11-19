@@ -19,6 +19,7 @@ from .constants import (
     PROFILING_MODE_ALL,
     PROFILING_MODE_EXCEPTION,
 )
+from .hybrid_stack import merge_stacks
 try:
     from .live_collector import LiveStatsCollector
 except ImportError:
@@ -28,22 +29,23 @@ _FREE_THREADED_BUILD = sysconfig.get_config_var("Py_GIL_DISABLED") is not None
 
 
 class SampleProfiler:
-    def __init__(self, pid, sample_interval_usec, all_threads, *, mode=PROFILING_MODE_WALL, native=False, gc=True, opcodes=False, skip_non_matching_threads=True, collect_stats=False):
+    def __init__(self, pid, sample_interval_usec, all_threads, *, mode=PROFILING_MODE_WALL, native=False, native_unwind=False, gc=True, opcodes=False, skip_non_matching_threads=True, collect_stats=False):
         self.pid = pid
         self.sample_interval_usec = sample_interval_usec
         self.all_threads = all_threads
         self.mode = mode  # Store mode for later use
         self.collect_stats = collect_stats
+        self.native_unwind = native_unwind
         if _FREE_THREADED_BUILD:
             self.unwinder = _remote_debugging.RemoteUnwinder(
-                self.pid, all_threads=self.all_threads, mode=mode, native=native, gc=gc,
+                self.pid, all_threads=self.all_threads, mode=mode, native=native, native_unwind=native_unwind, gc=gc,
                 opcodes=opcodes, skip_non_matching_threads=skip_non_matching_threads,
                 cache_frames=True, stats=collect_stats
             )
         else:
             only_active_threads = bool(self.all_threads)
             self.unwinder = _remote_debugging.RemoteUnwinder(
-                self.pid, only_active_thread=only_active_threads, mode=mode, native=native, gc=gc,
+                self.pid, only_active_thread=only_active_threads, mode=mode, native=native, native_unwind=native_unwind, gc=gc,
                 opcodes=opcodes, skip_non_matching_threads=skip_non_matching_threads,
                 cache_frames=True, stats=collect_stats
             )
@@ -78,6 +80,23 @@ class SampleProfiler:
                             stack_frames = self.unwinder.get_async_stack_trace()
                         else:
                             stack_frames = self.unwinder.get_stack_trace()
+
+                        # If native unwinding is enabled, merge native and Python stacks
+                        if self.native_unwind:
+                            merged_stack_frames = []
+                            for interp_info in stack_frames:
+                                merged_threads = []
+                                for thread_info in interp_info.threads:
+                                    # Replace frame_info with merged hybrid stack
+                                    hybrid_frames = merge_stacks(thread_info, self.unwinder)
+                                    # Create new ThreadInfo with merged frames
+                                    merged_thread = thread_info.__replace__(frame_info=hybrid_frames)
+                                    merged_threads.append(merged_thread)
+                                # Create new InterpreterInfo with merged threads
+                                merged_interp = interp_info.__replace__(threads=merged_threads)
+                                merged_stack_frames.append(merged_interp)
+                            stack_frames = merged_stack_frames
+
                         collector.collect(stack_frames)
                     except ProcessLookupError:
                         duration_sec = current_time - start_time
@@ -289,6 +308,7 @@ def sample(
     mode=PROFILING_MODE_WALL,
     async_aware=None,
     native=False,
+    native_unwind=False,
     gc=True,
     opcodes=False,
 ):
@@ -304,6 +324,7 @@ def sample(
               GIL (only when holding GIL), ALL (includes GIL and CPU status),
               EXCEPTION (only when thread has an active exception)
         native: Whether to include native frames
+        native_unwind: Whether to enable native unwinding with libunwind
         gc: Whether to include GC frames
         opcodes: Whether to include opcode information
 
@@ -327,6 +348,7 @@ def sample(
         all_threads=all_threads,
         mode=mode,
         native=native,
+        native_unwind=native_unwind,
         gc=gc,
         opcodes=opcodes,
         skip_non_matching_threads=skip_non_matching_threads,
@@ -350,6 +372,7 @@ def sample_live(
     mode=PROFILING_MODE_WALL,
     async_aware=None,
     native=False,
+    native_unwind=False,
     gc=True,
     opcodes=False,
 ):
@@ -365,6 +388,7 @@ def sample_live(
               GIL (only when holding GIL), ALL (includes GIL and CPU status),
               EXCEPTION (only when thread has an active exception)
         native: Whether to include native frames
+        native_unwind: Whether to enable native unwinding with libunwind
         gc: Whether to include GC frames
         opcodes: Whether to include opcode information
 
@@ -388,6 +412,7 @@ def sample_live(
         all_threads=all_threads,
         mode=mode,
         native=native,
+        native_unwind=native_unwind,
         gc=gc,
         opcodes=opcodes,
         skip_non_matching_threads=skip_non_matching_threads,

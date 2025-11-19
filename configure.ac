@@ -7911,7 +7911,24 @@ PY_STDLIB_MOD_SIMPLE([_pickle])
 PY_STDLIB_MOD_SIMPLE([_posixsubprocess])
 PY_STDLIB_MOD_SIMPLE([_queue])
 PY_STDLIB_MOD_SIMPLE([_random])
-PY_STDLIB_MOD_SIMPLE([_remote_debugging])
+
+dnl Check for libunwind-ptrace support for _remote_debugging module
+AC_CHECK_HEADER([libunwind-ptrace.h], [
+    dnl libunwind-ptrace is available
+    AC_DEFINE([HAVE_LIBUNWIND], [1], [Define if you have libunwind-ptrace])
+    REMOTE_DEBUGGING_CFLAGS="-DHAVE_LIBUNWIND"
+    REMOTE_DEBUGGING_LDFLAGS="-lunwind-ptrace -lunwind-generic -lunwind -llzma -ldl"
+    AC_MSG_NOTICE([Building _remote_debugging with native profiling support])
+], [
+    dnl libunwind-ptrace not available
+    REMOTE_DEBUGGING_CFLAGS=""
+    REMOTE_DEBUGGING_LDFLAGS=""
+    AC_MSG_NOTICE([Building _remote_debugging without native profiling support])
+])
+AC_SUBST([REMOTE_DEBUGGING_CFLAGS])
+AC_SUBST([REMOTE_DEBUGGING_LDFLAGS])
+
+PY_STDLIB_MOD_SIMPLE([_remote_debugging], [$REMOTE_DEBUGGING_CFLAGS], [$REMOTE_DEBUGGING_LDFLAGS])
 PY_STDLIB_MOD_SIMPLE([select])
 PY_STDLIB_MOD_SIMPLE([_struct])
 PY_STDLIB_MOD_SIMPLE([_types])

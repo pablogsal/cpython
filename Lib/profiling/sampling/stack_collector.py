@@ -170,7 +170,7 @@ class FlamegraphCollector(StackTraceCollector):
     @staticmethod
     @functools.lru_cache(maxsize=None)
     def _format_function_name(func):
-        filename, lineno, funcname = func
+        filename, lineno, funcname, _ = func
 
         # Special frames like <GC> and <native> should not show file:line
         if filename == "~" and lineno == 0:
@@ -345,7 +345,7 @@ class FlamegraphCollector(StackTraceCollector):
             current = node
 
     def _get_source_lines(self, func):
-        filename, lineno, _ = func
+        filename, lineno, *_ = func
 
         try:
             lines = []

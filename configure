@@ -794,6 +794,8 @@ MODULE_SELECT_FALSE
 MODULE_SELECT_TRUE
 MODULE__REMOTE_DEBUGGING_FALSE
 MODULE__REMOTE_DEBUGGING_TRUE
+REMOTE_DEBUGGING_LDFLAGS
+REMOTE_DEBUGGING_CFLAGS
 MODULE__RANDOM_FALSE
 MODULE__RANDOM_TRUE
 MODULE__QUEUE_FALSE
@@ -31628,6 +31630,32 @@ then :
 fi
 
 
+ac_fn_c_check_header_compile "$LINENO" "libunwind-ptrace.h" "ac_cv_header_libunwind_ptrace_h" "$ac_includes_default"
+if test "x$ac_cv_header_libunwind_ptrace_h" = xyes
+then :
+
+
+printf "%s\n" "#define HAVE_LIBUNWIND 1" >>confdefs.h
+
+    REMOTE_DEBUGGING_CFLAGS="-DHAVE_LIBUNWIND"
+    REMOTE_DEBUGGING_LDFLAGS="-lunwind-ptrace -lunwind-generic -lunwind -llzma -ldl"
+    { printf "%s\n" "$as_me:${as_lineno-$LINENO}: Building _remote_debugging with native profiling support" >&5
+printf "%s\n" "$as_me: Building _remote_debugging with native profiling support" >&6;}
+
+else case e in #(
+  e)
+        REMOTE_DEBUGGING_CFLAGS=""
+    REMOTE_DEBUGGING_LDFLAGS=""
+    { printf "%s\n" "$as_me:${as_lineno-$LINENO}: Building _remote_debugging without native profiling support" >&5
+printf "%s\n" "$as_me: Building _remote_debugging without native profiling support" >&6;}
+ ;;
+esac
+fi
+
+
+
+
+
         if test "$py_cv_module__remote_debugging" != "n/a"
 then :
   py_cv_module__remote_debugging=yes
@@ -31644,8 +31672,8 @@ fi
   if test "x$py_cv_module__remote_debugging" = xyes
 then :
 
-
-
+    as_fn_append MODULE_BLOCK "MODULE__REMOTE_DEBUGGING_CFLAGS=$REMOTE_DEBUGGING_CFLAGS$as_nl"
+    as_fn_append MODULE_BLOCK "MODULE__REMOTE_DEBUGGING_LDFLAGS=$REMOTE_DEBUGGING_LDFLAGS$as_nl"
 
 fi
 
