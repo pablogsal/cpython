@@ -141,10 +141,15 @@ function updateStatusBar(nodeData, rootValue) {
   const timeMs = (nodeData.value / 1000).toFixed(2);
   const percent = ((nodeData.value / rootValue) * 100).toFixed(1);
 
-  document.getElementById('status-location').style.display = filename && filename !== "~" ? 'flex' : 'none';
-  document.getElementById('status-func-item').style.display = 'flex';
-  document.getElementById('status-time-item').style.display = 'flex';
-  document.getElementById('status-percent-item').style.display = 'flex';
+  const locationEl = document.getElementById('status-location');
+  const funcItem = document.getElementById('status-func-item');
+  const timeItem = document.getElementById('status-time-item');
+  const percentItem = document.getElementById('status-percent-item');
+
+  if (locationEl) locationEl.style.display = filename && filename !== "~" ? 'flex' : 'none';
+  if (funcItem) funcItem.style.display = 'flex';
+  if (timeItem) timeItem.style.display = 'flex';
+  if (percentItem) percentItem.style.display = 'flex';
 
   const fileEl = document.getElementById('status-file');
   if (fileEl && filename && filename !== "~") {
@@ -163,15 +168,11 @@ function updateStatusBar(nodeData, rootValue) {
 }
 
 function clearStatusBar() {
-  const location = document.getElementById('status-location');
-  const funcItem = document.getElementById('status-func-item');
-  const timeItem = document.getElementById('status-time-item');
-  const percentItem = document.getElementById('status-percent-item');
-
-  if (location) location.style.display = 'none';
-  if (funcItem) funcItem.style.display = 'none';
-  if (timeItem) timeItem.style.display = 'none';
-  if (percentItem) percentItem.style.display = 'none';
+  const ids = ['status-location', 'status-func-item', 'status-time-item', 'status-percent-item'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
 }
 
 // ============================================================================
@@ -525,7 +526,7 @@ function populateThreadStats(data, selectedThreadId = null) {
     threadStats = stats.thread_stats;
   }
 
-  if (!threadStats || typeof threadStats.total !== 'number') {
+  if (!threadStats || typeof threadStats.total !== 'number' || threadStats.total <= 0) {
     return;
   }
 
@@ -534,42 +535,35 @@ function populateThreadStats(data, selectedThreadId = null) {
     return;
   }
 
-  if (threadStats.total > 0) {
-    // Show the thread stats section in sidebar
-    section.style.display = 'block';
+  section.style.display = 'block';
 
-    const gilHeldStat = document.getElementById('gil-held-stat');
-    const gilReleasedStat = document.getElementById('gil-released-stat');
-    const gilWaitingStat = document.getElementById('gil-waiting-stat');
+  const gilHeldStat = document.getElementById('gil-held-stat');
+  const gilReleasedStat = document.getElementById('gil-released-stat');
+  const gilWaitingStat = document.getElementById('gil-waiting-stat');
 
-    if (mode === PROFILING_MODE_GIL) {
-      // In GIL mode, hide GIL-related stats
-      if (gilHeldStat) gilHeldStat.style.display = 'none';
-      if (gilReleasedStat) gilReleasedStat.style.display = 'none';
-      if (gilWaitingStat) gilWaitingStat.style.display = 'none';
-    } else {
-      // Show all stats
-      if (gilHeldStat) gilHeldStat.style.display = 'block';
-      if (gilReleasedStat) gilReleasedStat.style.display = 'block';
-      if (gilWaitingStat) gilWaitingStat.style.display = 'block';
+  if (mode === PROFILING_MODE_GIL) {
+    // In GIL mode, hide GIL-related stats
+    if (gilHeldStat) gilHeldStat.style.display = 'none';
+    if (gilReleasedStat) gilReleasedStat.style.display = 'none';
+    if (gilWaitingStat) gilWaitingStat.style.display = 'none';
+  } else {
+    // Show all stats
+    if (gilHeldStat) gilHeldStat.style.display = 'block';
+    if (gilReleasedStat) gilReleasedStat.style.display = 'block';
+    if (gilWaitingStat) gilWaitingStat.style.display = 'block';
 
-      const gilHeldPct = threadStats.has_gil_pct || 0;
-      const gilHeldPctElem = document.getElementById('gil-held-pct');
-      if (gilHeldPctElem) gilHeldPctElem.textContent = `${gilHeldPct.toFixed(1)}%`;
+    const gilHeldPctElem = document.getElementById('gil-held-pct');
+    if (gilHeldPctElem) gilHeldPctElem.textContent = `${(threadStats.has_gil_pct || 0).toFixed(1)}%`;
 
-      const gilReleasedPct = threadStats.on_cpu_pct || 0;
-      const gilReleasedPctElem = document.getElementById('gil-released-pct');
-      if (gilReleasedPctElem) gilReleasedPctElem.textContent = `${gilReleasedPct.toFixed(1)}%`;
+    const gilReleasedPctElem = document.getElementById('gil-released-pct');
+    if (gilReleasedPctElem) gilReleasedPctElem.textContent = `${(threadStats.on_cpu_pct || 0).toFixed(1)}%`;
 
-      const gilWaitingPct = threadStats.gil_requested_pct || 0;
-      const gilWaitingPctElem = document.getElementById('gil-waiting-pct');
-      if (gilWaitingPctElem) gilWaitingPctElem.textContent = `${gilWaitingPct.toFixed(1)}%`;
-    }
-
-    const gcPct = threadStats.gc_pct || 0;
-    const gcPctElem = document.getElementById('gc-pct');
-    if (gcPctElem) gcPctElem.textContent = `${gcPct.toFixed(1)}%`;
+    const gilWaitingPctElem = document.getElementById('gil-waiting-pct');
+    if (gilWaitingPctElem) gilWaitingPctElem.textContent = `${(threadStats.gil_requested_pct || 0).toFixed(1)}%`;
   }
+
+  const gcPctElem = document.getElementById('gc-pct');
+  if (gcPctElem) gcPctElem.textContent = `${(threadStats.gc_pct || 0).toFixed(1)}%`;
 }
 
 // ============================================================================
@@ -603,15 +597,12 @@ function populateProfileSummary(data) {
   const sampleRate = stats.sample_rate || (duration > 0 ? totalSamples / duration : 0);
   const errorRate = stats.error_rate || 0;
 
-  // Total Samples
   const samplesEl = document.getElementById('stat-total-samples');
   if (samplesEl) samplesEl.textContent = formatNumber(totalSamples);
 
-  // Duration
   const durationEl = document.getElementById('stat-duration');
   if (durationEl) durationEl.textContent = duration > 0 ? formatDuration(duration) : '--';
 
-  // Sample Rate
   const rateEl = document.getElementById('stat-sample-rate');
   if (rateEl) rateEl.textContent = sampleRate > 0 ? formatNumber(Math.round(sampleRate)) : '--';
 
@@ -627,16 +618,17 @@ function populateProfileSummary(data) {
   const functionsEl = document.getElementById('stat-functions');
   if (functionsEl) functionsEl.textContent = formatNumber(functionCount);
 
-  // Efficiency bar (if error rate data available)
+  // Efficiency bar
   if (errorRate !== undefined && errorRate !== null) {
-    const efficiencySection = document.getElementById('efficiency-section');
-    const efficiencyValue = document.getElementById('stat-efficiency');
-    const efficiencyFill = document.getElementById('efficiency-fill');
-
     const efficiency = Math.max(0, Math.min(100, (1 - errorRate) * 100));
 
+    const efficiencySection = document.getElementById('efficiency-section');
     if (efficiencySection) efficiencySection.style.display = 'block';
+
+    const efficiencyValue = document.getElementById('stat-efficiency');
     if (efficiencyValue) efficiencyValue.textContent = efficiency.toFixed(1) + '%';
+
+    const efficiencyFill = document.getElementById('efficiency-fill');
     if (efficiencyFill) efficiencyFill.style.width = efficiency + '%';
   }
 }
@@ -847,14 +839,6 @@ function filterDataByThread(data, threadId) {
     return filteredNode;
   }
 
-  const filteredRoot = { ...data, children: [] };
-
-  if (data.children && Array.isArray(data.children)) {
-    filteredRoot.children = data.children
-      .map(child => filterNode(child))
-      .filter(child => child !== null);
-  }
-
   function recalculateValue(node) {
     if (!node.children || node.children.length === 0) {
       return node.value || 0;
@@ -862,6 +846,14 @@ function filterDataByThread(data, threadId) {
     const childrenValue = node.children.reduce((sum, child) => sum + recalculateValue(child), 0);
     node.value = Math.max(node.value || 0, childrenValue);
     return node.value;
+  }
+
+  const filteredRoot = { ...data, children: [] };
+
+  if (data.children && Array.isArray(data.children)) {
+    filteredRoot.children = data.children
+      .map(child => filterNode(child))
+      .filter(child => child !== null);
   }
 
   recalculateValue(filteredRoot);

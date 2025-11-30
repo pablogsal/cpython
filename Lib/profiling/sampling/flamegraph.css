@@ -481,25 +481,15 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   transition: all var(--transition-fast);
-  animation: cardSlideIn 0.4s ease-out backwards;
+  animation: slideUp 0.4s ease-out backwards;
+  animation-delay: calc(var(--i, 0) * 0.05s);
   overflow: hidden;
 }
 
-.summary-card:nth-child(1) { animation-delay: 0s; }
-.summary-card:nth-child(2) { animation-delay: 0.05s; }
-.summary-card:nth-child(3) { animation-delay: 0.1s; }
-.summary-card:nth-child(4) { animation-delay: 0.15s; }
-
-@keyframes cardSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+.summary-card:nth-child(1) { --i: 0; }
+.summary-card:nth-child(2) { --i: 1; }
+.summary-card:nth-child(3) { --i: 2; }
+.summary-card:nth-child(4) { --i: 3; }
 
 .summary-card:hover {
   border-color: var(--accent);
@@ -634,12 +624,13 @@ body {
   border: 2px solid var(--border);
   transition: all var(--transition-fast);
   animation: fadeIn 0.4s ease-out backwards;
+  animation-delay: calc(var(--i, 0) * 0.05s);
 }
 
-.stat-tile:nth-child(1) { animation-delay: 0s; }
-.stat-tile:nth-child(2) { animation-delay: 0.05s; }
-.stat-tile:nth-child(3) { animation-delay: 0.1s; }
-.stat-tile:nth-child(4) { animation-delay: 0.15s; }
+.stat-tile:nth-child(1) { --i: 0; }
+.stat-tile:nth-child(2) { --i: 1; }
+.stat-tile:nth-child(3) { --i: 2; }
+.stat-tile:nth-child(4) { --i: 3; }
 
 .stat-tile:hover {
   transform: translateY(-2px);
@@ -664,29 +655,16 @@ body {
 }
 
 /* Stat tile color variants */
-.stat-tile--green {
-  border-color: rgba(40, 167, 69, 0.4);
-  background: linear-gradient(135deg, rgba(40, 167, 69, 0.08) 0%, var(--bg-primary) 100%);
-}
-.stat-tile--green .stat-tile-value { color: #28a745; }
+.stat-tile--green  { --tile-color: 40, 167, 69; --tile-text: #28a745; }
+.stat-tile--red    { --tile-color: 220, 53, 69; --tile-text: #dc3545; }
+.stat-tile--yellow { --tile-color: 255, 193, 7; --tile-text: #d39e00; }
+.stat-tile--purple { --tile-color: 111, 66, 193; --tile-text: #6f42c1; }
 
-.stat-tile--red {
-  border-color: rgba(220, 53, 69, 0.4);
-  background: linear-gradient(135deg, rgba(220, 53, 69, 0.08) 0%, var(--bg-primary) 100%);
+.stat-tile[class*="--"] {
+  border-color: rgba(var(--tile-color), 0.4);
+  background: linear-gradient(135deg, rgba(var(--tile-color), 0.08) 0%, var(--bg-primary) 100%);
 }
-.stat-tile--red .stat-tile-value { color: #dc3545; }
-
-.stat-tile--yellow {
-  border-color: rgba(255, 193, 7, 0.5);
-  background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, var(--bg-primary) 100%);
-}
-.stat-tile--yellow .stat-tile-value { color: #d39e00; }
-
-.stat-tile--purple {
-  border-color: rgba(111, 66, 193, 0.4);
-  background: linear-gradient(135deg, rgba(111, 66, 193, 0.08) 0%, var(--bg-primary) 100%);
-}
-.stat-tile--purple .stat-tile-value { color: #6f42c1; }
+.stat-tile[class*="--"] .stat-tile-value { color: var(--tile-text); }
 
 /* --------------------------------------------------------------------------
    Hotspot Cards
@@ -744,20 +722,9 @@ body {
   box-shadow: 0 2px 4px rgba(55, 118, 171, 0.3);
 }
 
-.hotspot-rank--1 {
-  background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
-  color: #5a4a00;
-}
-
-.hotspot-rank--2 {
-  background: linear-gradient(135deg, #a8a8a8 0%, #c0c0c0 100%);
-  color: #4a4a4a;
-}
-
-.hotspot-rank--3 {
-  background: linear-gradient(135deg, #cd7f32 0%, #e6a55a 100%);
-  color: #5a3d00;
-}
+.hotspot-rank--1 { background: linear-gradient(135deg, #d4af37, #f4d03f); color: #5a4a00; }
+.hotspot-rank--2 { background: linear-gradient(135deg, #a8a8a8, #c0c0c0); color: #4a4a4a; }
+.hotspot-rank--3 { background: linear-gradient(135deg, #cd7f32, #e6a55a); color: #5a3d00; }
 
 .hotspot-info {
   flex: 1;
