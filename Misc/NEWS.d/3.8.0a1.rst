@@ -4816,8 +4816,8 @@ use the given errors (needed for Twisted).  Patch by Amber Brown.
 .. nonce: 47Fzwt
 .. section: Library
 
-The :class:`cProfile.Profile` class can now be used as a context manager.
-Patch by Scott Sanderson.
+The :class:`cProfile.Profile <profiling.tracing.Profile>` class can now be used
+as a context manager. Patch by Scott Sanderson.
 
 ..
 
