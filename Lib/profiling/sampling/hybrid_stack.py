@@ -14,8 +14,42 @@ The strategy (based on Austin's implementation):
 This gives us a merged stack showing both Python and C code execution.
 """
 
-# Global cache for symbolized native frames: IP -> FrameInfo
+# Global cache for symbolized native frames: IP -> _NativeFrameInfo
 _symbolization_cache = {}
+
+class _NativeFrameInfo:
+    """Simple container for native frame information.
+
+    Provides .funcname attribute for compatibility with the merge logic.
+    Also provides .filename for stack collapse format output.
+    Supports indexing like FrameInfo structseq: [0]=filename, [1]=location, [2]=funcname
+    """
+    __slots__ = ('funcname', 'offset', 'module', 'filename', 'location')
+
+    def __init__(self, funcname, offset, module):
+        self.funcname = funcname
+        self.offset = offset
+        self.module = module
+        self.location = None  # Native frames don't have line numbers
+        # Use actual module path from dladdr as filename
+        if module:
+            self.filename = module
+        else:
+            self.filename = "<unknown>"
+
+    def __getitem__(self, idx):
+        # Match FrameInfo structseq layout: (filename, location, funcname, opcode, is_entry)
+        if idx == 0:
+            return self.filename
+        elif idx == 1:
+            return self.location
+        elif idx == 2:
+            return self.funcname
+        elif idx == 3:
+            return None  # opcode
+        elif idx == 4:
+            return False  # is_entry
+        raise IndexError(f"index {idx} out of range")
 
 # Symbols that indicate we're in the Python eval loop
 EVAL_FRAME_SYMBOLS = {
@@ -56,97 +90,83 @@ def merge_stacks(thread_info, unwinder):
     This function takes a ThreadInfo object (which contains both Python frames
     and native frames) and merges them into a single unified stack trace.
 
-    The merge is done at "entry frames" - frames that mark boundaries where
-    Python code calls native code. Between two entry frames, we substitute
-    the PyEval_EvalFrameDefault frames with the actual native frames.
+    Strategy:
+    1. Walk through native frames from top (innermost) to bottom (outermost)
+    2. When we encounter _PyEval_EvalFrameDefault, substitute with Python frames
+    3. Keep other native frames (libc, C extensions, etc.)
+    4. Filter out internal Python implementation frames (vectorcall, etc.)
 
     Args:
         thread_info: A ThreadInfo namedtuple with fields:
             - thread_id: The thread ID
             - status: Thread status flags
             - frame_info: List of Python FrameInfo objects
-            - native_frames: List of native frame tuples (pc, func_name, offset)
-        unwinder: RemoteUnwinder object with symbolize_native_frames() method
+            - native_frames: List of native instruction pointers (integers)
+        unwinder: RemoteUnwinder object with symbolize_native_backtrace() method
 
     Returns:
         List of FrameInfo objects representing the merged hybrid stack.
-        Python frames have is_entry=True/False, native frames have is_entry=False.
-
-    Example:
-        Before merging (Python frames only):
-            Frame 0: my_function() [is_entry=False]
-            Frame 1: wrapper() [is_entry=True]     <- Entry frame
-            Frame 2: main() [is_entry=True]        <- Entry frame
-
-        After merging (hybrid stack):
-            Frame 0: my_function() [is_entry=False]
-            Frame 1: wrapper() [is_entry=True]     <- Entry frame
-            Frame 2: PyEval_EvalFrameDefault+0x123 [is_entry=False] <- Native
-            Frame 3: _PyEval_Vector+0x45 [is_entry=False]           <- Native
-            Frame 4: main() [is_entry=True]        <- Entry frame
-            Frame 5: Py_Main+0x67 [is_entry=False]                   <- Native
     """
     python_frames = list(thread_info.frame_info)
     native_frames = thread_info.native_frames
+    tid = thread_info.thread_id
 
     # If no native frames, just return Python frames as-is
     if not native_frames:
         return python_frames
 
     # Symbolize native frames using cache
-    # First, separate cached vs uncached IPs
+    # native_frames is now a list of integers (instruction pointers)
     symbolized_native = []
-    frames_to_symbolize = []
-    frames_to_symbolize_indices = []
+    ips_to_symbolize = []
+    ips_to_symbolize_indices = []
 
-    for idx, (pc, offset) in enumerate(native_frames):
-        if pc in _symbolization_cache:
-            # Use cached symbolization
-            symbolized_native.append(_symbolization_cache[pc])
+    for idx, ip in enumerate(native_frames):
+        if ip in _symbolization_cache:
+            symbolized_native.append(_symbolization_cache[ip])
         else:
-            # Need to symbolize this one
             symbolized_native.append(None)  # Placeholder
-            frames_to_symbolize.append((pc, offset))
-            frames_to_symbolize_indices.append(idx)
+            ips_to_symbolize.append(ip)
+            ips_to_symbolize_indices.append(idx)
 
-    # Symbolize the uncached frames
-    if frames_to_symbolize:
-        newly_symbolized = unwinder.symbolize_native_frames(frames_to_symbolize)
-
-        # Update cache and fill in placeholders
-        for i, frame_info in enumerate(newly_symbolized):
-            idx = frames_to_symbolize_indices[i]
-            pc = frames_to_symbolize[i][0]
-            _symbolization_cache[pc] = frame_info
+    if ips_to_symbolize:
+        # symbolize_native_backtrace returns list of (funcname, offset, module) tuples
+        newly_symbolized = unwinder.symbolize_native_backtrace(ips_to_symbolize, tid)
+        for i, symbol_tuple in enumerate(newly_symbolized):
+            idx = ips_to_symbolize_indices[i]
+            ip = ips_to_symbolize[i]
+            funcname, offset, module = symbol_tuple
+            # Create a simple object that has .funcname attribute for compatibility
+            frame_info = _NativeFrameInfo(funcname or f"<0x{ip:x}>", offset, module)
+            _symbolization_cache[ip] = frame_info
             symbolized_native[idx] = frame_info
 
-    # Austin's algorithm: Walk through native frames, substituting EVAL frames with Python frames
+    # Simple merge: substitute _PyEval_EvalFrameDefault with Python frames
+    # Walk native stack from top to bottom
     hybrid_stack = []
-    python_idx = 0  # Current position in Python frames
+    python_frames_added = False
 
     for native_frame in symbolized_native:
         funcname = native_frame.funcname
 
         if _is_eval_frame(funcname):
-            # Substitute this EVAL frame with the actual Python frames
-            # Add the current entry frame (if we have one)
-            if python_idx < len(python_frames):
-                current_py_frame = python_frames[python_idx]
-                if current_py_frame.is_entry:
-                    hybrid_stack.append(current_py_frame)
-                    python_idx += 1
-
-                    # Add all non-entry frames until the next entry frame
-                    while python_idx < len(python_frames) and not python_frames[python_idx].is_entry:
-                        hybrid_stack.append(python_frames[python_idx])
-                        python_idx += 1
+            # First time we see PyEval, insert all Python frames
+            if not python_frames_added:
+                hybrid_stack.extend(python_frames)
+                python_frames_added = True
+            # Skip the PyEval frame itself (we're showing Python frames instead)
+            continue
 
         elif _should_ignore_frame(funcname):
             # Skip internal Python implementation frames
             continue
         else:
-            # Keep this native frame (it's from C extensions, libc, etc.)
+            # Keep this native frame (libc, C extensions, etc.)
             hybrid_stack.append(native_frame)
+
+    # If we never saw a PyEval frame (shouldn't happen), add Python frames at the end
+    if not python_frames_added and python_frames:
+        hybrid_stack.extend(python_frames)
 
     return hybrid_stack
 

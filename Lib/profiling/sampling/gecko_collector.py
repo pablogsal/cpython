@@ -254,7 +254,7 @@ class GeckoCollector(Collector):
                 # Track opcode state changes for interval markers (leaf frame only)
                 if self.opcodes_enabled:
                     leaf_frame = frames[0]
-                    filename, location, funcname, opcode = leaf_frame
+                    filename, location, funcname, opcode, is_entry = leaf_frame
                     if isinstance(location, tuple):
                         lineno, _, col_offset, _ = location
                     else:
@@ -459,9 +459,9 @@ class GeckoCollector(Collector):
         prefix_stack_idx = None
 
         for frame_tuple in reversed(frames):
-            # frame_tuple is (filename, location, funcname, opcode)
+            # frame_tuple is (filename, location, funcname, opcode, is_entry)
             # location is (lineno, end_lineno, col_offset, end_col_offset) or just lineno
-            filename, location, funcname, opcode = frame_tuple
+            filename, location, funcname, opcode, is_entry = frame_tuple
             if isinstance(location, tuple):
                 lineno, end_lineno, col_offset, end_col_offset = location
             else:

@@ -35,6 +35,21 @@ extern "C" {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sched.h>
+#include <time.h>
+
+#ifdef HAVE_LIBUNWIND
+#include <libunwind-ptrace.h>
+#include <sys/ptrace.h>
+#include <sys/wait.h>
+
+#ifndef PTRACE_EVENT_STOP
+#define PTRACE_EVENT_STOP 128
+#endif
+#ifndef WSTOPPED
+#define WSTOPPED WUNTRACED
+#endif
+#endif
 
 #ifndef HAVE_PROCESS_VM_READV
 #    define HAVE_PROCESS_VM_READV 0
@@ -230,6 +245,7 @@ typedef struct {
     int mode;
     int skip_non_matching_threads;
     int native;
+    int native_unwind;  // Enable hybrid native unwinding with libunwind
     int gc;
     int opcodes;
     int cache_frames;
@@ -249,6 +265,7 @@ typedef struct {
     PVOID win_process_buffer;
     ULONG win_process_buffer_size;
 #endif
+    // No persistent libunwind state needed - using simple PTRACE_ATTACH/DETACH per sample
 } RemoteUnwinderObject;
 
 #define RemoteUnwinder_CAST(op) ((RemoteUnwinderObject *)(op))
@@ -338,7 +355,8 @@ extern int parse_code_object(
     uintptr_t address,
     uintptr_t instruction_pointer,
     uintptr_t *previous_frame,
-    int32_t tlbc_index
+    int32_t tlbc_index,
+    int is_entry
 );
 
 extern PyObject *make_location_info(
@@ -354,7 +372,8 @@ extern PyObject *make_frame_info(
     PyObject *file,
     PyObject *location,  // LocationInfo structseq or None for synthetic frames
     PyObject *func,
-    PyObject *opcode
+    PyObject *opcode,
+    int is_entry  // Whether this is an entry frame for native unwinding
 );
 
 /* Line table parsing */
@@ -393,7 +412,8 @@ extern int parse_frame_object(
     PyObject** result,
     uintptr_t address,
     uintptr_t* address_of_code_object,
-    uintptr_t* previous_frame
+    uintptr_t* previous_frame,
+    int is_entry
 );
 
 extern int parse_frame_from_chunks(
@@ -402,7 +422,8 @@ extern int parse_frame_from_chunks(
     uintptr_t address,
     uintptr_t *previous_frame,
     uintptr_t *stackpointer,
-    StackChunkList *chunks
+    StackChunkList *chunks,
+    int is_entry
 );
 
 /* Stack chunk management */
@@ -580,6 +601,15 @@ extern int process_thread_for_async_stack_trace(
     unsigned long tid,
     void *context
 );
+
+/* ============================================================================
+ * NATIVE UNWINDING FUNCTION DECLARATIONS (libunwind)
+ * ============================================================================ */
+
+/* Simple PTRACE_ATTACH/DETACH native unwinding - defined in module.c */
+#if defined(__linux__) && defined(HAVE_LIBUNWIND)
+extern PyObject *get_native_backtrace(RemoteUnwinderObject *unwinder, long tid);
+#endif
 
 #ifdef __cplusplus
 }

@@ -173,7 +173,8 @@ parse_frame_object(
     PyObject** result,
     uintptr_t address,
     uintptr_t* address_of_code_object,
-    uintptr_t* previous_frame
+    uintptr_t* previous_frame,
+    int is_entry
 ) {
     char frame[SIZEOF_INTERP_FRAME];
     *address_of_code_object = 0;
@@ -209,7 +210,7 @@ parse_frame_object(
 #endif
 
     *address_of_code_object = code_object;
-    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index);
+    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index, is_entry);
 }
 
 int
@@ -219,7 +220,8 @@ parse_frame_from_chunks(
     uintptr_t address,
     uintptr_t *previous_frame,
     uintptr_t *stackpointer,
-    StackChunkList *chunks
+    StackChunkList *chunks,
+    int is_entry
 ) {
     void *frame_ptr = find_frame_in_chunks(chunks, address);
     if (!frame_ptr) {
@@ -246,7 +248,7 @@ parse_frame_from_chunks(
     }
 #endif
 
-    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index);
+    return parse_code_object(unwinder, result, code_object, instruction_pointer, previous_frame, tlbc_index, is_entry);
 }
 
 /* ============================================================================
@@ -272,6 +274,7 @@ process_frame_chain(
     uintptr_t last_frame_addr = 0;  // Track last frame visited for validation
     const size_t MAX_FRAMES = 1024 + 512;
     size_t frame_count = 0;
+    int prev_was_native = 0;  // Track if previous frame was native for is_entry marking
 
     // Initialize output flag
     if (stopped_at_cached_frame) {
@@ -298,6 +301,7 @@ process_frame_chain(
         uintptr_t next_frame_addr = 0;
         uintptr_t stackpointer = 0;
         last_frame_addr = frame_addr;  // Remember this frame address
+        int is_entry = prev_was_native;  // This frame is an entry if previous was native
 
         if (++frame_count > MAX_FRAMES) {
             PyErr_SetString(PyExc_RuntimeError, "Too many stack frames (possible infinite loop)");
@@ -305,10 +309,10 @@ process_frame_chain(
             return -1;
         }
 
-        if (parse_frame_from_chunks(unwinder, &frame, frame_addr, &next_frame_addr, &stackpointer, chunks) < 0) {
+        if (parse_frame_from_chunks(unwinder, &frame, frame_addr, &next_frame_addr, &stackpointer, chunks, is_entry) < 0) {
             PyErr_Clear();
             uintptr_t address_of_code_object = 0;
-            if (parse_frame_object(unwinder, &frame, frame_addr, &address_of_code_object ,&next_frame_addr) < 0) {
+            if (parse_frame_object(unwinder, &frame, frame_addr, &address_of_code_object ,&next_frame_addr, is_entry) < 0) {
                 set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to parse frame object in chain");
                 return -1;
             }
@@ -319,6 +323,7 @@ process_frame_chain(
             return -1;
         }
         PyObject *extra_frame = NULL;
+        int this_is_native = 0;  // Track if this frame is native
         // This frame kicked off the current GC collection:
         if (unwinder->gc && frame_addr == gc_frame) {
             _Py_DECLARE_STR(gc, "<GC>");
@@ -335,11 +340,13 @@ process_frame_chain(
         {
             _Py_DECLARE_STR(native, "<native>");
             extra_frame = &_Py_STR(native);
+            this_is_native = 1;  // Mark this as a native frame
         }
+        prev_was_native = this_is_native;  // Update for next iteration
         if (extra_frame) {
-            // Use "~" as file, None as location (synthetic frame), None as opcode
+            // Use "~" as file, None as location (synthetic frame), None as opcode, not an entry frame
             PyObject *extra_frame_info = make_frame_info(
-                unwinder, _Py_LATIN1_CHR('~'), Py_None, extra_frame, Py_None);
+                unwinder, _Py_LATIN1_CHR('~'), Py_None, extra_frame, Py_None, 0);
             if (extra_frame_info == NULL) {
                 return -1;
             }
@@ -487,7 +494,7 @@ try_full_cache_hit(
     uintptr_t code_object_addr = 0;
     uintptr_t previous_frame = 0;
     int parse_result = parse_frame_object(unwinder, &current_frame, frame_addr,
-                                          &code_object_addr, &previous_frame);
+                                          &code_object_addr, &previous_frame, 0);
     if (parse_result < 0) {
         return -1;
     }

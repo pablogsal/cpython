@@ -477,6 +477,24 @@ unwind_stack_for_thread(
     PyStructSequence_SetItem(result, 1, py_status);  // Steals reference
     PyStructSequence_SetItem(result, 2, frame_info); // Steals reference
 
+    // Capture native backtrace if native_unwind is enabled
+#if defined(__linux__) && defined(HAVE_LIBUNWIND)
+    if (unwinder->native_unwind) {
+        PyObject *native_backtrace = get_native_backtrace(unwinder, (long)tid);
+        if (native_backtrace == NULL) {
+            // Error occurred - clean up and return NULL
+            Py_DECREF(result);
+            cleanup_stack_chunks(&chunks);
+            return NULL;
+        }
+        PyStructSequence_SetItem(result, 3, native_backtrace);  // Steals reference
+    } else {
+        PyStructSequence_SetItem(result, 3, Py_NewRef(Py_None));
+    }
+#else
+    PyStructSequence_SetItem(result, 3, Py_NewRef(Py_None));
+#endif
+
     cleanup_stack_chunks(&chunks);
     return result;
 

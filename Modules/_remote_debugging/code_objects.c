@@ -255,7 +255,7 @@ make_location_info(RemoteUnwinderObject *unwinder, int lineno, int end_lineno,
 
 PyObject *
 make_frame_info(RemoteUnwinderObject *unwinder, PyObject *file, PyObject *location,
-                PyObject *func, PyObject *opcode)
+                PyObject *func, PyObject *opcode, int is_entry)
 {
     RemoteDebuggingState *state = RemoteDebugging_GetStateFromObject((PyObject*)unwinder);
     PyObject *info = PyStructSequence_New(state->FrameInfo_Type);
@@ -271,6 +271,7 @@ make_frame_info(RemoteUnwinderObject *unwinder, PyObject *file, PyObject *locati
     PyStructSequence_SetItem(info, 1, location);
     PyStructSequence_SetItem(info, 2, func);
     PyStructSequence_SetItem(info, 3, opcode);
+    PyStructSequence_SetItem(info, 4, PyBool_FromLong(is_entry));
     return info;
 }
 
@@ -280,7 +281,8 @@ parse_code_object(RemoteUnwinderObject *unwinder,
                   uintptr_t address,
                   uintptr_t instruction_pointer,
                   uintptr_t *previous_frame,
-                  int32_t tlbc_index)
+                  int32_t tlbc_index,
+                  int is_entry)
 {
     void *key = (void *)address;
     CachedCodeMetadata *meta = NULL;
@@ -445,7 +447,7 @@ done_tlbc:
     }
 
     PyObject *tuple = make_frame_info(unwinder, meta->file_name, location,
-                                      meta->func_name, opcode_obj ? opcode_obj : Py_None);
+                                      meta->func_name, opcode_obj ? opcode_obj : Py_None, is_entry);
     Py_DECREF(location);
     Py_XDECREF(opcode_obj);
     if (!tuple) {

@@ -188,6 +188,13 @@ def _add_sampling_options(parser):
         help='Include artificial "<native>" frames to denote calls to non-Python code',
     )
     sampling_group.add_argument(
+        "--native-unwind",
+        action="store_true",
+        dest="native_unwind",
+        help="Enable native stack unwinding with libunwind, merging native and Python "
+        "frames into a hybrid view (requires libunwind support)",
+    )
+    sampling_group.add_argument(
         "--no-gc",
         action="store_false",
         dest="gc",
@@ -622,6 +629,7 @@ def _handle_attach(args):
         mode=mode,
         async_aware=args.async_mode if args.async_aware else None,
         native=args.native,
+        native_unwind=args.native_unwind,
         gc=args.gc,
         opcodes=args.opcodes,
     )
@@ -672,6 +680,7 @@ def _handle_run(args):
             mode=mode,
             async_aware=args.async_mode if args.async_aware else None,
             native=args.native,
+            native_unwind=args.native_unwind,
             gc=args.gc,
             opcodes=args.opcodes,
         )
@@ -718,6 +727,7 @@ def _handle_live_attach(args, pid):
         mode=mode,
         async_aware=args.async_mode if args.async_aware else None,
         native=args.native,
+        native_unwind=args.native_unwind,
         gc=args.gc,
         opcodes=args.opcodes,
     )
@@ -762,6 +772,7 @@ def _handle_live_run(args):
             mode=mode,
             async_aware=args.async_mode if args.async_aware else None,
             native=args.native,
+            native_unwind=args.native_unwind,
             gc=args.gc,
             opcodes=args.opcodes,
         )

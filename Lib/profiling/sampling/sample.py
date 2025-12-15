@@ -38,16 +38,16 @@ class SampleProfiler:
         self.native_unwind = native_unwind
         if _FREE_THREADED_BUILD:
             self.unwinder = _remote_debugging.RemoteUnwinder(
-                self.pid, all_threads=self.all_threads, mode=mode, native=native, native_unwind=native_unwind, gc=gc,
+                self.pid, all_threads=self.all_threads, mode=mode, native=native, gc=gc,
                 opcodes=opcodes, skip_non_matching_threads=skip_non_matching_threads,
-                cache_frames=True, stats=collect_stats
+                cache_frames=True, stats=collect_stats, native_unwind=native_unwind
             )
         else:
             only_active_threads = bool(self.all_threads)
             self.unwinder = _remote_debugging.RemoteUnwinder(
-                self.pid, only_active_thread=only_active_threads, mode=mode, native=native, native_unwind=native_unwind, gc=gc,
+                self.pid, only_active_thread=only_active_threads, mode=mode, native=native, gc=gc,
                 opcodes=opcodes, skip_non_matching_threads=skip_non_matching_threads,
-                cache_frames=True, stats=collect_stats
+                cache_frames=True, stats=collect_stats, native_unwind=native_unwind
             )
         # Track sample intervals and total sample count
         self.sample_intervals = deque(maxlen=100)

@@ -42,8 +42,8 @@ class CollapsedStackCollector(StackTraceCollector):
         self.stack_counter = collections.Counter()
 
     def process_frames(self, frames, thread_id):
-        # Extract only (filename, lineno, funcname) - opcode not needed for collapsed stacks
-        # frame is (filename, location, funcname, opcode)
+        # Extract only (filename, lineno, funcname) - opcode/is_entry not needed for collapsed stacks
+        # frame is (filename, location, funcname, opcode, is_entry)
         call_tree = tuple(
             (f[0], extract_lineno(f[1]), f[2]) for f in reversed(frames)
         )
@@ -170,7 +170,8 @@ class FlamegraphCollector(StackTraceCollector):
     @staticmethod
     @functools.lru_cache(maxsize=None)
     def _format_function_name(func):
-        filename, lineno, funcname, _ = func
+        # func is stored as (filename, lineno, funcname) - already processed
+        filename, lineno, funcname = func
 
         # Special frames like <GC> and <native> should not show file:line
         if filename == "~" and lineno == 0:
@@ -194,47 +195,74 @@ class FlamegraphCollector(StackTraceCollector):
             }
 
         def convert_children(children, min_samples):
-            out = []
-            for func, node in children.items():
-                samples = node["samples"]
-                if samples < min_samples:
-                    continue
+            """Convert tree children to flamegraph format (iterative to avoid stack overflow)."""
+            # Use an iterative approach with a work stack to handle deep native stacks
+            # Each stack item is (children_dict, result_list, pending_entries)
+            # pending_entries is a list of (child_entry, node_children) tuples waiting for children processing
 
-                # Intern all string components for maximum efficiency
-                filename_idx = self._string_table.intern(func[0])
-                funcname_idx = self._string_table.intern(func[2])
-                name_idx = self._string_table.intern(self._format_function_name(func))
+            root_result = []
+            # Stack: (children_to_process, result_list_to_populate, pending_entries)
+            work_stack = [(children, root_result, [])]
 
-                child_entry = {
-                    "name": name_idx,
-                    "value": samples,
-                    "children": [],
-                    "filename": filename_idx,
-                    "lineno": func[1],
-                    "funcname": funcname_idx,
-                    "threads": sorted(list(node.get("threads", set()))),
-                }
+            while work_stack:
+                current_children, result_list, pending = work_stack[-1]
 
-                source = self._get_source_lines(func)
-                if source:
-                    # Intern source lines for memory efficiency
-                    source_indices = [self._string_table.intern(line) for line in source]
-                    child_entry["source"] = source_indices
+                if current_children is not None:
+                    # Process children and create entries
+                    new_pending = []
+                    for func, node in current_children.items():
+                        samples = node["samples"]
+                        if samples < min_samples:
+                            continue
 
-                # Include opcode data if available
-                opcodes = node.get("opcodes", {})
-                if opcodes:
-                    child_entry["opcodes"] = dict(opcodes)
+                        # Intern all string components for maximum efficiency
+                        filename_idx = self._string_table.intern(func[0])
+                        funcname_idx = self._string_table.intern(func[2])
+                        name_idx = self._string_table.intern(self._format_function_name(func))
 
-                # Recurse
-                child_entry["children"] = convert_children(
-                    node["children"], min_samples
-                )
-                out.append(child_entry)
+                        child_entry = {
+                            "name": name_idx,
+                            "value": samples,
+                            "children": [],
+                            "filename": filename_idx,
+                            "lineno": func[1],
+                            "funcname": funcname_idx,
+                            "threads": sorted(list(node.get("threads", set()))),
+                        }
 
-            # Sort by value (descending) then by name index for consistent ordering
-            out.sort(key=lambda x: (-x["value"], x["name"]))
-            return out
+                        source = self._get_source_lines(func)
+                        if source:
+                            # Intern source lines for memory efficiency
+                            source_indices = [self._string_table.intern(line) for line in source]
+                            child_entry["source"] = source_indices
+
+                        # Include opcode data if available
+                        opcodes = node.get("opcodes", {})
+                        if opcodes:
+                            child_entry["opcodes"] = dict(opcodes)
+
+                        result_list.append(child_entry)
+
+                        # If this node has children, queue them for processing
+                        if node["children"]:
+                            new_pending.append((child_entry, node["children"]))
+
+                    # Mark children as processed
+                    work_stack[-1] = (None, result_list, new_pending)
+
+                elif pending:
+                    # Process next pending child's children
+                    child_entry, node_children = pending.pop(0)
+                    work_stack[-1] = (None, result_list, pending)
+                    # Push new work item for this child's children
+                    work_stack.append((node_children, child_entry["children"], []))
+
+                else:
+                    # All done with this level - sort and pop
+                    result_list.sort(key=lambda x: (-x["value"], x["name"]))
+                    work_stack.pop()
+
+            return root_result
 
         # Filter out very small functions (less than 0.1% of total samples)
         total_samples = self._total_samples
@@ -315,9 +343,9 @@ class FlamegraphCollector(StackTraceCollector):
         """Process stack frames into flamegraph tree structure.
 
         Args:
-            frames: List of (filename, location, funcname, opcode) tuples in
+            frames: List of (filename, location, funcname, opcode, is_entry) tuples in
                     leaf-to-root order. location is (lineno, end_lineno, col_offset, end_col_offset).
-                    opcode is None if not gathered.
+                    opcode is None if not gathered. is_entry marks entry from native code.
             thread_id: Thread ID for this stack trace
         """
         # Reverse to root->leaf order for tree building
@@ -327,7 +355,7 @@ class FlamegraphCollector(StackTraceCollector):
         self._all_threads.add(thread_id)
 
         current = self._root
-        for filename, location, funcname, opcode in reversed(frames):
+        for filename, location, funcname, opcode, is_entry in reversed(frames):
             lineno = extract_lineno(location)
             func = (filename, lineno, funcname)
             func = self._func_intern.setdefault(func, func)

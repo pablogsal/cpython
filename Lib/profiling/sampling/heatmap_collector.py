@@ -522,15 +522,15 @@ class HeatmapCollector(StackTraceCollector):
         """Process stack frames and count samples per line.
 
         Args:
-            frames: List of (filename, location, funcname, opcode) tuples in
+            frames: List of (filename, location, funcname, opcode, is_entry) tuples in
                     leaf-to-root order. location is (lineno, end_lineno, col_offset, end_col_offset).
-                    opcode is None if not gathered.
+                    opcode is None if not gathered. is_entry marks entry from native code.
             thread_id: Thread ID for this stack trace
         """
         self._total_samples += 1
         self._seen_lines.clear()
 
-        for i, (filename, location, funcname, opcode) in enumerate(frames):
+        for i, (filename, location, funcname, opcode, is_entry) in enumerate(frames):
             # Normalize location to 4-tuple format
             lineno, end_lineno, col_offset, end_col_offset = normalize_location(location)
 
