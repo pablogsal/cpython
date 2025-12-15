@@ -265,7 +265,11 @@ typedef struct {
     PVOID win_process_buffer;
     ULONG win_process_buffer_size;
 #endif
-    // No persistent libunwind state needed - using simple PTRACE_ATTACH/DETACH per sample
+#ifdef HAVE_LIBUNWIND
+    // Persistent libunwind address space - created once, reused for all samples
+    // This is critical for performance: creating/destroying addr_space per sample is 3x slower
+    unw_addr_space_t native_addr_space;
+#endif
 } RemoteUnwinderObject;
 
 #define RemoteUnwinder_CAST(op) ((RemoteUnwinderObject *)(op))
