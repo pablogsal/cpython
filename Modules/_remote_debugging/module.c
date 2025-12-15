@@ -975,6 +975,9 @@ get_native_backtrace(RemoteUnwinderObject *unwinder, long tid) {
         return NULL;
     }
 
+    // MEGA AGGRESSIVE caching - use global cache for maximum performance
+    unw_set_caching_policy(addr_space, UNW_CACHE_GLOBAL);
+
     // Simple PTRACE_ATTACH (not SEIZE)
     if (ptrace(PTRACE_ATTACH, tid, NULL, NULL) == -1) {
         PyErr_Format(PyExc_RuntimeError,
@@ -1154,6 +1157,9 @@ symbolize_native_ips(RemoteUnwinderObject *unwinder, PyObject *ip_list, long tid
         Py_DECREF(result);
         return NULL;
     }
+
+    // MEGA AGGRESSIVE caching - use global cache for maximum performance
+    unw_set_caching_policy(addr_space, UNW_CACHE_GLOBAL);
 
     // Attach to the thread with ptrace
     if (ptrace(PTRACE_ATTACH, tid, NULL, NULL) == -1) {
