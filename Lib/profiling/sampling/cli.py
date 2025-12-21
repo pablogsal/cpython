@@ -265,10 +265,6 @@ def _run_with_sync(original_cmd, suppress_output=False):
         try:
             _wait_for_ready_signal(sync_sock, process, _SYNC_TIMEOUT)
 
-            # Close stderr pipe if we were capturing it
-            if process.stderr:
-                process.stderr.close()
-
         except socket.timeout:
             # If we timeout, kill the process and raise an error
             if process.poll() is None:
@@ -962,14 +958,26 @@ def _handle_live_run(args):
             blocking=args.blocking,
         )
     finally:
-        # Clean up the subprocess
-        if process.poll() is None:
+        # Clean up the subprocess and get any error output
+        returncode = process.poll()
+        if returncode is None:
+            # Process still running - terminate it
             process.terminate()
             try:
                 process.wait(timeout=_PROCESS_KILL_TIMEOUT)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait()
+        # Ensure process is fully terminated
+        process.wait()
+        # Read any stderr output (tracebacks, errors, etc.)
+        if process.stderr:
+            try:
+                stderr = process.stderr.read()
+                if stderr:
+                    print(stderr.decode(), file=sys.stderr)
+            except (OSError, ValueError):
+                # Ignore errors if pipe is already closed
+                pass
 
 
 if __name__ == "__main__":
