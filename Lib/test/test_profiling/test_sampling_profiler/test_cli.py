@@ -19,7 +19,7 @@ from test.support import is_emscripten, requires_remote_subprocess_debugging
 
 from profiling.sampling.cli import main
 from profiling.sampling.errors import SamplingScriptNotFoundError, SamplingModuleNotFoundError, SamplingUnknownProcessError
-from profiling.sampling.live_collector import MockDisplay, LiveStatsCollector
+from profiling.sampling.live_collector import MockDisplay
 
 
 class TestSampleProfilerCLI(unittest.TestCase):
