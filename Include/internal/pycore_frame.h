@@ -174,6 +174,11 @@ _PyFrame_SetStackPointer(_PyInterpreterFrame *frame, PyObject **stack_pointer)
 static inline bool
 _PyFrame_IsIncomplete(_PyInterpreterFrame *frame)
 {
+    // Base frame sentinel has FRAME_OWNED_BY_CSTACK and f_code == NULL
+    // Don't try to access f_code fields for it
+    if (frame->owner == FRAME_OWNED_BY_CSTACK && frame->f_code == NULL) {
+        return 0;
+    }
     return frame->owner != FRAME_OWNED_BY_GENERATOR &&
     frame->prev_instr < _PyCode_CODE(frame->f_code) + frame->f_code->_co_firsttraceable;
 }
@@ -183,6 +188,10 @@ _PyFrame_GetFirstComplete(_PyInterpreterFrame *frame)
 {
     while (frame && _PyFrame_IsIncomplete(frame)) {
         frame = frame->previous;
+    }
+    // Skip base frame sentinel (FRAME_OWNED_BY_CSTACK with no f_code)
+    if (frame && frame->owner == FRAME_OWNED_BY_CSTACK && frame->f_code == NULL) {
+        return NULL;
     }
     return frame;
 }

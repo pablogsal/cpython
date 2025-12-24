@@ -187,6 +187,10 @@ struct _gc_runtime_state {
        collections, and are awaiting to undergo a full collection for
        the first time. */
     Py_ssize_t long_lived_pending;
+
+    /* Frame that started the current collection (may be NULL).
+       Used by profilers to track GC activity. */
+    struct _PyInterpreterFrame *frame;
 };
 
 

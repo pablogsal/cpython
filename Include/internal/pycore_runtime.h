@@ -10,6 +10,7 @@ extern "C" {
 
 #include "pycore_atexit.h"          // struct atexit_runtime_state
 #include "pycore_atomic.h"          /* _Py_atomic_address */
+#include "pycore_debug_offsets.h"   // _Py_DebugOffsets
 #include "pycore_ceval_state.h"     // struct _ceval_runtime_state
 #include "pycore_floatobject.h"     // struct _Py_float_runtime_state
 #include "pycore_faulthandler.h"    // struct _faulthandler_runtime_state
@@ -104,6 +105,10 @@ typedef struct pyruntimestate {
     } interpreters;
 
     unsigned long main_thread;
+
+    // Debug offsets for external profilers and debuggers.
+    // Must remain at a stable offset for out-of-process tools.
+    _Py_DebugOffsets debug_offsets;
 
     /* ---------- IMPORTANT ---------------------------
      The fields above this line are declared as early as

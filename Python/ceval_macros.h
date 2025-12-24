@@ -110,6 +110,7 @@
         frame->prev_instr = next_instr - 1;             \
         (NEW_FRAME)->previous = frame;                  \
         frame = cframe.current_frame = (NEW_FRAME);     \
+        tstate->current_frame = frame;                  \
         CALL_STAT_INC(inlined_py_calls);                \
         goto start_frame;                               \
     } while (0)

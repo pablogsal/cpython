@@ -297,6 +297,10 @@ drop_gil(struct _ceval_state *ceval, PyThreadState *tstate)
     MUTEX_LOCK(gil->mutex);
     _Py_ANNOTATE_RWLOCK_RELEASED(&gil->locked, /*is_write=*/1);
     _Py_atomic_store_relaxed(&gil->locked, 0);
+    if (tstate != NULL) {
+        tstate->holds_gil = 0;
+        tstate->gil_requested = 0;
+    }
     COND_SIGNAL(gil->cond);
     MUTEX_UNLOCK(gil->mutex);
 
@@ -362,6 +366,8 @@ take_gil(PyThreadState *tstate)
     assert(gil_created(gil));
 
     MUTEX_LOCK(gil->mutex);
+
+    tstate->gil_requested = 1;
 
     if (!_Py_atomic_load_relaxed(&gil->locked)) {
         goto _ready;
@@ -434,6 +440,9 @@ _ready:
         PyThread_exit_thread();
     }
     assert(_PyThreadState_CheckConsistency(tstate));
+
+    tstate->gil_requested = 0;
+    tstate->holds_gil = 1;
 
     if (_Py_atomic_load_relaxed(&ceval->gil_drop_request)) {
         RESET_GIL_DROP_REQUEST(interp);

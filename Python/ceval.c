@@ -705,6 +705,7 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
     entry_frame.previous = prev_cframe->current_frame;
     frame->previous = &entry_frame;
     cframe.current_frame = frame;
+    tstate->current_frame = frame;
 
     tstate->c_recursion_remaining -= (PY_EVAL_C_STACK_UNITS - 1);
     if (_Py_EnterRecursiveCallTstate(tstate, "")) {
@@ -1000,11 +1001,13 @@ exit_unwind:
     // GH-99729: We need to unlink the frame *before* clearing it:
     _PyInterpreterFrame *dying = frame;
     frame = cframe.current_frame = dying->previous;
+    tstate->current_frame = frame;
     _PyEvalFrameClearAndPop(tstate, dying);
     frame->return_offset = 0;
     if (frame == &entry_frame) {
         /* Restore previous cframe and exit */
         tstate->cframe = cframe.previous;
+        tstate->current_frame = tstate->cframe->current_frame;
         assert(tstate->cframe->current_frame == frame->previous);
         tstate->c_recursion_remaining += PY_EVAL_C_STACK_UNITS;
         return NULL;
@@ -1572,6 +1575,13 @@ clear_gen_frame(PyThreadState *tstate, _PyInterpreterFrame * frame)
 static void
 _PyEvalFrameClearAndPop(PyThreadState *tstate, _PyInterpreterFrame * frame)
 {
+    // Update last_profiled_frame for remote profiler frame caching.
+    // By this point, tstate->current_frame is already set to the parent frame.
+    // Only update if we're popping the exact frame that was last profiled.
+    if (tstate->last_profiled_frame != NULL && tstate->last_profiled_frame == frame) {
+        tstate->last_profiled_frame = tstate->current_frame;
+    }
+
     if (frame->owner == FRAME_OWNED_BY_THREAD) {
         clear_thread_frame(tstate, frame);
     }

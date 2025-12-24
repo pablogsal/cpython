@@ -246,6 +246,30 @@ struct _ts {
 
     /* The bottom-most frame on the stack. */
     _PyCFrame root_cframe;
+
+    /* -------- Fields below this line are new for profiler support --------
+       These fields MUST remain at the end of the struct to preserve
+       ABI compatibility with external profilers (py-spy, Austin) that
+       read the struct with hardcoded offsets. */
+
+    /* Pointer to currently executing frame (direct access for profilers).
+       This mirrors cframe->current_frame but provides direct access for
+       external profilers that read process memory. */
+    struct _PyInterpreterFrame *current_frame;
+
+    /* Pointer to the base frame (bottommost sentinel frame).
+       Used by profilers to validate complete stack unwinding.
+       Points to the embedded base_frame in _PyThreadStateImpl.
+       The frame is embedded there rather than here because _PyInterpreterFrame
+       is defined in internal headers that cannot be exposed in the public API. */
+    struct _PyInterpreterFrame *base_frame;
+
+    /* Last frame sampled by a profiler. Used for frame caching optimization. */
+    struct _PyInterpreterFrame *last_profiled_frame;
+
+    /* GIL state for profilers. */
+    int holds_gil;
+    int gil_requested;
 };
 
 /* WASI has limited call stack. Python's recursion limit depends on code

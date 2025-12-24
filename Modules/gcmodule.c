@@ -1206,6 +1206,9 @@ gc_collect_main(PyThreadState *tstate, int generation,
     _PyTime_t t1 = 0;   /* initialize to prevent a compiler warning */
     GCState *gcstate = &tstate->interp->gc;
 
+    // Track the frame that started GC for profilers.
+    gcstate->frame = tstate->current_frame;
+
     // gc_collect_main() must not be called before _PyGC_Init
     // or after _PyGC_Fini()
     assert(gcstate->garbage != NULL);
@@ -1354,6 +1357,9 @@ gc_collect_main(PyThreadState *tstate, int generation,
     if (PyDTrace_GC_DONE_ENABLED()) {
         PyDTrace_GC_DONE(n + m);
     }
+
+    // Clear the GC frame tracking.
+    gcstate->frame = NULL;
 
     assert(!_PyErr_Occurred(tstate));
     return n + m;

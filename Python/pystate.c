@@ -1313,6 +1313,11 @@ alloc_threadstate(void)
 static void
 free_threadstate(PyThreadState *tstate)
 {
+    // Free the base frame sentinel if allocated.
+    if (tstate->base_frame != NULL) {
+        PyMem_RawFree(tstate->base_frame);
+        tstate->base_frame = NULL;
+    }
     // The initial thread state of the interpreter is allocated
     // as part of the interpreter state so should not be freed.
     if (tstate != &tstate->interp->_initial_thread) {
@@ -1363,6 +1368,20 @@ init_threadstate(PyThreadState *tstate,
     tstate->datastack_top = NULL;
     tstate->datastack_limit = NULL;
     tstate->what_event = -1;
+
+    // Allocate base frame sentinel for profilers.
+    // This marks the bottom of the frame stack.
+    _PyInterpreterFrame *base_frame = PyMem_RawCalloc(1, sizeof(_PyInterpreterFrame));
+    if (base_frame != NULL) {
+        base_frame->previous = NULL;
+        base_frame->owner = FRAME_OWNED_BY_CSTACK;  // Sentinel marker
+    }
+    tstate->base_frame = base_frame;
+    tstate->current_frame = base_frame;
+    tstate->root_cframe.current_frame = base_frame;
+    tstate->last_profiled_frame = NULL;
+    tstate->holds_gil = 0;
+    tstate->gil_requested = 0;
 
     tstate->_status.initialized = 1;
 }
@@ -1500,7 +1519,7 @@ PyThreadState_Clear(PyThreadState *tstate)
 
     int verbose = _PyInterpreterState_GetConfig(tstate->interp)->verbose;
 
-    if (verbose && tstate->cframe->current_frame != NULL) {
+    if (verbose && tstate->current_frame != tstate->base_frame) {
         /* bpo-20526: After the main thread calls
            _PyInterpreterState_SetFinalizing() in Py_FinalizeEx()
            (or in Py_EndInterpreter() for subinterpreters),

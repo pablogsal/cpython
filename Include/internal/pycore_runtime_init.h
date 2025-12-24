@@ -13,6 +13,7 @@ extern "C" {
 #include "pycore_parser.h"
 #include "pycore_pymem_init.h"
 #include "pycore_obmalloc_init.h"
+#include "pycore_debug_offsets.h"
 
 
 extern PyTypeObject _PyExc_MemoryError;
@@ -37,6 +38,7 @@ extern PyTypeObject _PyExc_MemoryError;
               until _PyInterpreterState_Enable() is called. */ \
             .next_id = -1, \
         }, \
+        .debug_offsets = _Py_DebugOffsets_INIT(), \
         /* A TSS key must be initialized with Py_tss_NEEDS_INIT \
            in accordance with the specification. */ \
         .autoTSSkey = Py_tss_NEEDS_INIT, \
