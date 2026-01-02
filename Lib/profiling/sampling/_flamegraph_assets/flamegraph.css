@@ -441,7 +441,6 @@ body.resizing-sidebar {
 .bar-fill {
   height: 100%;
   background: linear-gradient(90deg, #28a745 0%, #20c997 50%, #17a2b8 100%);
-  border-radius: 3px;
   transition: width 0.6s ease-out;
   position: relative;
   overflow: hidden;
@@ -476,10 +475,6 @@ body.resizing-sidebar {
 /* --------------------------------------------------------------------------
    Thread Stats Progress Bars (in Sidebar)
    -------------------------------------------------------------------------- */
-
-.thread-stats-section {
-  display: block;
-}
 
 .stats-container {
   display: flex;
@@ -966,10 +961,6 @@ body.resizing-sidebar {
   .search-wrapper {
     max-width: 160px;
   }
-
-  .brand-info {
-    display: none;
-  }
 }
 
 /* --------------------------------------------------------------------------
@@ -995,6 +986,160 @@ body.resizing-sidebar {
   box-shadow: 0 0 8px rgba(142, 68, 173, 0.3);
 }
 
-.toggle-switch:focus-visible {
-  border-radius: 4px;
+/* --------------------------------------------------------------------------
+   Differential Flamegraph Styles
+   -------------------------------------------------------------------------- */
+
+/* Diff Legend Headers */
+.diff-legend-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 0 4px 0;
+  margin-top: 4px;
+}
+
+.diff-legend-header:first-child {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.diff-legend-icon {
+  font-size: 10px;
+}
+
+.diff-legend-slower {
+  color: var(--diff-increase);
+}
+
+.diff-legend-faster {
+  color: var(--diff-decrease);
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 12px;
+}
+
+/* Diff Legend Colors */
+.diff-color-hot {
+  background: var(--diff-red-hot);
+}
+
+.diff-color-warm {
+  background: var(--diff-red-warm);
+}
+
+.diff-color-neutral {
+  background: var(--diff-neutral);
+  border: 1px solid var(--border);
+}
+
+.diff-color-cool {
+  background: var(--diff-blue-warm);
+}
+
+.diff-color-cold {
+  background: var(--diff-blue-cold);
+}
+
+/* Diff Tooltip Styles */
+.tooltip-diff-table {
+  display: grid;
+  grid-template-columns: auto repeat(3, 1fr);
+  gap: 4px 12px;
+  padding: 8px 0;
+  font-size: 12px;
+}
+
+.tooltip-diff-row {
+  display: contents;
+}
+
+.tooltip-diff-header span {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 11px;
+  text-align: right;
+}
+
+.tooltip-diff-header span:first-child {
+  text-align: left;
+}
+
+.tooltip-diff-row .tooltip-stat-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.tooltip-diff-row .diff-before {
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.tooltip-diff-row .diff-after {
+  text-align: right;
+  font-weight: 600;
+}
+
+.tooltip-diff-row .diff-increase {
+  text-align: right;
+  color: var(--diff-increase);
+  font-weight: 600;
+}
+
+.tooltip-diff-row .diff-decrease {
+  text-align: right;
+  color: var(--diff-decrease);
+  font-weight: 600;
+}
+
+.tooltip-diff-row .diff-unchanged {
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.tooltip-diff-row .diff-muted {
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.tooltip-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.tooltip-badge-new {
+  background: var(--diff-red-hot);
+  color: white;
+}
+
+/* --------------------------------------------------------------------------
+   Elided Flamegraph Styles
+   -------------------------------------------------------------------------- */
+
+/* Elided Toggle in Sidebar (styled like inverted toggle) */
+#toggle-elided .toggle-track.on {
+  background: #666;
+  border-color: #666;
+  box-shadow: 0 0 8px rgba(100, 100, 100, 0.3);
+}
+
+.elided-hint-text {
+  color: #888;
+  font-style: italic;
+}
+
+/* Elided Tooltip Styling */
+.elided-tooltip .tooltip-title {
+  color: #666;
+}
+
+.elided-tooltip .tooltip-stat-value.accent {
+  color: #888;
 }

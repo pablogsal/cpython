@@ -7,6 +7,15 @@ let invertedData = null;
 let currentThreadFilter = 'all';
 let isInverted = false;
 
+// Diff mode globals
+let isDiffMode = false;
+let maxDelta = 1;  // Max absolute delta for color scaling
+let functionDeltas = {};  // Per-function deltas for consistent coloring
+
+// Elided view globals
+let elidedData = null;  // Elided flamegraph tree (baseline paths not in current)
+let isElidedView = false;  // Whether we're currently showing the elided view
+
 // Heat colors are now defined in CSS variables (--heat-1 through --heat-8)
 // and automatically switch with theme changes - no JS color arrays needed!
 
@@ -92,8 +101,10 @@ function toggleTheme() {
   // Update theme button icon
   const btn = document.getElementById('theme-btn');
   if (btn) {
-    btn.querySelector('.icon-moon').style.display = next === 'dark' ? 'none' : '';
-    btn.querySelector('.icon-sun').style.display = next === 'dark' ? '' : 'none';
+    const moon = btn.querySelector('.icon-moon');
+    const sun = btn.querySelector('.icon-sun');
+    if (moon) moon.style.display = next === 'dark' ? 'none' : '';
+    if (sun) sun.style.display = next === 'dark' ? '' : 'none';
   }
 
   // Re-render flamegraph with new theme colors
@@ -161,8 +172,10 @@ function restoreUIState() {
     document.documentElement.setAttribute('data-theme', savedTheme);
     const btn = document.getElementById('theme-btn');
     if (btn) {
-      btn.querySelector('.icon-moon').style.display = savedTheme === 'dark' ? 'none' : '';
-      btn.querySelector('.icon-sun').style.display = savedTheme === 'dark' ? '' : 'none';
+      const moon = btn.querySelector('.icon-moon');
+      const sun = btn.querySelector('.icon-sun');
+      if (moon) moon.style.display = savedTheme === 'dark' ? 'none' : '';
+      if (sun) sun.style.display = savedTheme === 'dark' ? '' : 'none';
     }
   }
 
@@ -272,10 +285,47 @@ function clearStatusBar() {
 // Tooltip
 // ============================================================================
 
+/**
+ * Position and display a tooltip near the mouse cursor.
+ * Handles edge detection to keep tooltip within viewport.
+ */
+function positionTooltip(tooltipSelection, htmlContent) {
+  const event = d3.event || window.event;
+  const mouseX = event.pageX || event.clientX;
+  const mouseY = event.pageY || event.clientY;
+  const padding = 12;
+
+  tooltipSelection.html(htmlContent);
+
+  const node = tooltipSelection.style("display", "block").style("opacity", 0).node();
+  const tooltipWidth = node.offsetWidth || 320;
+  const tooltipHeight = node.offsetHeight || 200;
+
+  let left = mouseX + padding;
+  let top = mouseY + padding;
+
+  if (left + tooltipWidth > window.innerWidth) {
+    left = mouseX - tooltipWidth - padding;
+    if (left < 0) left = padding;
+  }
+
+  if (top + tooltipHeight > window.innerHeight) {
+    top = mouseY - tooltipHeight - padding;
+    if (top < 0) top = padding;
+  }
+
+  tooltipSelection
+    .style("left", left + "px")
+    .style("top", top + "px")
+    .transition()
+    .duration(150)
+    .style("opacity", 1);
+}
+
 function createPythonTooltip(data) {
   const pythonTooltip = flamegraph.tooltip.defaultFlamegraphTooltip();
 
-  pythonTooltip.show = function (d, element) {
+  pythonTooltip.show = function (d) {
     if (!this._tooltip) {
       this._tooltip = d3.select("body")
         .append("div")
@@ -361,6 +411,80 @@ function createPythonTooltip(data) {
     const fileLocationHTML = isSpecialFrame ? "" : `
       <div class="tooltip-location">${filename}${d.data.lineno ? ":" + d.data.lineno : ""}</div>`;
 
+    // Build diff stats section if in diff mode
+    let diffSection = "";
+    if (isDiffMode) {
+      // Use path-specific delta from the node (more accurate for that call stack)
+      // Fall back to per-function delta for inverted view where path deltas may be 0
+      const funcKey = d.data.funcname || d.data.name || '';
+      const funcDelta = functionDeltas[funcKey];
+      let deltaPct = d.data.delta_pct || 0;
+      let isNew = d.data.is_new || false;
+      let currentSelf = d.data.current_self || 0;
+      let baselineSelf = d.data.baseline_self || 0;
+      let baselineValue = d.data.baseline_value || 0;
+
+      // If path delta is 0/missing but function delta exists, use function delta
+      // This handles inverted view where self-time is 0 for most nodes
+      if (deltaPct === 0 && funcDelta && funcDelta.delta_pct !== 0) {
+        deltaPct = funcDelta.delta_pct;
+        isNew = funcDelta.is_new;
+      }
+
+      const sign = deltaPct > 0 ? '+' : '';
+      const colorClass = deltaPct > 0 ? 'diff-increase' : (deltaPct < 0 ? 'diff-decrease' : 'diff-unchanged');
+
+      // Format before/after counts (self time - what the delta is based on)
+      const beforeSelf = Math.round(baselineSelf);
+      const afterSelf = Math.round(currentSelf);
+      const deltaSamples = afterSelf - beforeSelf;
+      const deltaSign = deltaSamples >= 0 ? '+' : '';
+
+      // Total time delta (d.data.value is the current total for this node)
+      const beforeTotal = Math.round(baselineValue);
+      const afterTotal = d.data.value;
+      const deltaTotal = afterTotal - beforeTotal;
+      const deltaTotalSign = deltaTotal >= 0 ? '+' : '';
+
+      // Calculate percentage for total delta (relative change)
+      const deltaTotalPct = beforeTotal > 0 ? ((deltaTotal / beforeTotal) * 100).toFixed(1) : (deltaTotal > 0 ? '∞' : '0.0');
+
+      // Determine badge
+      let badgeHTML = '';
+      if (isNew) {
+        badgeHTML = '<span class="tooltip-badge tooltip-badge-new">NEW</span>';
+      }
+
+      diffSection = `
+        <div class="tooltip-diff">
+          <span class="tooltip-stat-label">Change:</span>
+          <span class="tooltip-stat-value ${colorClass}">
+            ${sign}${deltaPct.toFixed(1)}%
+          </span>
+          ${badgeHTML}
+        </div>
+        <div class="tooltip-diff-table">
+          <div class="tooltip-diff-row tooltip-diff-header">
+            <span></span>
+            <span>Before</span>
+            <span>After</span>
+            <span>Δ</span>
+          </div>
+          <div class="tooltip-diff-row">
+            <span class="tooltip-stat-label">Total</span>
+            <span class="diff-before">${beforeTotal}</span>
+            <span class="diff-after">${afterTotal}</span>
+            <span class="diff-muted">${deltaTotalSign}${deltaTotal} (${deltaTotalSign}${deltaTotalPct}%)</span>
+          </div>
+          <div class="tooltip-diff-row">
+            <span class="tooltip-stat-label">Self</span>
+            <span class="diff-before">${beforeSelf}</span>
+            <span class="diff-after">${afterSelf}</span>
+            <span class="${colorClass}">${deltaSign}${deltaSamples} (${sign}${deltaPct.toFixed(1)}%)</span>
+          </div>
+        </div>`;
+    }
+
     const tooltipHTML = `
       <div class="tooltip-header">
         <div class="tooltip-title">${funcname}</div>
@@ -383,6 +507,7 @@ function createPythonTooltip(data) {
           <span class="tooltip-stat-value">${childCount}</span>
         ` : ''}
       </div>
+      ${diffSection}
       ${sourceSection}
       ${opcodeSection}
       <div class="tooltip-hint">
@@ -390,39 +515,7 @@ function createPythonTooltip(data) {
       </div>
     `;
 
-    // Position tooltip
-    const event = d3.event || window.event;
-    const mouseX = event.pageX || event.clientX;
-    const mouseY = event.pageY || event.clientY;
-    const padding = 12;
-
-    this._tooltip.html(tooltipHTML);
-
-    // Measure tooltip
-    const node = this._tooltip.style("display", "block").style("opacity", 0).node();
-    const tooltipWidth = node.offsetWidth || 320;
-    const tooltipHeight = node.offsetHeight || 200;
-
-    // Calculate position
-    let left = mouseX + padding;
-    let top = mouseY + padding;
-
-    if (left + tooltipWidth > window.innerWidth) {
-      left = mouseX - tooltipWidth - padding;
-      if (left < 0) left = padding;
-    }
-
-    if (top + tooltipHeight > window.innerHeight) {
-      top = mouseY - tooltipHeight - padding;
-      if (top < 0) top = padding;
-    }
-
-    this._tooltip
-      .style("left", left + "px")
-      .style("top", top + "px")
-      .transition()
-      .duration(150)
-      .style("opacity", 1);
+    positionTooltip(this._tooltip, tooltipHTML);
 
     // Update status bar
     updateStatusBar(d.data, data.value);
@@ -477,22 +570,64 @@ function getHeatColors() {
   return colors;
 }
 
+// ============================================================================
+// Diff Mode Color Scale (Brendan Gregg's red/blue approach)
+// ============================================================================
+
+function getDiffColor(delta, maxDeltaValue) {
+  if (delta > 0) {
+    // Red for increased execution time (slower)
+    const intensity = Math.min(1, Math.abs(delta) / maxDeltaValue);
+    const gb = Math.round(210 * (1 - intensity) + 45);
+    return `rgb(255, ${gb}, ${gb})`;
+  } else if (delta < 0) {
+    // Blue for decreased execution time (faster)
+    const intensity = Math.min(1, Math.abs(delta) / maxDeltaValue);
+    const rg = Math.round(210 * (1 - intensity) + 45);
+    return `rgb(${rg}, ${rg}, 255)`;
+  }
+  // White/neutral for unchanged
+  return 'rgb(255, 255, 255)';
+}
+
 function createFlamegraph(tooltip, rootValue) {
   const chartArea = document.querySelector('.chart-area');
   const width = chartArea ? chartArea.clientWidth - 32 : window.innerWidth - 320;
   const heatColors = getHeatColors();
 
+  // Hide frames smaller than 0.5% of the chart width
+  const minFrameSize = Math.max(1, width * 0.005);
+
   let chart = flamegraph()
     .width(width)
     .cellHeight(20)
     .transitionDuration(300)
-    .minFrameSize(1)
+    .minFrameSize(minFrameSize)
     .tooltip(tooltip)
     .inverted(true)
     .setColorMapper(function (d) {
       // Root node should be transparent
       if (d.depth === 0) return 'transparent';
 
+      // Use diff colors in diff mode
+      if (isDiffMode) {
+        // Use path-specific delta (shows different colors for same function in different paths)
+        // This is more accurate - foo() via path_a can be red while foo() via path_b is blue
+        let delta = d.data.delta || 0;
+
+        // Fall back to per-function delta if path delta is 0
+        // (handles inverted view where self-time based deltas are often 0)
+        if (delta === 0) {
+          const funcname = d.data.funcname || d.data.name || '';
+          const funcDelta = functionDeltas[funcname];
+          if (funcDelta) {
+            delta = funcDelta.delta;
+          }
+        }
+        return getDiffColor(delta, maxDelta);
+      }
+
+      // Standard heat colors
       const percentage = d.data.value / rootValue;
       const level = getHeatLevel(percentage);
       return heatColors[level];
@@ -1069,11 +1204,6 @@ function filterByThread() {
   } else {
     selectedThreadId = parseInt(selectedThread, 10);
     filteredData = filterDataByThread(baseData, selectedThreadId);
-
-    if (filteredData.strings) {
-      stringTable = filteredData.strings;
-      filteredData = resolveStringIndices(filteredData);
-    }
   }
 
   const tooltip = createPythonTooltip(filteredData);
@@ -1157,7 +1287,7 @@ function getInvertNodeKey(node) {
   return `${node.filename || '~'}|${node.lineno || 0}|${node.funcname || node.name}`;
 }
 
-function accumulateInvertedNode(parent, stackFrame, leaf) {
+function accumulateInvertedNode(parent, stackFrame, leaf, isLeafLevel) {
   const key = getInvertNodeKey(stackFrame);
 
   if (!parent.children[key]) {
@@ -1169,7 +1299,11 @@ function accumulateInvertedNode(parent, stackFrame, leaf) {
       lineno: stackFrame.lineno,
       funcname: stackFrame.funcname,
       source: stackFrame.source,
-      threads: new Set()
+      threads: new Set(),
+      // Diff mode properties - only meaningful for leaf-level nodes
+      delta: 0,
+      delta_pct: 0,
+      is_new: false
     };
   }
 
@@ -1177,6 +1311,18 @@ function accumulateInvertedNode(parent, stackFrame, leaf) {
   node.value += leaf.value;
   if (leaf.threads) {
     leaf.threads.forEach(t => node.threads.add(t));
+  }
+
+  // Only assign delta to the LEAF LEVEL (first level of inverted tree)
+  // These are the original hotspot functions - their deltas are meaningful
+  // Non-leaf levels (callers) don't get delta colors because we can't compute
+  // their delta without an inverted baseline tree
+  if (isLeafLevel && leaf.delta !== undefined) {
+    node.delta += leaf.delta;
+    node.delta_pct += leaf.delta_pct || 0;
+  }
+  if (isLeafLevel && leaf.is_new) {
+    node.is_new = true;
   }
 
   return node;
@@ -1187,11 +1333,12 @@ function processLeaf(invertedRoot, path, leafNode) {
     return;
   }
 
-  let invertedParent = accumulateInvertedNode(invertedRoot, leafNode, leafNode);
+  // First node is the leaf (original hotspot) - this gets delta coloring
+  let invertedParent = accumulateInvertedNode(invertedRoot, leafNode, leafNode, true);
 
-  // Walk backwards through the call stack
+  // Walk backwards through the call stack - these are callers, no delta coloring
   for (let i = path.length - 2; i >= 0; i--) {
-    invertedParent = accumulateInvertedNode(invertedParent, path[i], leafNode);
+    invertedParent = accumulateInvertedNode(invertedParent, path[i], leafNode, false);
   }
 }
 
@@ -1227,7 +1374,12 @@ function generateInvertedFlamegraph(data) {
     value: data.value,
     children: {},
     stats: data.stats,
-    threads: data.threads
+    threads: data.threads,
+    // Preserve diff mode properties at root level
+    is_diff_mode: data.is_diff_mode,
+    max_delta: data.max_delta,
+    delta: 0,
+    delta_pct: 0
   };
 
   const children = data.children || [];
@@ -1239,6 +1391,14 @@ function generateInvertedFlamegraph(data) {
   }
 
   convertInvertDictToArray(invertedRoot);
+
+  // For diff mode, only first-level children have deltas (original hotspots)
+  // Use the same max_delta as normal view for consistent color scaling
+  if (data.is_diff_mode) {
+    // max_delta from normal view applies here too for consistency
+    invertedRoot.max_delta = data.max_delta;
+  }
+
   return invertedRoot;
 }
 
@@ -1260,23 +1420,163 @@ function updateToggleUI(toggleId, isOn) {
 }
 
 function toggleInvert() {
-  isInverted = !isInverted;
-  updateToggleUI('toggle-invert', isInverted);
+  const previousState = isInverted;
 
-  // Build inverted data on first use
-  if (isInverted && !invertedData) {
-    invertedData = generateInvertedFlamegraph(normalData);
+  try {
+    isInverted = !isInverted;
+    updateToggleUI('toggle-invert', isInverted);
+
+    // Build inverted data on first use
+    if (isInverted && !invertedData) {
+      if (isDiffMode && EMBEDDED_DATA.inverted_diff_tree) {
+        // In diff mode, use the pre-computed inverted diff tree from Python
+        // This ensures consistent delta values between normal and inverted views
+        invertedData = resolveStringIndices(EMBEDDED_DATA.inverted_diff_tree);
+        invertedData.is_diff_mode = true;
+      } else {
+        // For non-diff mode, compute inverted view on the fly
+        invertedData = generateInvertedFlamegraph(normalData);
+      }
+    }
+
+    let dataToRender = isInverted ? invertedData : normalData;
+
+    // Update maxDelta for the current view (for proper diff color scaling)
+    if (isDiffMode) {
+      maxDelta = dataToRender.max_delta || 1;
+    }
+
+    if (currentThreadFilter !== 'all') {
+      dataToRender = filterDataByThread(dataToRender, parseInt(currentThreadFilter));
+    }
+
+    const tooltip = createPythonTooltip(dataToRender);
+    const chart = createFlamegraph(tooltip, dataToRender.value);
+    renderFlamegraph(chart, dataToRender);
+  } catch (error) {
+    console.error('Failed to toggle invert view:', error);
+    isInverted = previousState;
+    updateToggleUI('toggle-invert', isInverted);
+  }
+}
+
+// ============================================================================
+// Elided View Toggle
+// ============================================================================
+
+function toggleElidedView() {
+  if (!elidedData || elidedData.value === 0) {
+    console.warn('No elided data available');
+    return;
   }
 
-  let dataToRender = isInverted ? invertedData : normalData;
+  const previousState = isElidedView;
+  isElidedView = !isElidedView;
 
-  if (currentThreadFilter !== 'all') {
-    dataToRender = filterDataByThread(dataToRender, parseInt(currentThreadFilter));
+  try {
+    updateToggleUI('toggle-elided', isElidedView);
+
+    // Update UI
+    const brandSubtitle = document.querySelector('.brand-subtitle');
+
+    if (isElidedView) {
+      // Switch to elided view
+      if (brandSubtitle) brandSubtitle.textContent = 'Elided Flamegraph';
+
+      // Render elided flamegraph with gray coloring
+      const tooltip = createElidedTooltip(elidedData);
+      const chart = createElidedFlamegraph(tooltip);
+      renderFlamegraph(chart, elidedData);
+    } else {
+      // Switch back to diff view
+      if (brandSubtitle) brandSubtitle.textContent = 'Differential Flamegraph';
+
+      // Render diff flamegraph
+      const dataToRender = isInverted ? invertedData : normalData;
+      const tooltip = createPythonTooltip(dataToRender);
+      const chart = createFlamegraph(tooltip, dataToRender.value);
+      renderFlamegraph(chart, dataToRender);
+    }
+  } catch (error) {
+    console.error('Failed to toggle elided view:', error);
+    isElidedView = previousState;
+    updateToggleUI('toggle-elided', isElidedView);
   }
+}
 
-  const tooltip = createPythonTooltip(dataToRender);
-  const chart = createFlamegraph(tooltip, dataToRender.value);
-  renderFlamegraph(chart, dataToRender);
+function createElidedTooltip(data) {
+  const pythonTooltip = flamegraph.tooltip.defaultFlamegraphTooltip();
+
+  pythonTooltip.show = function (d) {
+    if (!this._tooltip) {
+      this._tooltip = d3.select("body")
+        .append("div")
+        .attr("class", "python-tooltip elided-tooltip")
+        .style("opacity", 0);
+    }
+
+    const timeMs = (d.data.value / 1000).toFixed(2);
+    const percentage = ((d.data.value / data.value) * 100).toFixed(2);
+    const funcname = resolveString(d.data.funcname) || resolveString(d.data.name) || 'unknown';
+    const filename = resolveString(d.data.filename) || "";
+    const isSpecialFrame = filename === "~";
+
+    const fileLocationHTML = isSpecialFrame ? "" : `
+      <div class="tooltip-location">${filename}${d.data.lineno ? ":" + d.data.lineno : ""}</div>`;
+
+    const tooltipHTML = `
+      <div class="tooltip-header">
+        <div class="tooltip-title">${funcname}</div>
+        ${fileLocationHTML}
+      </div>
+      <div class="tooltip-stats">
+        <span class="tooltip-stat-label">Baseline Time:</span>
+        <span class="tooltip-stat-value">${timeMs} ms</span>
+      </div>
+      <div class="tooltip-hint elided-hint-text">
+        This stack existed in baseline but is completely gone in current
+      </div>
+    `;
+
+    positionTooltip(this._tooltip, tooltipHTML);
+
+    // Update status bar
+    updateStatusBar(d.data, data.value);
+  };
+
+  pythonTooltip.hide = function () {
+    if (this._tooltip) {
+      this._tooltip.transition().duration(150).style("opacity", 0);
+    }
+    clearStatusBar();
+  };
+
+  return pythonTooltip;
+}
+
+function createElidedFlamegraph(tooltip) {
+  const chartArea = document.querySelector('.chart-area');
+  const width = chartArea ? chartArea.clientWidth - 32 : window.innerWidth - 320;
+
+  // Hide frames smaller than 0.5% of the chart width
+  const minFrameSize = Math.max(1, width * 0.005);
+
+  let chart = flamegraph()
+    .width(width)
+    .cellHeight(20)
+    .transitionDuration(300)
+    .minFrameSize(minFrameSize)
+    .tooltip(tooltip)
+    .inverted(true)
+    .setColorMapper(function (d) {
+      // Root node should be transparent
+      if (d.depth === 0) return 'transparent';
+
+      // All elided nodes are gray (they don't exist anymore)
+      return 'rgb(160, 160, 160)';
+    });
+
+  return chart;
 }
 
 // ============================================================================
@@ -1298,6 +1598,42 @@ function initFlamegraph() {
   // Initialize opcode mapping from embedded data
   initOpcodeMapping(EMBEDDED_DATA);
 
+  // Detect diff mode from embedded data
+  isDiffMode = EMBEDDED_DATA.is_diff_mode || false;
+  maxDelta = EMBEDDED_DATA.func_max_delta || EMBEDDED_DATA.max_delta || 1;
+  functionDeltas = EMBEDDED_DATA.function_deltas || {};
+
+  // Show/hide diff mode UI elements
+  if (isDiffMode) {
+    const diffLegendSection = document.getElementById('diff-legend-section');
+    if (diffLegendSection) diffLegendSection.style.display = 'block';
+
+    // Hide the standard heat map legend in diff mode
+    const legendSection = document.getElementById('legend-section');
+    if (legendSection) legendSection.style.display = 'none';
+
+    // Update the brand subtitle for diff mode
+    const brandSubtitle = document.querySelector('.brand-subtitle');
+    if (brandSubtitle) brandSubtitle.textContent = 'Differential Flamegraph';
+
+    // Load elided data if present
+    if (EMBEDDED_DATA.elided_tree && EMBEDDED_DATA.elided_tree.value > 0) {
+      elidedData = resolveStringIndices(EMBEDDED_DATA.elided_tree);
+
+      // Show the Diff View section with elided toggle
+      const diffViewSection = document.getElementById('diff-view-section');
+      if (diffViewSection) {
+        diffViewSection.style.display = 'block';
+      }
+
+      // Add click handler to elided toggle
+      const elidedToggle = document.getElementById('toggle-elided');
+      if (elidedToggle) {
+        elidedToggle.addEventListener('click', toggleElidedView);
+      }
+    }
+  }
+
   // Inverted data will be built on first toggle
   invertedData = null;
 
@@ -1312,7 +1648,17 @@ function initFlamegraph() {
 
   const toggleInvertBtn = document.getElementById('toggle-invert');
   if (toggleInvertBtn) {
-    toggleInvertBtn.addEventListener('click', toggleInvert);
+    if (isDiffMode) {
+      // Hide inverted mode for diff flamegraphs - it's confusing
+      toggleInvertBtn.style.display = 'none';
+      // Also hide the entire View Mode section since it's now empty
+      const viewModeSection = document.getElementById('view-mode-section');
+      if (viewModeSection) {
+        viewModeSection.style.display = 'none';
+      }
+    } else {
+      toggleInvertBtn.addEventListener('click', toggleInvert);
+    }
   }
 }
 

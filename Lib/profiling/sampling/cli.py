@@ -21,6 +21,7 @@ from .heatmap_collector import HeatmapCollector
 from .gecko_collector import GeckoCollector
 from .binary_collector import BinaryCollector
 from .binary_reader import BinaryReader
+from .diff_flamegraph_collector import DiffFlamegraphCollector
 from .constants import (
     MICROSECONDS_PER_SECOND,
     PROFILING_MODE_ALL,
@@ -82,6 +83,7 @@ FORMAT_EXTENSIONS = {
     "gecko": "json",
     "heatmap": "html",
     "binary": "bin",
+    "diff_flamegraph": "html",
 }
 
 COLLECTOR_MAP = {
@@ -91,6 +93,7 @@ COLLECTOR_MAP = {
     "gecko": GeckoCollector,
     "heatmap": HeatmapCollector,
     "binary": BinaryCollector,
+    "diff_flamegraph": DiffFlamegraphCollector,
 }
 
 def _setup_child_monitor(args, parent_pid):
@@ -471,6 +474,13 @@ def _add_format_options(parser, include_compression=True, include_binary=True):
             dest="format",
             help="Generate high-performance binary format (use 'replay' command to convert)",
         )
+    format_group.add_argument(
+        "--diff-flamegraph",
+        metavar="BASELINE",
+        dest="diff_baseline",
+        help="Generate differential flamegraph comparing against BASELINE binary profile "
+        "(red=increased, blue=decreased)",
+    )
     parser.set_defaults(format="pstats")
 
     if include_compression:
@@ -541,17 +551,18 @@ def _sort_to_mode(sort_choice):
     return sort_map.get(sort_choice, SORT_MODE_NSAMPLES)
 
 def _create_collector(format_type, sample_interval_usec, skip_idle, opcodes=False,
-                      output_file=None, compression='auto'):
+                      output_file=None, compression='auto', diff_baseline=None):
     """Create the appropriate collector based on format type.
 
     Args:
-        format_type: The output format ('pstats', 'collapsed', 'flamegraph', 'gecko', 'heatmap', 'binary')
+        format_type: The output format ('pstats', 'collapsed', 'flamegraph', 'gecko', 'heatmap', 'binary', 'diff_flamegraph')
         sample_interval_usec: Sampling interval in microseconds
         skip_idle: Whether to skip idle samples
         opcodes: Whether to collect opcode information (only used by gecko format
                  for creating interval markers in Firefox Profiler)
         output_file: Output file path (required for binary format)
         compression: Compression type for binary format ('auto', 'zstd', 'none')
+        diff_baseline: Path to baseline binary profile (required for diff_flamegraph format)
 
     Returns:
         A collector instance of the appropriate type
@@ -566,6 +577,12 @@ def _create_collector(format_type, sample_interval_usec, skip_idle, opcodes=Fals
             raise ValueError("Binary format requires an output file")
         return collector_class(output_file, sample_interval_usec, skip_idle=skip_idle,
                               compression=compression)
+
+    # Diff flamegraph format requires baseline path
+    if format_type == "diff_flamegraph":
+        if diff_baseline is None:
+            raise ValueError("Diff flamegraph format requires a baseline profile")
+        return collector_class(sample_interval_usec, diff_baseline, skip_idle=skip_idle)
 
     # Gecko format never skips idle (it needs both GIL and CPU data)
     # and is the only format that uses opcodes for interval markers
@@ -659,7 +676,7 @@ def _handle_output(collector, args, pid, mode):
         collector.export(filename)
 
         # Auto-open browser for HTML output if --browser flag is set
-        if args.format in ('flamegraph', 'heatmap') and getattr(args, 'browser', False):
+        if args.format in ('flamegraph', 'heatmap', 'diff_flamegraph') and getattr(args, 'browser', False):
             _open_in_browser(filename)
 
 
@@ -670,6 +687,16 @@ def _validate_args(args, parser):
         args: Parsed command-line arguments
         parser: ArgumentParser instance for error reporting
     """
+    # Handle --diff-flamegraph: validate baseline exists and set format
+    if getattr(args, 'diff_baseline', None):
+        baseline_path = args.diff_baseline
+        if not os.path.exists(baseline_path):
+            parser.error(f"Baseline profile not found: {baseline_path}")
+        if not os.path.isfile(baseline_path):
+            parser.error(f"Baseline must be a file, not a directory: {baseline_path}")
+        # Set the format to diff_flamegraph
+        args.format = "diff_flamegraph"
+
     # Replay command has no special validation needed
     if getattr(args, 'command', None) == "replay":
         return
@@ -944,7 +971,8 @@ def _handle_attach(args):
     collector = _create_collector(
         args.format, args.sample_interval_usec, skip_idle, args.opcodes,
         output_file=output_file,
-        compression=getattr(args, 'compression', 'auto')
+        compression=getattr(args, 'compression', 'auto'),
+        diff_baseline=getattr(args, 'diff_baseline', None)
     )
 
     with _get_child_monitor_context(args, args.pid):
@@ -1022,7 +1050,8 @@ def _handle_run(args):
     collector = _create_collector(
         args.format, args.sample_interval_usec, skip_idle, args.opcodes,
         output_file=output_file,
-        compression=getattr(args, 'compression', 'auto')
+        compression=getattr(args, 'compression', 'auto'),
+        diff_baseline=getattr(args, 'diff_baseline', None)
     )
 
     with _get_child_monitor_context(args, process.pid):
@@ -1173,7 +1202,10 @@ def _handle_replay(args):
         print(f"  Sample interval: {interval} us")
         print(f"  Compression: {'zstd' if info.get('compression_type', 0) == 1 else 'none'}")
 
-        collector = _create_collector(args.format, interval, skip_idle=False)
+        collector = _create_collector(
+            args.format, interval, skip_idle=False,
+            diff_baseline=getattr(args, 'diff_baseline', None)
+        )
 
         def progress_callback(current, total):
             if total > 0:
@@ -1199,7 +1231,7 @@ def _handle_replay(args):
             collector.export(filename)
 
             # Auto-open browser for HTML output if --browser flag is set
-            if args.format in ('flamegraph', 'heatmap') and getattr(args, 'browser', False):
+            if args.format in ('flamegraph', 'heatmap', 'diff_flamegraph') and getattr(args, 'browser', False):
                 _open_in_browser(filename)
 
         print(f"Replayed {count} samples")

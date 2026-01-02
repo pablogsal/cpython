@@ -72,6 +72,17 @@
   --heat-7: #ff9966;
   --heat-8: #ff6347;
 
+  /* Differential flamegraph colors (Brendan Gregg style red/blue) */
+  --diff-red-hot: rgb(255, 70, 70);
+  --diff-red-warm: rgb(255, 140, 140);
+  --diff-red-light: rgb(255, 200, 200);
+  --diff-neutral: rgb(255, 255, 255);
+  --diff-blue-light: rgb(200, 200, 255);
+  --diff-blue-warm: rgb(140, 140, 255);
+  --diff-blue-cold: rgb(70, 70, 255);
+  --diff-increase: #c43030;
+  --diff-decrease: #3070c4;
+
   /* Code view specific */
   --code-bg: #ffffff;
   --code-bg-line: #f8f9fa;
@@ -141,6 +152,17 @@
   --heat-6: rgba(200, 222, 122, 1);
   --heat-7: rgba(244, 212, 93, 1);
   --heat-8: rgba(255, 122, 69, 1);
+
+  /* Differential flamegraph colors - dark theme */
+  --diff-red-hot: rgb(220, 60, 60);
+  --diff-red-warm: rgb(180, 90, 90);
+  --diff-red-light: rgb(140, 110, 110);
+  --diff-neutral: rgb(80, 80, 80);
+  --diff-blue-light: rgb(110, 110, 140);
+  --diff-blue-warm: rgb(90, 90, 180);
+  --diff-blue-cold: rgb(60, 60, 220);
+  --diff-increase: #ff6b6b;
+  --diff-decrease: #6b9fff;
 
   /* Code view specific - dark mode */
   --code-bg: #0d1117;

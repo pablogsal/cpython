@@ -101,7 +101,7 @@
               <div class="sidebar-logo-img"><!-- INLINE_LOGO --></div>
             </div>
 
-            <!-- View Mode Section -->
+            <!-- View Mode Section (for normal flamegraphs) -->
             <section class="sidebar-section view-mode-section collapsible" id="view-mode-section">
               <button class="section-header" onclick="toggleSection('view-mode-section')">
                 <h3 class="section-title">View Mode</h3>
@@ -117,6 +117,24 @@
                 </div>
               </div>
             </section>
+
+            <!-- Diff View Section (for diff flamegraphs with elided data) -->
+            <section class="sidebar-section view-mode-section collapsible" id="diff-view-section" style="display: none;">
+              <button class="section-header" onclick="toggleSection('diff-view-section')">
+                <h3 class="section-title">Diff View</h3>
+                <svg class="section-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <div class="section-content">
+                <div class="toggle-switch" id="toggle-elided" title="View stacks that existed in baseline but are completely gone in current" tabindex="0">
+                  <span class="toggle-label active" data-text="Diff">Diff</span>
+                  <div class="toggle-track"></div>
+                  <span class="toggle-label" data-text="Elided">Elided</span>
+                </div>
+              </div>
+            </section>
+
 
             <!-- Profile Summary Section -->
             <section class="sidebar-section collapsible" id="summary-section">
@@ -347,6 +365,54 @@
               </div>
               </div>
             </section>
+
+            <!-- Diff Legend Section (only shown for differential flamegraphs) -->
+            <section class="sidebar-section diff-legend-section collapsible" id="diff-legend-section" style="display: none;">
+              <button class="section-header" onclick="toggleSection('diff-legend-section')">
+                <h3 class="section-title">Differential Legend</h3>
+                <svg class="section-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <div class="section-content">
+              <div class="legend diff-legend">
+                <div class="diff-legend-header diff-legend-slower">
+                  <span class="diff-legend-icon">▲</span>
+                  <span>Slower (increased time)</span>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color diff-color-hot"></div>
+                  <span class="legend-label">Much Slower</span>
+                  <span class="legend-range">&gt;50%</span>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color diff-color-warm"></div>
+                  <span class="legend-label">Slower</span>
+                  <span class="legend-range">10-50%</span>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color diff-color-neutral"></div>
+                  <span class="legend-label">Unchanged</span>
+                  <span class="legend-range">~0%</span>
+                </div>
+                <div class="diff-legend-header diff-legend-faster">
+                  <span class="diff-legend-icon">▼</span>
+                  <span>Faster (decreased time)</span>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color diff-color-cool"></div>
+                  <span class="legend-label">Faster</span>
+                  <span class="legend-range">10-50%</span>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color diff-color-cold"></div>
+                  <span class="legend-label">Much Faster</span>
+                  <span class="legend-range">&gt;50%</span>
+                </div>
+              </div>
+              </div>
+            </section>
+
           </div>
         </aside>
 
