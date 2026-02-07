@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate comprehensive comparison plots for three Python parsers."""
+"""Generate comprehensive comparison plots for four Python parsers."""
 
 import pathlib
 import re
@@ -16,6 +16,7 @@ PARSERS = {
     "ruff":        {"file": OUT / "ruff.csv",        "label": "Ruff",        "color": "#7C3AED"},
     "zuban":       {"file": OUT / "zuban.csv",       "label": "Zuban",       "color": "#059669"},
     "rustpython":  {"file": OUT / "rustpython.csv",  "label": "RustPython",  "color": "#D97706"},
+    "cpython":     {"file": OUT / "cpython.csv",     "label": "CPython (C)", "color": "#DC2626"},
 }
 
 STDLIB_ROOT = "/home/user/cpython/Lib/"
@@ -67,7 +68,7 @@ def plot_overall_bars(frames):
     bars = ax.bar(names, total_ms, color=colors, edgecolor="white", linewidth=0.5)
     for bar, v in zip(bars, total_ms):
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 20,
-                f"{v:.0f} ms", ha="center", va="bottom", fontsize=11, fontweight="bold")
+                f"{v:.0f} ms", ha="center", va="bottom", fontsize=9, fontweight="bold")
     ax.set_ylabel("Total parse time (ms)")
     ax.set_title("Total Time (lower is better)")
     ax.set_ylim(0, max(total_ms) * 1.18)
@@ -148,7 +149,7 @@ def plot_time_distribution(frames):
 # ── Plot 3: Time vs file size scatter ──────────────────────────────────────
 
 def plot_time_vs_size(frames):
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+    fig, axes = plt.subplots(1, 4, figsize=(22, 5.5))
     fig.suptitle("Parse Time vs File Size", fontsize=14, fontweight="bold", y=1.02)
 
     for i, key in enumerate(PARSERS):
@@ -185,7 +186,8 @@ def plot_throughput_by_size_bin(frames):
                   "50-100 KB", "100-500 KB"]
 
     x = np.arange(len(bin_labels))
-    width = 0.25
+    n_parsers = len(PARSERS)
+    width = 0.8 / n_parsers
 
     all_throughputs = {}
     for j, key in enumerate(PARSERS):
@@ -204,7 +206,7 @@ def plot_throughput_by_size_bin(frames):
             else:
                 throughputs.append(0)
         all_throughputs[key] = throughputs
-        offset = (j - 1) * width
+        offset = (j - (n_parsers - 1) / 2) * width
         bars = ax.bar(x + offset, throughputs, width, label=info["label"],
                       color=info["color"], edgecolor="white", linewidth=0.5)
         for bar, v in zip(bars, throughputs):
@@ -226,12 +228,15 @@ def plot_throughput_by_size_bin(frames):
 # ── Plot 5: Slowdown ratio per file ───────────────────────────────────────
 
 def plot_slowdown_ratio(frames):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    others = [k for k in PARSERS if k != "ruff"]
+    fig, axes = plt.subplots(1, len(others), figsize=(7 * len(others), 5.5))
+    if len(others) == 1:
+        axes = [axes]
     fig.suptitle("Slowdown Ratio Relative to Ruff (per file)", fontsize=14, fontweight="bold", y=1.02)
 
     ruff = frames["ruff"].set_index("file")
 
-    for i, key in enumerate(["zuban", "rustpython"]):
+    for i, key in enumerate(others):
         ax = axes[i]
         info = PARSERS[key]
         other = frames[key].set_index("file")
@@ -345,7 +350,8 @@ def plot_cdf(frames):
 # ── Plot 8: Time per line vs file complexity ──────────────────────────────
 
 def plot_time_per_line(frames):
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+    n = len(PARSERS)
+    fig, axes = plt.subplots(1, n, figsize=(5.5 * n, 5.5))
     fig.suptitle("Parsing Cost per Line vs File Size", fontsize=14, fontweight="bold", y=1.02)
 
     for i, key in enumerate(PARSERS):
@@ -448,7 +454,7 @@ def plot_speedup_by_file_sorted(frames):
     ruff = frames["ruff"].sort_values("bytes").reset_index(drop=True)
     ruff_times = ruff["time_us"].values.astype(float)
 
-    for key in ["zuban", "rustpython"]:
+    for key in [k for k in PARSERS if k != "ruff"]:
         other = frames[key].set_index("file")
         # Align by file order
         other_times = []
@@ -481,7 +487,8 @@ def plot_speedup_by_file_sorted(frames):
 # ── Plot 11: Cumulative time contribution ─────────────────────────────────
 
 def plot_cumulative_time(frames):
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    n = len(PARSERS)
+    fig, axes = plt.subplots(1, n, figsize=(5.5 * n, 5))
     fig.suptitle("Cumulative Parse Time (files sorted large → small)",
                  fontsize=14, fontweight="bold", y=1.02)
 
