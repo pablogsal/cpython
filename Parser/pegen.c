@@ -178,19 +178,31 @@ _get_keyword_or_name_type(Parser *p, struct token *new_token)
     return NAME;
 }
 
+/* Slow path for _PyPegen_token_bytes — creates PyBytes on demand */
+PyObject *
+_PyPegen_materialize_token_bytes(Parser *p, Token *t)
+{
+    t->bytes = PyBytes_FromStringAndSize(t->_start, t->_nbytes);
+    if (t->bytes == NULL) {
+        return NULL;
+    }
+    if (_PyArena_AddPyObject(p->arena, t->bytes) < 0) {
+        Py_DECREF(t->bytes);
+        t->bytes = NULL;
+        return NULL;
+    }
+    return t->bytes;
+}
+
 static int
 initialize_token(Parser *p, Token *parser_token, struct token *new_token, int token_type) {
     assert(parser_token != NULL);
 
     parser_token->type = (token_type == NAME) ? _get_keyword_or_name_type(p, new_token) : token_type;
-    parser_token->bytes = PyBytes_FromStringAndSize(new_token->start, new_token->end - new_token->start);
-    if (parser_token->bytes == NULL) {
-        return -1;
-    }
-    if (_PyArena_AddPyObject(p->arena, parser_token->bytes) < 0) {
-        Py_DECREF(parser_token->bytes);
-        return -1;
-    }
+    /* Defer PyBytes creation — store raw pointers, create lazily */
+    parser_token->_start = new_token->start;
+    parser_token->_nbytes = new_token->end - new_token->start;
+    parser_token->bytes = NULL;
 
     parser_token->metadata = NULL;
     if (new_token->metadata != NULL) {
@@ -338,6 +350,7 @@ _PyPegen_get_memo_statistics(void)
 }
 #endif
 
+#if defined(Py_DEBUG)
 int  // bool
 _PyPegen_is_memoized(Parser *p, int type, void *pres)
 {
@@ -352,7 +365,6 @@ _PyPegen_is_memoized(Parser *p, int type, void *pres)
 
     for (Memo *m = t->memo; m != NULL; m = m->next) {
         if (m->type == type) {
-#if defined(Py_DEBUG)
             if (0 <= type && type < NSTATISTICS) {
                 long count = m->mark - p->mark;
                 // A memoized negative result counts for one.
@@ -363,7 +375,6 @@ _PyPegen_is_memoized(Parser *p, int type, void *pres)
                 memo_statistics[type] += count;
                 FT_MUTEX_UNLOCK(&_PyRuntime.parser.mutex);
             }
-#endif
             p->mark = m->mark;
             *(void **)(pres) = m->node;
             return 1;
@@ -371,6 +382,7 @@ _PyPegen_is_memoized(Parser *p, int type, void *pres)
     }
     return 0;
 }
+#endif
 
 #define LOOKAHEAD1(NAME, RES_TYPE)                                  \
     int                                                             \
@@ -400,23 +412,6 @@ LOOKAHEAD1(_PyPegen_lookahead_for_stmt, stmt_ty)
 LOOKAHEAD2(_PyPegen_lookahead_with_int, Token *, int)
 LOOKAHEAD2(_PyPegen_lookahead_with_string, expr_ty, const char *)
 #undef LOOKAHEAD2
-
-Token *
-_PyPegen_expect_token(Parser *p, int type)
-{
-    if (p->mark == p->fill) {
-        if (_PyPegen_fill_token(p) < 0) {
-            p->error_indicator = 1;
-            return NULL;
-        }
-    }
-    Token *t = p->tokens[p->mark];
-    if (t->type != type) {
-       return NULL;
-    }
-    p->mark += 1;
-    return t;
-}
 
 void*
 _PyPegen_expect_forced_result(Parser *p, void* result, const char* expected) {
@@ -466,7 +461,12 @@ _PyPegen_expect_soft_keyword(Parser *p, const char *keyword)
     if (t->type != NAME) {
         return NULL;
     }
-    const char *s = PyBytes_AsString(t->bytes);
+    PyObject *bytes = _PyPegen_token_bytes(p, t);
+    if (!bytes) {
+        p->error_indicator = 1;
+        return NULL;
+    }
+    const char *s = PyBytes_AsString(bytes);
     if (!s) {
         p->error_indicator = 1;
         return NULL;
@@ -561,18 +561,84 @@ error:
     return NULL;
 }
 
+/* Like _PyPegen_new_identifier, but takes a pointer + length instead of
+   a NUL-terminated string, avoiding the need to materialise token bytes. */
+static PyObject *
+_PyPegen_new_identifier_n(Parser *p, const char *s, Py_ssize_t len)
+{
+    PyObject *id = PyUnicode_DecodeUTF8(s, len, NULL);
+    if (!id) {
+        goto error;
+    }
+    if (!PyUnicode_IS_ASCII(id))
+    {
+        if (!init_normalization(p))
+        {
+            Py_DECREF(id);
+            goto error;
+        }
+        PyObject *form = PyUnicode_InternFromString("NFKC");
+        if (form == NULL)
+        {
+            Py_DECREF(id);
+            goto error;
+        }
+        PyObject *args[2] = {form, id};
+        PyObject *id2 = PyObject_Vectorcall(p->normalize, args, 2, NULL);
+        Py_DECREF(id);
+        Py_DECREF(form);
+        if (!id2) {
+            goto error;
+        }
+
+        if (!PyUnicode_Check(id2))
+        {
+            PyErr_Format(PyExc_TypeError,
+                         "unicodedata.normalize() must return a string, not "
+                         "%.200s",
+                         _PyType_Name(Py_TYPE(id2)));
+            Py_DECREF(id2);
+            goto error;
+        }
+        id = id2;
+    }
+    static const char * const forbidden[] = {
+        "None",
+        "True",
+        "False",
+        NULL
+    };
+    for (int i = 0; forbidden[i] != NULL; i++) {
+        if (_PyUnicode_EqualToASCIIString(id, forbidden[i])) {
+            PyErr_Format(PyExc_ValueError,
+                         "identifier field can't represent '%s' constant",
+                         forbidden[i]);
+            Py_DECREF(id);
+            goto error;
+        }
+    }
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    _PyUnicode_InternImmortal(interp, &id);
+    if (_PyArena_AddPyObject(p->arena, id) < 0)
+    {
+        Py_DECREF(id);
+        goto error;
+    }
+    return id;
+
+error:
+    p->error_indicator = 1;
+    return NULL;
+}
+
 static expr_ty
 _PyPegen_name_from_token(Parser *p, Token* t)
 {
     if (t == NULL) {
         return NULL;
     }
-    const char *s = PyBytes_AsString(t->bytes);
-    if (!s) {
-        p->error_indicator = 1;
-        return NULL;
-    }
-    PyObject *id = _PyPegen_new_identifier(p, s);
+    /* Create identifier directly from raw token pointer, bypassing PyBytes */
+    PyObject *id = _PyPegen_new_identifier_n(p, t->_start, t->_nbytes);
     if (id == NULL) {
         p->error_indicator = 1;
         return NULL;
@@ -601,7 +667,7 @@ expr_ty _PyPegen_soft_keyword_token(Parser *p) {
     }
     char *the_token;
     Py_ssize_t size;
-    PyBytes_AsStringAndSize(t->bytes, &the_token, &size);
+    PyBytes_AsStringAndSize(_PyPegen_token_bytes(p, t), &the_token, &size);
     for (char **keyword = p->soft_keywords; *keyword != NULL; keyword++) {
         if (strlen(*keyword) == (size_t)size &&
             strncmp(*keyword, the_token, (size_t)size) == 0) {
@@ -692,7 +758,7 @@ _PyPegen_number_token(Parser *p)
         return NULL;
     }
 
-    const char *num_raw = PyBytes_AsString(t->bytes);
+    const char *num_raw = PyBytes_AsString(_PyPegen_token_bytes(p, t));
     if (num_raw == NULL) {
         p->error_indicator = 1;
         return NULL;

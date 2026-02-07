@@ -70,8 +70,9 @@ warn_invalid_escape_sequence(Parser *p, const char* buffer, const char *first_in
     char first_quote = 0;
     if (lineno == t->lineno) {
         int quote_count = 0;
-        char* tok = PyBytes_AsString(t->bytes);
-        for (int i = 0; i < PyBytes_Size(t->bytes); i++) {
+        PyObject *t_bytes = _PyPegen_token_bytes(p, t);
+        char* tok = PyBytes_AsString(t_bytes);
+        for (int i = 0; i < PyBytes_Size(t_bytes); i++) {
             if (tok[i] == '\'' || tok[i] == '\"') {
                 if (quote_count == 0) {
                     first_quote = tok[i];
@@ -253,7 +254,7 @@ _PyPegen_decode_string(Parser *p, int raw, const char *s, size_t len, Token *t)
 PyObject *
 _PyPegen_parse_string(Parser *p, Token *t)
 {
-    const char *s = PyBytes_AsString(t->bytes);
+    const char *s = PyBytes_AsString(_PyPegen_token_bytes(p, t));
     if (s == NULL) {
         return NULL;
     }
