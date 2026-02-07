@@ -902,7 +902,7 @@ _PyPegen_add_type_comment_to_arg(Parser *p, arg_ty a, Token *tc)
     if (tc == NULL) {
         return a;
     }
-    const char *bytes = PyBytes_AsString(_PyPegen_token_bytes(p, tc));
+    const char *bytes = PyBytes_AsString(tc->bytes);
     if (bytes == NULL) {
         return NULL;
     }
@@ -919,9 +919,10 @@ _PyPegen_add_type_comment_to_arg(Parser *p, arg_ty a, Token *tc)
 0 indicates success and nonzero indicates failure (an exception may be set) */
 int
 _PyPegen_check_barry_as_flufl(Parser *p, Token* t) {
+    assert(t->bytes != NULL);
     assert(t->type == NOTEQUAL);
 
-    const char* tok_str = PyBytes_AS_STRING(_PyPegen_token_bytes(p, t));
+    const char* tok_str = PyBytes_AS_STRING(t->bytes);
     if (p->flags & PyPARSE_BARRY_AS_BDFL && strcmp(tok_str, "<>") != 0) {
         RAISE_SYNTAX_ERROR("with Barry as BDFL, use '<>' instead of '!='");
         return -1;
@@ -1305,7 +1306,7 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
         }
     }
 
-    const char* quote_str = PyBytes_AsString(_PyPegen_token_bytes(p, a));
+    const char* quote_str = PyBytes_AsString(a->bytes);
     if (quote_str == NULL) {
         return NULL;
     }
@@ -1400,7 +1401,7 @@ _PyPegen_joined_str(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b
 expr_ty _PyPegen_decoded_constant_from_token(Parser* p, Token* tok) {
     Py_ssize_t bsize;
     char* bstr;
-    if (PyBytes_AsStringAndSize(_PyPegen_token_bytes(p, tok), &bstr, &bsize) == -1) {
+    if (PyBytes_AsStringAndSize(tok->bytes, &bstr, &bsize) == -1) {
         return NULL;
     }
 
@@ -1425,7 +1426,7 @@ expr_ty _PyPegen_decoded_constant_from_token(Parser* p, Token* tok) {
 }
 
 expr_ty _PyPegen_constant_from_token(Parser* p, Token* tok) {
-    char* bstr = PyBytes_AsString(_PyPegen_token_bytes(p, tok));
+    char* bstr = PyBytes_AsString(tok->bytes);
     if (bstr == NULL) {
         return NULL;
     }
@@ -1443,7 +1444,7 @@ expr_ty _PyPegen_constant_from_token(Parser* p, Token* tok) {
 }
 
 expr_ty _PyPegen_constant_from_string(Parser* p, Token* tok) {
-    char* the_str = PyBytes_AsString(_PyPegen_token_bytes(p, tok));
+    char* the_str = PyBytes_AsString(tok->bytes);
     if (the_str == NULL) {
         return NULL;
     }

@@ -39,15 +39,11 @@ typedef struct _memo {
 typedef struct {
     int type;
     PyObject *bytes;
-    const char *_start;     /* raw pointer into tokenizer buffer */
-    Py_ssize_t _nbytes;     /* length of raw token text */
     int level;
     int lineno, col_offset, end_lineno, end_col_offset;
     Memo *memo;
     PyObject *metadata;
 } Token;
-
-/* Lazy token bytes accessor declared after Parser typedef below */
 
 typedef struct {
     const char *str;
@@ -96,20 +92,6 @@ typedef struct {
     int debug;
     location last_stmt_location;
 } Parser;
-
-/* Lazy materializer for token bytes — called on first access only.
- * Defined in pegen.c. */
-extern PyObject *_PyPegen_materialize_token_bytes(Parser *p, Token *t);
-
-/* Fast inline accessor: returns existing bytes or materializes them. */
-static inline PyObject *
-_PyPegen_token_bytes(Parser *p, Token *t)
-{
-    if (t->bytes != NULL) {
-        return t->bytes;
-    }
-    return _PyPegen_materialize_token_bytes(p, t);
-}
 
 typedef struct {
     cmpop_ty cmpop;
@@ -161,31 +143,7 @@ PyObject *_PyPegen_get_memo_statistics(void);
 
 int _PyPegen_insert_memo(Parser *p, int mark, int type, void *node);
 int _PyPegen_update_memo(Parser *p, int mark, int type, void *node);
-int _PyPegen_fill_token(Parser *p);
-
-#if defined(Py_DEBUG)
 int _PyPegen_is_memoized(Parser *p, int type, void *pres);
-#else
-static inline int  // bool
-_PyPegen_is_memoized(Parser *p, int type, void *pres)
-{
-    if (p->mark == p->fill) {
-        if (_PyPegen_fill_token(p) < 0) {
-            p->error_indicator = 1;
-            return -1;
-        }
-    }
-    Token *t = p->tokens[p->mark];
-    for (Memo *m = t->memo; m != NULL; m = m->next) {
-        if (m->type == type) {
-            p->mark = m->mark;
-            *(void **)(pres) = m->node;
-            return 1;
-        }
-    }
-    return 0;
-}
-#endif
 
 int _PyPegen_lookahead(int, void *(func)(Parser *), Parser *);
 int _PyPegen_lookahead_for_expr(int, expr_ty (func)(Parser *), Parser *);
@@ -193,29 +151,14 @@ int _PyPegen_lookahead_for_stmt(int, stmt_ty (func)(Parser *), Parser *);
 int _PyPegen_lookahead_with_int(int, Token *(func)(Parser *, int), Parser *, int);
 int _PyPegen_lookahead_with_string(int, expr_ty (func)(Parser *, const char*), Parser *, const char*);
 
-static inline Token *
-_PyPegen_expect_token(Parser *p, int type)
-{
-    if (p->mark == p->fill) {
-        if (_PyPegen_fill_token(p) < 0) {
-            p->error_indicator = 1;
-            return NULL;
-        }
-    }
-    Token *t = p->tokens[p->mark];
-    if (t->type != type) {
-        return NULL;
-    }
-    p->mark += 1;
-    return t;
-}
-
+Token *_PyPegen_expect_token(Parser *p, int type);
 void* _PyPegen_expect_forced_result(Parser *p, void* result, const char* expected);
 Token *_PyPegen_expect_forced_token(Parser *p, int type, const char* expected);
 expr_ty _PyPegen_expect_soft_keyword(Parser *p, const char *keyword);
 expr_ty _PyPegen_soft_keyword_token(Parser *p);
 expr_ty _PyPegen_fstring_middle_token(Parser* p);
 Token *_PyPegen_get_last_nonnwhitespace_token(Parser *);
+int _PyPegen_fill_token(Parser *p);
 expr_ty _PyPegen_name_token(Parser *p);
 expr_ty _PyPegen_number_token(Parser *p);
 void *_PyPegen_string_token(Parser *p);
@@ -332,7 +275,7 @@ NEW_TYPE_COMMENT(Parser *p, Token *tc)
     if (tc == NULL) {
         return NULL;
     }
-    const char *bytes = PyBytes_AsString(_PyPegen_token_bytes(p, tc));
+    const char *bytes = PyBytes_AsString(tc->bytes);
     if (bytes == NULL) {
         goto error;
     }
