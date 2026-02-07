@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate comprehensive comparison plots for four Python parsers."""
+"""Generate comprehensive comparison plots for three Python parsers."""
 
 import pathlib
 import re
@@ -16,7 +16,6 @@ PARSERS = {
     "ruff":        {"file": OUT / "ruff.csv",        "label": "Ruff",        "color": "#7C3AED"},
     "zuban":       {"file": OUT / "zuban.csv",       "label": "Zuban",       "color": "#059669"},
     "rustpython":  {"file": OUT / "rustpython.csv",  "label": "RustPython",  "color": "#D97706"},
-    "cpython":     {"file": OUT / "cpython.csv",     "label": "CPython (C)", "color": "#DC2626"},
 }
 
 STDLIB_ROOT = "/home/user/cpython/Lib/"
