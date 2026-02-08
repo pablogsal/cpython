@@ -154,23 +154,25 @@ typedef struct {
 static int
 _Py_RemoteDebug_ReadRemoteMemory(proc_handle_t *handle, uintptr_t remote_address, size_t len, void* dst);
 
-// Validate that a candidate section address starts with the expected cookie.
-// This is used to skip duplicate/stale mappings (e.g. from ctypes dlopen)
-// whose sections were never initialized. Pass cookie=NULL to skip validation.
+// Optional callback to validate a candidate section address found during
+// memory map searches. Returns 1 if the address is valid, 0 to skip it.
+// This allows callers to filter out duplicate/stale mappings (e.g. from
+// ctypes dlopen) whose sections were never initialized.
+typedef int (*section_validator_t)(proc_handle_t *handle, uintptr_t address);
+
+// Validate that a candidate address starts with _Py_Debug_Cookie.
 static int
-_Py_RemoteDebug_ValidateCookie(proc_handle_t *handle, uintptr_t address,
-                               const char *expected_cookie, size_t cookie_size)
+_Py_RemoteDebug_ValidatePyRuntimeCookie(proc_handle_t *handle, uintptr_t address)
 {
-    if (expected_cookie == NULL || address == 0) {
-        return address != 0;
+    if (address == 0) {
+        return 0;
     }
-    char buf[16];  // Large enough for any cookie we use
-    assert(cookie_size <= sizeof(buf));
-    if (_Py_RemoteDebug_ReadRemoteMemory(handle, address, cookie_size, buf) != 0) {
+    char buf[sizeof(_Py_Debug_Cookie) - 1];
+    if (_Py_RemoteDebug_ReadRemoteMemory(handle, address, sizeof(buf), buf) != 0) {
         PyErr_Clear();
         return 0;
     }
-    return memcmp(buf, expected_cookie, cookie_size) == 0;
+    return memcmp(buf, _Py_Debug_Cookie, sizeof(buf)) == 0;
 }
 
 static void
@@ -533,7 +535,7 @@ pid_to_task(pid_t pid)
 
 static uintptr_t
 search_map_for_section(proc_handle_t *handle, const char* secname, const char* substr,
-                       const char *cookie, size_t cookie_size) {
+                       section_validator_t validator) {
     mach_vm_address_t address = 0;
     mach_vm_size_t size = 0;
     mach_msg_type_number_t count = sizeof(vm_region_basic_info_data_64_t);
@@ -586,7 +588,7 @@ search_map_for_section(proc_handle_t *handle, const char* secname, const char* s
             uintptr_t result = search_section_in_file(
                 secname, map_filename, address, size, proc_ref);
             if (result != 0
-                && _Py_RemoteDebug_ValidateCookie(handle, result, cookie, cookie_size))
+                && (validator == NULL || validator(handle, result)))
             {
                 return result;
             }
@@ -705,7 +707,7 @@ exit:
 
 static uintptr_t
 search_linux_map_for_section(proc_handle_t *handle, const char* secname, const char* substr,
-                             const char *cookie, size_t cookie_size)
+                             section_validator_t validator)
 {
     char maps_file_path[64];
     sprintf(maps_file_path, "/proc/%d/maps", handle->pid);
@@ -781,7 +783,7 @@ search_linux_map_for_section(proc_handle_t *handle, const char* secname, const c
         if (strstr(filename, substr)) {
             retval = search_elf_file_for_section(handle, secname, start, path);
             if (retval
-                && _Py_RemoteDebug_ValidateCookie(handle, retval, cookie, cookie_size))
+                && (validator == NULL || validator(handle, retval)))
             {
                 break;
             }
@@ -890,7 +892,7 @@ static void* analyze_pe(const wchar_t* mod_path, BYTE* remote_base, const char* 
 
 static uintptr_t
 search_windows_map_for_section(proc_handle_t* handle, const char* secname, const wchar_t* substr,
-                               const char *cookie, size_t cookie_size) {
+                               section_validator_t validator) {
     HANDLE hProcSnap;
     do {
         hProcSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, handle->pid);
@@ -915,7 +917,7 @@ search_windows_map_for_section(proc_handle_t* handle, const char* secname, const
         if (wcsstr(moduleEntry.szModule, substr)) {
             void *candidate = analyze_pe(moduleEntry.szExePath, moduleEntry.modBaseAddr, secname);
             if (candidate != NULL
-                && _Py_RemoteDebug_ValidateCookie(handle, (uintptr_t)candidate, cookie, cookie_size))
+                && (validator == NULL || validator(handle, (uintptr_t)candidate)))
             {
                 runtime_addr = candidate;
                 break;
@@ -939,7 +941,7 @@ _Py_RemoteDebug_GetPyRuntimeAddress(proc_handle_t* handle)
 #ifdef MS_WINDOWS
     // On Windows, search for 'python' in executable or DLL
     address = search_windows_map_for_section(handle, "PyRuntime", L"python",
-                                             _Py_Debug_Cookie, sizeof(_Py_Debug_Cookie) - 1);
+                                             _Py_RemoteDebug_ValidatePyRuntimeCookie);
     if (address == 0) {
         // Error out: 'python' substring covers both executable and DLL
         PyObject *exc = PyErr_GetRaisedException();
@@ -951,7 +953,7 @@ _Py_RemoteDebug_GetPyRuntimeAddress(proc_handle_t* handle)
 #elif defined(__linux__) && HAVE_PROCESS_VM_READV
     // On Linux, search for 'python' in executable or DLL
     address = search_linux_map_for_section(handle, "PyRuntime", "python",
-                                           _Py_Debug_Cookie, sizeof(_Py_Debug_Cookie) - 1);
+                                           _Py_RemoteDebug_ValidatePyRuntimeCookie);
     if (address == 0) {
         // Error out: 'python' substring covers both executable and DLL
         PyObject *exc = PyErr_GetRaisedException();
@@ -966,7 +968,7 @@ _Py_RemoteDebug_GetPyRuntimeAddress(proc_handle_t* handle)
     for (const char** candidate = candidates; *candidate; candidate++) {
         PyErr_Clear();
         address = search_map_for_section(handle, "PyRuntime", *candidate,
-                                         _Py_Debug_Cookie, sizeof(_Py_Debug_Cookie) - 1);
+                                         _Py_RemoteDebug_ValidatePyRuntimeCookie);
         if (address != 0) {
             break;
         }
