@@ -150,6 +150,29 @@ typedef struct {
     Py_ssize_t page_size;
 } proc_handle_t;
 
+// Forward declaration for use in validation function
+static int
+_Py_RemoteDebug_ReadRemoteMemory(proc_handle_t *handle, uintptr_t remote_address, size_t len, void* dst);
+
+// Validate that a candidate section address starts with the expected cookie.
+// This is used to skip duplicate/stale mappings (e.g. from ctypes dlopen)
+// whose sections were never initialized. Pass cookie=NULL to skip validation.
+static int
+_Py_RemoteDebug_ValidateCookie(proc_handle_t *handle, uintptr_t address,
+                               const char *expected_cookie, size_t cookie_size)
+{
+    if (expected_cookie == NULL || address == 0) {
+        return address != 0;
+    }
+    char buf[16];  // Large enough for any cookie we use
+    assert(cookie_size <= sizeof(buf));
+    if (_Py_RemoteDebug_ReadRemoteMemory(handle, address, cookie_size, buf) != 0) {
+        PyErr_Clear();
+        return 0;
+    }
+    return memcmp(buf, expected_cookie, cookie_size) == 0;
+}
+
 static void
 _Py_RemoteDebug_FreePageCache(proc_handle_t *handle)
 {
@@ -509,7 +532,8 @@ pid_to_task(pid_t pid)
 }
 
 static uintptr_t
-search_map_for_section(proc_handle_t *handle, const char* secname, const char* substr) {
+search_map_for_section(proc_handle_t *handle, const char* secname, const char* substr,
+                       const char *cookie, size_t cookie_size) {
     mach_vm_address_t address = 0;
     mach_vm_size_t size = 0;
     mach_msg_type_number_t count = sizeof(vm_region_basic_info_data_64_t);
@@ -561,7 +585,9 @@ search_map_for_section(proc_handle_t *handle, const char* secname, const char* s
         if (strncmp(filename, substr, strlen(substr)) == 0) {
             uintptr_t result = search_section_in_file(
                 secname, map_filename, address, size, proc_ref);
-            if (result != 0) {
+            if (result != 0
+                && _Py_RemoteDebug_ValidateCookie(handle, result, cookie, cookie_size))
+            {
                 return result;
             }
         }
@@ -678,7 +704,8 @@ exit:
 }
 
 static uintptr_t
-search_linux_map_for_section(proc_handle_t *handle, const char* secname, const char* substr)
+search_linux_map_for_section(proc_handle_t *handle, const char* secname, const char* substr,
+                             const char *cookie, size_t cookie_size)
 {
     char maps_file_path[64];
     sprintf(maps_file_path, "/proc/%d/maps", handle->pid);
@@ -753,9 +780,12 @@ search_linux_map_for_section(proc_handle_t *handle, const char* secname, const c
 
         if (strstr(filename, substr)) {
             retval = search_elf_file_for_section(handle, secname, start, path);
-            if (retval) {
+            if (retval
+                && _Py_RemoteDebug_ValidateCookie(handle, retval, cookie, cookie_size))
+            {
                 break;
             }
+            retval = 0;
         }
     }
 
@@ -859,7 +889,8 @@ static void* analyze_pe(const wchar_t* mod_path, BYTE* remote_base, const char* 
 
 
 static uintptr_t
-search_windows_map_for_section(proc_handle_t* handle, const char* secname, const wchar_t* substr) {
+search_windows_map_for_section(proc_handle_t* handle, const char* secname, const wchar_t* substr,
+                               const char *cookie, size_t cookie_size) {
     HANDLE hProcSnap;
     do {
         hProcSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, handle->pid);
@@ -882,8 +913,11 @@ search_windows_map_for_section(proc_handle_t* handle, const char* secname, const
     for (BOOL hasModule = Module32FirstW(hProcSnap, &moduleEntry); hasModule; hasModule = Module32NextW(hProcSnap, &moduleEntry)) {
         // Look for either python executable or DLL
         if (wcsstr(moduleEntry.szModule, substr)) {
-            runtime_addr = analyze_pe(moduleEntry.szExePath, moduleEntry.modBaseAddr, secname);
-            if (runtime_addr != NULL) {
+            void *candidate = analyze_pe(moduleEntry.szExePath, moduleEntry.modBaseAddr, secname);
+            if (candidate != NULL
+                && _Py_RemoteDebug_ValidateCookie(handle, (uintptr_t)candidate, cookie, cookie_size))
+            {
+                runtime_addr = candidate;
                 break;
             }
         }
@@ -904,7 +938,8 @@ _Py_RemoteDebug_GetPyRuntimeAddress(proc_handle_t* handle)
 
 #ifdef MS_WINDOWS
     // On Windows, search for 'python' in executable or DLL
-    address = search_windows_map_for_section(handle, "PyRuntime", L"python");
+    address = search_windows_map_for_section(handle, "PyRuntime", L"python",
+                                             _Py_Debug_Cookie, sizeof(_Py_Debug_Cookie) - 1);
     if (address == 0) {
         // Error out: 'python' substring covers both executable and DLL
         PyObject *exc = PyErr_GetRaisedException();
@@ -915,7 +950,8 @@ _Py_RemoteDebug_GetPyRuntimeAddress(proc_handle_t* handle)
     }
 #elif defined(__linux__) && HAVE_PROCESS_VM_READV
     // On Linux, search for 'python' in executable or DLL
-    address = search_linux_map_for_section(handle, "PyRuntime", "python");
+    address = search_linux_map_for_section(handle, "PyRuntime", "python",
+                                           _Py_Debug_Cookie, sizeof(_Py_Debug_Cookie) - 1);
     if (address == 0) {
         // Error out: 'python' substring covers both executable and DLL
         PyObject *exc = PyErr_GetRaisedException();
@@ -929,7 +965,8 @@ _Py_RemoteDebug_GetPyRuntimeAddress(proc_handle_t* handle)
     const char* candidates[] = {"libpython", "python", "Python", NULL};
     for (const char** candidate = candidates; *candidate; candidate++) {
         PyErr_Clear();
-        address = search_map_for_section(handle, "PyRuntime", *candidate);
+        address = search_map_for_section(handle, "PyRuntime", *candidate,
+                                         _Py_Debug_Cookie, sizeof(_Py_Debug_Cookie) - 1);
         if (address != 0) {
             break;
         }
