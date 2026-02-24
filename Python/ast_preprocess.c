@@ -630,6 +630,14 @@ astfold_expr(expr_ty node_, PyArena *ctx_, _PyASTPreprocessState *state)
     case Constant_kind:
         // Already a constant, nothing further to do
         break;
+    case RaiseExpr_kind:
+        if (node_->v.RaiseExpr.exc) {
+            CALL(astfold_expr, expr_ty, node_->v.RaiseExpr.exc);
+            if (node_->v.RaiseExpr.cause) {
+                CALL(astfold_expr, expr_ty, node_->v.RaiseExpr.cause);
+            }
+        }
+        break;
     // No default case, so the compiler will emit a warning if new expression
     // kinds are added without being handled here
     }

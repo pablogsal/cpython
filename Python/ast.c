@@ -399,6 +399,10 @@ validate_expr(expr_ty exp, expr_context_ty ctx)
     case Name_kind:
         ret = 1;
         break;
+    case RaiseExpr_kind:
+        ret = (!exp->v.RaiseExpr.exc || validate_expr(exp->v.RaiseExpr.exc, Load)) &&
+            (!exp->v.RaiseExpr.cause || validate_expr(exp->v.RaiseExpr.cause, Load));
+        break;
     // No default case so compiler emits warning for unhandled cases
     }
     if (ret < 0) {

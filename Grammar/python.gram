@@ -894,8 +894,15 @@ group[expr_ty]:
 # ----------------
 
 lambdef[expr_ty]:
+    | 'lambda' a=[lambda_params] ':' b=raise_expr {
+        _PyAST_Lambda((a) ? a : CHECK(arguments_ty, _PyPegen_empty_arguments(p)), b, EXTRA) }
     | 'lambda' a=[lambda_params] ':' b=expression {
         _PyAST_Lambda((a) ? a : CHECK(arguments_ty, _PyPegen_empty_arguments(p)), b, EXTRA) }
+
+raise_expr[expr_ty]:
+    | 'raise' a=expression 'from' b=expression { _PyAST_RaiseExpr(a, b, EXTRA) }
+    | 'raise' a=expression { _PyAST_RaiseExpr(a, NULL, EXTRA) }
+    | 'raise' { _PyAST_RaiseExpr(NULL, NULL, EXTRA) }
 
 lambda_params[arguments_ty]:
     | invalid_lambda_parameters

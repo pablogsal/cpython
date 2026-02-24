@@ -2030,7 +2030,11 @@ codegen_lambda(compiler *c, expr_ty e)
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
 
     VISIT_IN_SCOPE(c, expr, e->v.Lambda.body);
-    if (SYMTABLE_ENTRY(c)->ste_generator) {
+    if (e->v.Lambda.body->kind == RaiseExpr_kind) {
+        /* raise never returns, so no RETURN_VALUE needed */
+        co = _PyCompile_OptimizeAndAssemble(c, 1);
+    }
+    else if (SYMTABLE_ENTRY(c)->ste_generator) {
         co = _PyCompile_OptimizeAndAssemble(c, 0);
     }
     else {
@@ -5307,6 +5311,20 @@ codegen_visit_expr(compiler *c, expr_ty e)
         return codegen_list(c, e);
     case Tuple_kind:
         return codegen_tuple(c, e);
+    case RaiseExpr_kind:
+    {
+        Py_ssize_t n = 0;
+        if (e->v.RaiseExpr.exc) {
+            VISIT(c, expr, e->v.RaiseExpr.exc);
+            n++;
+            if (e->v.RaiseExpr.cause) {
+                VISIT(c, expr, e->v.RaiseExpr.cause);
+                n++;
+            }
+        }
+        ADDOP_I(c, loc, RAISE_VARARGS, (int)n);
+        break;
+    }
     }
     return SUCCESS;
 }

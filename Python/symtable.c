@@ -2569,6 +2569,14 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
     case Tuple_kind:
         VISIT_SEQ(st, expr, e->v.Tuple.elts);
         break;
+    case RaiseExpr_kind:
+        if (e->v.RaiseExpr.exc) {
+            VISIT(st, expr, e->v.RaiseExpr.exc);
+            if (e->v.RaiseExpr.cause) {
+                VISIT(st, expr, e->v.RaiseExpr.cause);
+            }
+        }
+        break;
     }
     LEAVE_RECURSIVE();
     return 1;

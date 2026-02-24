@@ -364,7 +364,8 @@ enum _expr_kind {BoolOp_kind=1, NamedExpr_kind=2, BinOp_kind=3, UnaryOp_kind=4,
                   FormattedValue_kind=18, Interpolation_kind=19,
                   JoinedStr_kind=20, TemplateStr_kind=21, Constant_kind=22,
                   Attribute_kind=23, Subscript_kind=24, Starred_kind=25,
-                  Name_kind=26, List_kind=27, Tuple_kind=28, Slice_kind=29};
+                  Name_kind=26, List_kind=27, Tuple_kind=28, Slice_kind=29,
+                  RaiseExpr_kind=30};
 struct _expr {
     enum _expr_kind kind;
     union {
@@ -517,6 +518,11 @@ struct _expr {
             expr_ty upper;
             expr_ty step;
         } Slice;
+
+        struct {
+            expr_ty exc;
+            expr_ty cause;
+        } RaiseExpr;
 
     } v;
     int lineno;
@@ -864,6 +870,9 @@ expr_ty _PyAST_Tuple(asdl_expr_seq * elts, expr_context_ty ctx, int lineno, int
 expr_ty _PyAST_Slice(expr_ty lower, expr_ty upper, expr_ty step, int lineno,
                      int col_offset, int end_lineno, int end_col_offset,
                      PyArena *arena);
+expr_ty _PyAST_RaiseExpr(expr_ty exc, expr_ty cause, int lineno, int
+                         col_offset, int end_lineno, int end_col_offset,
+                         PyArena *arena);
 comprehension_ty _PyAST_comprehension(expr_ty target, expr_ty iter,
                                       asdl_expr_seq * ifs, int is_async,
                                       PyArena *arena);

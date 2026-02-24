@@ -144,6 +144,7 @@ void _PyAST_Fini(PyInterpreterState *interp)
     Py_CLEAR(state->Pow_type);
     Py_CLEAR(state->RShift_singleton);
     Py_CLEAR(state->RShift_type);
+    Py_CLEAR(state->RaiseExpr_type);
     Py_CLEAR(state->Raise_type);
     Py_CLEAR(state->Return_type);
     Py_CLEAR(state->SetComp_type);
@@ -669,6 +670,10 @@ static const char * const Slice_fields[]={
     "lower",
     "upper",
     "step",
+};
+static const char * const RaiseExpr_fields[]={
+    "exc",
+    "cause",
 };
 static PyObject* ast2obj_expr_context(struct ast_state *state, expr_context_ty);
 static PyObject* ast2obj_boolop(struct ast_state *state, boolop_ty);
@@ -3652,6 +3657,51 @@ add_ast_annotations(struct ast_state *state)
         return 0;
     }
     Py_DECREF(Slice_annotations);
+    PyObject *RaiseExpr_annotations = PyDict_New();
+    if (!RaiseExpr_annotations) return 0;
+    {
+        PyObject *type = state->expr_type;
+        type = _Py_union_type_or(type, Py_None);
+        cond = type != NULL;
+        if (!cond) {
+            Py_DECREF(RaiseExpr_annotations);
+            return 0;
+        }
+        cond = PyDict_SetItemString(RaiseExpr_annotations, "exc", type) == 0;
+        Py_DECREF(type);
+        if (!cond) {
+            Py_DECREF(RaiseExpr_annotations);
+            return 0;
+        }
+    }
+    {
+        PyObject *type = state->expr_type;
+        type = _Py_union_type_or(type, Py_None);
+        cond = type != NULL;
+        if (!cond) {
+            Py_DECREF(RaiseExpr_annotations);
+            return 0;
+        }
+        cond = PyDict_SetItemString(RaiseExpr_annotations, "cause", type) == 0;
+        Py_DECREF(type);
+        if (!cond) {
+            Py_DECREF(RaiseExpr_annotations);
+            return 0;
+        }
+    }
+    cond = PyObject_SetAttrString(state->RaiseExpr_type, "_field_types",
+                                  RaiseExpr_annotations) == 0;
+    if (!cond) {
+        Py_DECREF(RaiseExpr_annotations);
+        return 0;
+    }
+    cond = PyObject_SetAttrString(state->RaiseExpr_type, "__annotations__",
+                                  RaiseExpr_annotations) == 0;
+    if (!cond) {
+        Py_DECREF(RaiseExpr_annotations);
+        return 0;
+    }
+    Py_DECREF(RaiseExpr_annotations);
     PyObject *Load_annotations = PyDict_New();
     if (!Load_annotations) return 0;
     cond = PyObject_SetAttrString(state->Load_type, "_field_types",
@@ -6410,7 +6460,8 @@ init_types(void *arg)
         "     | Name(identifier id, expr_context ctx)\n"
         "     | List(expr* elts, expr_context ctx)\n"
         "     | Tuple(expr* elts, expr_context ctx)\n"
-        "     | Slice(expr? lower, expr? upper, expr? step)");
+        "     | Slice(expr? lower, expr? upper, expr? step)\n"
+        "     | RaiseExpr(expr? exc, expr? cause)");
     if (!state->expr_type) return -1;
     if (add_attributes(state, state->expr_type, expr_attributes, 4) < 0) return
         -1;
@@ -6552,6 +6603,14 @@ init_types(void *arg)
     if (PyObject_SetAttr(state->Slice_type, state->upper, Py_None) == -1)
         return -1;
     if (PyObject_SetAttr(state->Slice_type, state->step, Py_None) == -1)
+        return -1;
+    state->RaiseExpr_type = make_type(state, "RaiseExpr", state->expr_type,
+                                      RaiseExpr_fields, 2,
+        "RaiseExpr(expr? exc, expr? cause)");
+    if (!state->RaiseExpr_type) return -1;
+    if (PyObject_SetAttr(state->RaiseExpr_type, state->exc, Py_None) == -1)
+        return -1;
+    if (PyObject_SetAttr(state->RaiseExpr_type, state->cause, Py_None) == -1)
         return -1;
     state->expr_context_type = make_type(state, "expr_context",
                                          state->AST_type, NULL, 0,
@@ -8465,6 +8524,24 @@ _PyAST_Slice(expr_ty lower, expr_ty upper, expr_ty step, int lineno, int
     return p;
 }
 
+expr_ty
+_PyAST_RaiseExpr(expr_ty exc, expr_ty cause, int lineno, int col_offset, int
+                 end_lineno, int end_col_offset, PyArena *arena)
+{
+    expr_ty p;
+    p = (expr_ty)_PyArena_Malloc(arena, sizeof(*p));
+    if (!p)
+        return NULL;
+    p->kind = RaiseExpr_kind;
+    p->v.RaiseExpr.exc = exc;
+    p->v.RaiseExpr.cause = cause;
+    p->lineno = lineno;
+    p->col_offset = col_offset;
+    p->end_lineno = end_lineno;
+    p->end_col_offset = end_col_offset;
+    return p;
+}
+
 comprehension_ty
 _PyAST_comprehension(expr_ty target, expr_ty iter, asdl_expr_seq * ifs, int
                      is_async, PyArena *arena)
@@ -10049,6 +10126,21 @@ ast2obj_expr(struct ast_state *state, void* _o)
         value = ast2obj_expr(state, o->v.Slice.step);
         if (!value) goto failed;
         if (PyObject_SetAttr(result, state->step, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        break;
+    case RaiseExpr_kind:
+        tp = (PyTypeObject *)state->RaiseExpr_type;
+        result = PyType_GenericNew(tp, NULL, NULL);
+        if (!result) goto failed;
+        value = ast2obj_expr(state, o->v.RaiseExpr.exc);
+        if (!value) goto failed;
+        if (PyObject_SetAttr(result, state->exc, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        value = ast2obj_expr(state, o->v.RaiseExpr.cause);
+        if (!value) goto failed;
+        if (PyObject_SetAttr(result, state->cause, value) == -1)
             goto failed;
         Py_DECREF(value);
         break;
@@ -15692,6 +15784,54 @@ obj2ast_expr(struct ast_state *state, PyObject* obj, expr_ty* out, PyArena*
         if (*out == NULL) goto failed;
         return 0;
     }
+    tp = state->RaiseExpr_type;
+    isinstance = PyObject_IsInstance(obj, tp);
+    if (isinstance == -1) {
+        return -1;
+    }
+    if (isinstance) {
+        expr_ty exc;
+        expr_ty cause;
+
+        if (PyObject_GetOptionalAttr(obj, state->exc, &tmp) < 0) {
+            return -1;
+        }
+        if (tmp == NULL || tmp == Py_None) {
+            Py_CLEAR(tmp);
+            exc = NULL;
+        }
+        else {
+            int res;
+            if (_Py_EnterRecursiveCall(" while traversing 'RaiseExpr' node")) {
+                goto failed;
+            }
+            res = obj2ast_expr(state, tmp, &exc, arena);
+            _Py_LeaveRecursiveCall();
+            if (res != 0) goto failed;
+            Py_CLEAR(tmp);
+        }
+        if (PyObject_GetOptionalAttr(obj, state->cause, &tmp) < 0) {
+            return -1;
+        }
+        if (tmp == NULL || tmp == Py_None) {
+            Py_CLEAR(tmp);
+            cause = NULL;
+        }
+        else {
+            int res;
+            if (_Py_EnterRecursiveCall(" while traversing 'RaiseExpr' node")) {
+                goto failed;
+            }
+            res = obj2ast_expr(state, tmp, &cause, arena);
+            _Py_LeaveRecursiveCall();
+            if (res != 0) goto failed;
+            Py_CLEAR(tmp);
+        }
+        *out = _PyAST_RaiseExpr(exc, cause, lineno, col_offset, end_lineno,
+                                end_col_offset, arena);
+        if (*out == NULL) goto failed;
+        return 0;
+    }
 
     PyErr_Format(PyExc_TypeError, "expected some sort of expr, but got %R", obj);
     failed:
@@ -18194,6 +18334,9 @@ astmodule_exec(PyObject *m)
         return -1;
     }
     if (PyModule_AddObjectRef(m, "Slice", state->Slice_type) < 0) {
+        return -1;
+    }
+    if (PyModule_AddObjectRef(m, "RaiseExpr", state->RaiseExpr_type) < 0) {
         return -1;
     }
     if (PyModule_AddObjectRef(m, "expr_context", state->expr_context_type) < 0)
