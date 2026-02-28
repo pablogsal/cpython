@@ -212,9 +212,12 @@ _PyInterpolation_Build(PyObject *value, PyObject *str, int conversion, PyObject 
             case FVC_STR:
                 interpolation->conversion = _Py_LATIN1_CHR('s');
                 break;
+            case FVC_PRETTY:
+                interpolation->conversion = _Py_LATIN1_CHR('p');
+                break;
             default:
                 PyErr_SetString(PyExc_SystemError,
-                    "Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'");
+                    "Interpolation() argument 'conversion' must be one of 's', 'a', 'r', or 'p'");
                 Py_DECREF(interpolation);
                 return NULL;
         }

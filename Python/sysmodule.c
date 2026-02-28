@@ -811,6 +811,29 @@ sys_displayhook(PyObject *module, PyObject *o)
 }
 
 
+static PyObject *
+sys_prettyhook(PyObject *module, PyObject *obj)
+{
+    PyObject *pprint_mod = PyImport_ImportModule("pprint");
+    if (pprint_mod == NULL) {
+        return NULL;
+    }
+    PyObject *result = PyObject_CallMethod(pprint_mod, "pformat", "O", obj);
+    Py_DECREF(pprint_mod);
+    return result;
+}
+
+PyDoc_STRVAR(prettyhook_doc,
+"prettyhook(object, /)\n"
+"--\n"
+"\n"
+"blah blach blach"
+"\n"
+"This hook is called by the !p conversion in f-strings.\n"
+"it does cool things"
+);
+
+
 /*[clinic input]
 sys.excepthook
 
@@ -2952,6 +2975,7 @@ static PyMethodDef sys_methods[] = {
     SYS_SETPROFILE_METHODDEF
     SYS__SETPROFILEALLTHREADS_METHODDEF
     SYS_GETPROFILE_METHODDEF
+    {"prettyhook", sys_prettyhook, METH_O, prettyhook_doc},
     SYS_SETRECURSIONLIMIT_METHODDEF
     SYS_SETTRACE_METHODDEF
     SYS__SETTRACEALLTHREADS_METHODDEF
@@ -3998,6 +4022,7 @@ _PySys_InitCore(PyThreadState *tstate, PyObject *sysdict)
     COPY_SYS_ATTR("__excepthook__", "excepthook");
     COPY_SYS_ATTR("__breakpointhook__", "breakpointhook");
     COPY_SYS_ATTR("__unraisablehook__", "unraisablehook");
+    COPY_SYS_ATTR("__prettyhook__", "prettyhook");
 
 #undef COPY_SYS_ATTR
 
