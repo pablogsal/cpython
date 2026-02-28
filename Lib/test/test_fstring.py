@@ -1866,6 +1866,104 @@ print(f'''{{
                 f.write('''def f(a): pass\nf"{f(a=lambda: 'à'\n)}"'''.encode())
             assert_python_ok(script)
 
+    def test_pretty_conversion_basic(self):
+        """PEP 813: Test !p conversion calls sys.__prettyhook__"""
+        import pprint
+        x = [1, 2, 3]
+        self.assertEqual(f'{x!p}', pprint.pformat(x))
+
+        d = {'hello': 'world', 'foo': 'bar'}
+        self.assertEqual(f'{d!p}', pprint.pformat(d))
+
+        # Simple values
+        self.assertEqual(f'{42!p}', pprint.pformat(42))
+        self.assertEqual(f'{"hello"!p}', pprint.pformat("hello"))
+
+    def test_pretty_conversion_with_callable(self):
+        """PEP 813: Test !p with callable format spec"""
+        x = [1, 2, 3]
+
+        # Use repr as the callable
+        self.assertEqual(f'{x!p:repr}', repr(x))
+
+        # Use str as the callable
+        self.assertEqual(f'{x!p:str}', str(x))
+
+        # Use a custom function
+        def my_format(obj):
+            return f'custom({obj!r})'
+        self.assertEqual(f'{x!p:my_format}', 'custom([1, 2, 3])')
+
+    def test_pretty_conversion_with_expression_callable(self):
+        """PEP 813: Test !p with expression as callable"""
+        import pprint
+
+        d = {'key1': 'value1', 'key2': 'value2'}
+
+        # Attribute access
+        pp = pprint.PrettyPrinter(width=20)
+        result = f'{d!p:pp.pformat}'
+        self.assertEqual(result, pp.pformat(d))
+
+        # Method call in callable expression
+        result = f'{d!p:pprint.PrettyPrinter(width=20).pformat}'
+        self.assertEqual(result, pprint.PrettyPrinter(width=20).pformat(d))
+
+    def test_pretty_conversion_debug(self):
+        """PEP 813: Test !p with debug (=) syntax"""
+        import pprint
+        x = [1, 2, 3]
+        result = f'{x=!p}'
+        self.assertEqual(result, f'x={pprint.pformat(x)}')
+
+    def test_pretty_conversion_custom_hook(self):
+        """PEP 813: Test overriding sys.__prettyhook__"""
+        import sys
+        original = sys.__prettyhook__
+
+        def custom_hook(obj):
+            return f'CUSTOM({obj!r})'
+
+        try:
+            sys.__prettyhook__ = custom_hook
+            x = [1, 2, 3]
+            self.assertEqual(f'{x!p}', 'CUSTOM([1, 2, 3])')
+        finally:
+            sys.__prettyhook__ = original
+
+    def test_pretty_hook_exists(self):
+        """PEP 813: Test sys.prettyhook and sys.__prettyhook__ exist"""
+        import sys
+        self.assertTrue(hasattr(sys, 'prettyhook'))
+        self.assertTrue(hasattr(sys, '__prettyhook__'))
+        self.assertTrue(callable(sys.prettyhook))
+        self.assertTrue(callable(sys.__prettyhook__))
+
+    def test_pretty_conversion_p_as_variable(self):
+        """PEP 813: Test that 'p' can still be used as a variable name"""
+        p = 42
+        self.assertEqual(f'{p}', '42')
+        self.assertEqual(f'{p!r}', '42')
+        self.assertEqual(f'{p!s}', '42')
+
+        # And as part of expressions
+        p = [1, 2, 3]
+        self.assertEqual(f'{p[0]}', '1')
+
+    def test_pretty_conversion_not_callable_error(self):
+        """PEP 813: Test error when format spec is not callable"""
+        x = 42
+        with self.assertRaises(TypeError):
+            f'{x!p:42}'
+
+    def test_pretty_conversion_combined(self):
+        """PEP 813: Test !p in combined f-strings"""
+        x = {'a': 1}
+        y = [1, 2]
+        result = f'{x!p} and {y!r}'
+        import pprint
+        self.assertEqual(result, f'{pprint.pformat(x)} and {y!r}')
+
 
 if __name__ == '__main__':
     unittest.main()

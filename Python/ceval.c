@@ -561,10 +561,30 @@ const binaryfunc _PyEval_BinaryOps[] = {
     [NB_SUBSCR] = PyObject_GetItem,
 };
 
-const conversion_func _PyEval_ConversionFuncs[4] = {
+/* PEP 813: Pretty-print conversion function for !p in f-strings.
+ * Looks up sys.__prettyhook__ and calls it on the object. */
+static PyObject *
+_PyObject_Pretty(PyObject *obj)
+{
+    PyObject *sys = PyImport_ImportModule("sys");
+    if (sys == NULL) {
+        return NULL;
+    }
+    PyObject *hook = PyObject_GetAttrString(sys, "__prettyhook__");
+    Py_DECREF(sys);
+    if (hook == NULL) {
+        return NULL;
+    }
+    PyObject *result = PyObject_CallOneArg(hook, obj);
+    Py_DECREF(hook);
+    return result;
+}
+
+const conversion_func _PyEval_ConversionFuncs[5] = {
     [FVC_STR] = PyObject_Str,
     [FVC_REPR] = PyObject_Repr,
-    [FVC_ASCII] = PyObject_ASCII
+    [FVC_ASCII] = PyObject_ASCII,
+    [FVC_PRETTY] = _PyObject_Pretty,
 };
 
 const _Py_SpecialMethod _Py_SpecialMethods[] = {

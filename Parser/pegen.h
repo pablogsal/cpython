@@ -338,6 +338,9 @@ expr_ty _PyPegen_interpolation(Parser *, expr_ty, Token *, ResultTokenWithMetada
                                  int, int, int, int, PyArena *);
 expr_ty _PyPegen_formatted_value(Parser *, expr_ty, Token *, ResultTokenWithMetadata *, ResultTokenWithMetadata *, Token *,
                                  int, int, int, int, PyArena *);
+Token *_PyPegen_check_pretty_conversion(Parser *, Token *, expr_ty);
+expr_ty _PyPegen_pretty_formatted_value(Parser *, expr_ty, Token *, Token *, expr_ty, Token *,
+                                        int, int, int, int, PyArena *);
 AugOperator *_PyPegen_augoperator(Parser*, operator_ty type);
 stmt_ty _PyPegen_function_def_decorators(Parser *, asdl_expr_seq *, stmt_ty);
 stmt_ty _PyPegen_class_def_decorators(Parser *, asdl_expr_seq *, stmt_ty);

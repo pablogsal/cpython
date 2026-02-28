@@ -1096,6 +1096,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         the_current_tok->last_expr_end = -1;
         the_current_tok->in_format_spec = 0;
         the_current_tok->in_debug = 0;
+        the_current_tok->in_pretty_conversion = 0;
 
         enum string_kind_t string_kind = FSTRING;
         switch (*tok->start) {
@@ -1265,7 +1266,25 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
             return MAKE_TOKEN(ERRORTOKEN);
         }
 
-        if (c == ':' && cursor == current_tok->curly_bracket_expr_start_depth) {
+        /* When we see '!' at the top level of an f-string expression,
+         * peek ahead for 'p' followed by ':'. If found, set the
+         * in_pretty_conversion flag so that ':' does NOT trigger
+         * format-spec mode. This allows the text after ':' to be
+         * tokenized as a regular Python expression (PEP 813). */
+        if (c == '!' && cursor == current_tok->curly_bracket_expr_start_depth) {
+            int peek1 = tok_nextc(tok);
+            if (peek1 == 'p') {
+                int peek2 = tok_nextc(tok);
+                if (peek2 == ':') {
+                    current_tok->in_pretty_conversion = 1;
+                }
+                tok_backup(tok, peek2);
+            }
+            tok_backup(tok, peek1);
+        }
+
+        if (c == ':' && cursor == current_tok->curly_bracket_expr_start_depth
+                && !current_tok->in_pretty_conversion) {
             current_tok->kind = TOK_FSTRING_MODE;
             current_tok->in_format_spec = 1;
             p_start = tok->start;
@@ -1365,6 +1384,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
                 current_tok->kind = TOK_FSTRING_MODE;
                 current_tok->in_format_spec = 0;
                 current_tok->in_debug = 0;
+                current_tok->in_pretty_conversion = 0;
             }
         }
         break;

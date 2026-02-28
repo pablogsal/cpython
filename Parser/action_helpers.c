@@ -983,6 +983,25 @@ _PyPegen_check_fstring_conversion(Parser *p, Token* conv_token, expr_ty conv)
     return result_token_with_metadata(p, conv, conv_token->metadata);
 }
 
+/* PEP 813: Check for !p pretty-print conversion.
+ * Returns the conv_token on success, NULL without error on failure
+ * (causing the PEG parser to backtrack). */
+Token *
+_PyPegen_check_pretty_conversion(Parser *p, Token *conv_token, expr_ty conv)
+{
+    if (conv_token->lineno != conv->lineno || conv_token->end_col_offset != conv->col_offset) {
+        return NULL;  /* Not adjacent - let other rules handle it */
+    }
+    if (PyUnicode_GET_LENGTH(conv->v.Name.id) != 1) {
+        return NULL;
+    }
+    Py_UCS4 first = PyUnicode_READ_CHAR(conv->v.Name.id, 0);
+    if (first != 'p') {
+        return NULL;  /* Not !p - backtrack */
+    }
+    return conv_token;
+}
+
 ResultTokenWithMetadata *
 _PyPegen_setup_full_format_spec(Parser *p, Token *colon, asdl_expr_seq *spec, int lineno, int col_offset,
                                 int end_lineno, int end_col_offset, PyArena *arena)
@@ -1592,6 +1611,43 @@ expr_ty _PyPegen_formatted_value(Parser *p, expr_ty expression, Token *debug, Re
         debug_end_offset = end_col_offset;
         debug_metadata = closing_brace->metadata;
     }
+    expr_ty debug_text = _PyAST_Constant(debug_metadata, NULL, lineno, col_offset + 1, debug_end_line,
+                                            debug_end_offset - 1, p->arena);
+    if (!debug_text) {
+        return NULL;
+    }
+
+    asdl_expr_seq *values = _Py_asdl_expr_seq_new(2, arena);
+    asdl_seq_SET(values, 0, debug_text);
+    asdl_seq_SET(values, 1, formatted_value);
+    return _PyAST_JoinedStr(values, lineno, col_offset, debug_end_line, debug_end_offset, p->arena);
+}
+
+expr_ty _PyPegen_pretty_formatted_value(Parser *p, expr_ty expression, Token *debug,
+                                        Token *conv_token, expr_ty pretty_func,
+                                        Token *closing_brace, int lineno, int col_offset,
+                                        int end_lineno, int end_col_offset, PyArena *arena) {
+    /* PEP 813: !p conversion.
+     * conversion = 'p' (112).
+     * format_spec holds the callable expression, or NULL for default
+     * (sys.__prettyhook__). */
+    int conversion_val = (int)'p';
+
+    expr_ty formatted_value = _PyAST_FormattedValue(
+        expression, conversion_val, pretty_func,
+        lineno, col_offset, end_lineno,
+        end_col_offset, arena
+    );
+
+    if (!debug) {
+        return formatted_value;
+    }
+
+    /* Handle debug expression (f"{foo=!p:callable}") */
+    int debug_end_line = conv_token->lineno;
+    int debug_end_offset = conv_token->col_offset;
+    PyObject *debug_metadata = conv_token->metadata;
+
     expr_ty debug_text = _PyAST_Constant(debug_metadata, NULL, lineno, col_offset + 1, debug_end_line,
                                             debug_end_offset - 1, p->arena);
     if (!debug_text) {

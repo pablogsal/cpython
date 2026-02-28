@@ -66,6 +66,7 @@ typedef struct _tokenizer_mode {
     char* last_expr_buffer;
     int in_debug;
     int in_format_spec;
+    int in_pretty_conversion;
 
     enum string_kind_t string_kind;
 } tokenizer_mode;
