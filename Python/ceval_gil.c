@@ -7,6 +7,7 @@
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_interp.h"        // _Py_RunGC()
 #include "pycore_pymem.h"         // _PyMem_IsPtrFreed()
+#include "opcode.h"               // RESUME
 
 /*
    Notes about the implementation:
@@ -1024,6 +1025,112 @@ _PyEval_FiniState(struct _ceval_state *ceval)
     }
 }
 
+/*
+ * Remote debugger support (PEP 768 backport).
+ *
+ * When a remote process writes a script path to tstate->remote_debugger_support
+ * and sets debugger_pending_call = 1, the eval loop picks it up here.
+ */
+
+// Note: inline to avoid creating a PLT entry (ROP mitigation).
+static inline int
+_Py_RunRemoteDebuggerSource(PyObject *source)
+{
+    const char *str = PyBytes_AsString(source);
+    if (!str) {
+        return -1;
+    }
+
+    PyObject *ns = PyDict_New();
+    if (!ns) {
+        return -1;
+    }
+
+    PyObject *res = PyRun_String(str, Py_file_input, ns, ns);
+    Py_DECREF(ns);
+    if (!res) {
+        return -1;
+    }
+    Py_DECREF(res);
+    return 0;
+}
+
+// Note: inline to avoid creating a PLT entry (ROP mitigation).
+static inline void
+_Py_RunRemoteDebuggerScript(PyObject *path)
+{
+    if (0 != PySys_Audit("cpython.remote_debugger_script", "O", path)) {
+        PyErr_WriteUnraisable(path);
+        return;
+    }
+
+    PyObject* fileobj = PyFile_OpenCodeObject(path);
+    if (!fileobj) {
+        PyErr_WriteUnraisable(path);
+        return;
+    }
+
+    PyObject *read_method = PyUnicode_FromString("read");
+    PyObject* source = PyObject_CallMethodObjArgs(fileobj, read_method, NULL);
+    Py_DECREF(read_method);
+    if (!source) {
+        PyErr_WriteUnraisable(path);
+    }
+
+    PyObject *close_method = PyUnicode_FromString("close");
+    PyObject* close_res = PyObject_CallMethodObjArgs(fileobj, close_method, NULL);
+    Py_DECREF(close_method);
+    if (!close_res) {
+        PyErr_WriteUnraisable(path);
+    } else {
+        Py_DECREF(close_res);
+    }
+    Py_DECREF(fileobj);
+
+    if (source) {
+        if (0 != _Py_RunRemoteDebuggerSource(source)) {
+            PyErr_WriteUnraisable(path);
+        }
+        Py_DECREF(source);
+    }
+}
+
+static int
+_PyRunRemoteDebugger(PyThreadState *tstate)
+{
+    if (tstate->interp->remote_debugging_enabled == 1
+        && tstate->remote_debugger_support.debugger_pending_call == 1)
+    {
+        tstate->remote_debugger_support.debugger_pending_call = 0;
+
+        // Make a copy to avoid races with another debugger writing to the buffer.
+        const size_t pathsz
+            = sizeof(tstate->remote_debugger_support.debugger_script_path);
+
+        char *path = PyMem_Malloc(pathsz);
+        if (path) {
+            memcpy(
+                path,
+                tstate->remote_debugger_support.debugger_script_path,
+                pathsz);
+            path[pathsz - 1] = '\0';
+            if (*path) {
+                PyObject *path_obj = PyUnicode_DecodeFSDefault(path);
+                if (path_obj == NULL) {
+                    PyErr_WriteUnraisable(NULL);
+                }
+                else {
+                    _Py_RunRemoteDebuggerScript(path_obj);
+                    Py_DECREF(path_obj);
+                }
+            }
+            PyMem_Free(path);
+        }
+    }
+    return 0;
+}
+
+
 /* Handle signals, pending calls, GIL drop request
    and asynchronous exception */
 int
@@ -1092,6 +1199,9 @@ _Py_HandlePending(PyThreadState *tstate)
     // the current Python thread cannot handle signals (if
     // _Py_ThreadCanHandleSignals() is false).
     COMPUTE_EVAL_BREAKER(tstate->interp, ceval, interp_ceval_state);
+
+    /* Remote debugger (PEP 768) */
+    _PyRunRemoteDebugger(tstate);
 
     return 0;
 }

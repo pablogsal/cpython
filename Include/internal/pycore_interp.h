@@ -224,6 +224,11 @@ struct _is {
     struct _xidregistry xidregistry;
     /* The thread currently executing in the __main__ module, if any. */
     PyThreadState *threads_main;
+
+    /* Remote debugging enabled flag (PEP 768).
+       Set to 1 during interpreter init to allow remote_exec. */
+    int remote_debugging_enabled;
+
     /* The ID of the OS thread in which we are finalizing.
        We use _Py_atomic_address instead of adding a new _Py_atomic_ulong. */
     _Py_atomic_address _finalizing_id;

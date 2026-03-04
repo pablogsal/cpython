@@ -391,6 +391,7 @@ PYTHON_OBJS=	\
 		Python/getplatform.o \
 		Python/getversion.o \
 		Python/ceval_gil.o \
+		Python/remote_debugging.o \
 		Python/hamt.o \
 		Python/hashtable.o \
 		Python/import.o \

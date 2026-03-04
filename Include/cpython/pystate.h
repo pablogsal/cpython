@@ -62,6 +62,13 @@ typedef int (*Py_tracefunc)(PyObject *, PyFrameObject *, int, PyObject *);
 #define PyTrace_C_RETURN 6
 #define PyTrace_OPCODE 7
 
+/* Remote debugger support */
+#define _Py_MAX_SCRIPT_PATH_SIZE 512
+typedef struct {
+    int32_t debugger_pending_call;
+    char debugger_script_path[_Py_MAX_SCRIPT_PATH_SIZE];
+} _PyRemoteDebuggerSupport;
+
 // Internal structure: you should not use it directly, but use public functions
 // like PyThreadState_EnterTracing() and PyThreadState_LeaveTracing().
 typedef struct _PyCFrame {
@@ -270,6 +277,9 @@ struct _ts {
     /* GIL state for profilers. */
     int holds_gil;
     int gil_requested;
+
+    /* Remote debugger support (PEP 768) */
+    _PyRemoteDebuggerSupport remote_debugger_support;
 };
 
 /* WASI has limited call stack. Python's recursion limit depends on code

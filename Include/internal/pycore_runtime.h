@@ -60,6 +60,11 @@ typedef struct _Py_AuditHookEntry {
    That data is exposed in the internal API as a static variable (_PyRuntime).
    */
 typedef struct pyruntimestate {
+    // Debug offsets for external profilers and debuggers.
+    // MUST be the first field so that the debug cookie can be found
+    // at the start of _PyRuntime for out-of-process tools (PEP 768).
+    _Py_DebugOffsets debug_offsets;
+
     /* Has been initialized to a safe state.
 
        In order to be effective, this must be set to 0 during or right
@@ -105,10 +110,6 @@ typedef struct pyruntimestate {
     } interpreters;
 
     unsigned long main_thread;
-
-    // Debug offsets for external profilers and debuggers.
-    // Must remain at a stable offset for out-of-process tools.
-    _Py_DebugOffsets debug_offsets;
 
     /* ---------- IMPORTANT ---------------------------
      The fields above this line are declared as early as

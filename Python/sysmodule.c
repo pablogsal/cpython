@@ -2453,6 +2453,75 @@ PyAPI_FUNC(void) PyUnstable_PerfMapState_Fini(void) {
 #endif
 }
 
+/* Declaration of the sender function from Python/remote_debugging.c */
+extern int _PySysRemoteDebug_SendExec(int pid, int tid, const char *debugger_script_path);
+
+PyDoc_STRVAR(sys_remote_exec_doc,
+"remote_exec(pid, script)\n\
+\n\
+Executes a file containing Python code in a given remote Python process.\n\
+\n\
+This function returns immediately, and the code will be executed by the\n\
+target process's main thread at the next available opportunity, similarly\n\
+to how signals are handled. There is no interface to determine when the\n\
+code has been executed. The caller is responsible for making sure that\n\
+the file still exists whenever the remote process tries to read it and that\n\
+it hasn't been overwritten.\n\
+\n\
+The remote process must be running a CPython interpreter of the same major\n\
+and minor version as the local process.\n\
+\n\
+Args:\n\
+    pid (int): The process ID of the target Python process.\n\
+    script (str|bytes): The path to a file containing\n\
+        the Python code to be executed.");
+
+static PyObject *
+sys_remote_exec(PyObject *module, PyObject *args)
+{
+    int pid;
+    PyObject *script;
+
+    if (!PyArg_ParseTuple(args, "iO:remote_exec", &pid, &script)) {
+        return NULL;
+    }
+
+    PyObject *path;
+    if (PyUnicode_FSConverter(script, &path) == 0) {
+        return NULL;
+    }
+
+    if (PySys_Audit("sys.remote_exec", "iO", pid, script) < 0) {
+        Py_DECREF(path);
+        return NULL;
+    }
+
+    const char *debugger_script_path = PyBytes_AS_STRING(path);
+
+    if (access(debugger_script_path, F_OK | R_OK) != 0) {
+        switch (errno) {
+            case ENOENT:
+                PyErr_SetString(PyExc_FileNotFoundError, "Script file does not exist");
+                break;
+            case EACCES:
+                PyErr_SetString(PyExc_PermissionError, "Script file cannot be read");
+                break;
+            default:
+                PyErr_SetFromErrno(PyExc_OSError);
+        }
+        Py_DECREF(path);
+        return NULL;
+    }
+
+    if (_PySysRemoteDebug_SendExec(pid, 0, debugger_script_path) < 0) {
+        Py_DECREF(path);
+        return NULL;
+    }
+
+    Py_DECREF(path);
+    Py_RETURN_NONE;
+}
+
 #ifdef __cplusplus
 }
 #endif
@@ -2514,6 +2583,7 @@ static PyMethodDef sys_methods[] = {
     SYS_ACTIVATE_STACK_TRAMPOLINE_METHODDEF
     SYS_DEACTIVATE_STACK_TRAMPOLINE_METHODDEF
     SYS_IS_STACK_TRAMPOLINE_ACTIVE_METHODDEF
+    {"remote_exec", sys_remote_exec, METH_VARARGS, sys_remote_exec_doc},
     SYS_UNRAISABLEHOOK_METHODDEF
     SYS_GET_INT_MAX_STR_DIGITS_METHODDEF
     SYS_SET_INT_MAX_STR_DIGITS_METHODDEF

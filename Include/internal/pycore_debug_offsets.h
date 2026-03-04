@@ -165,6 +165,16 @@ typedef struct _Py_DebugOffsets {
         uint64_t gi_frame_state;
     } gen_object;
 
+    // Debugger support offsets (PEP 768)
+    struct {
+        uint64_t eval_breaker;
+        uint64_t remote_debugger_support;
+        uint64_t remote_debugging_enabled;
+        uint64_t debugger_pending_call;
+        uint64_t debugger_script_path;
+        uint64_t debugger_script_path_size;
+    } debugger_support;
+
 } _Py_DebugOffsets;
 
 
@@ -286,6 +296,14 @@ typedef struct _Py_DebugOffsets {
         .gi_name = offsetof(PyGenObject, gi_name), \
         .gi_iframe = offsetof(PyGenObject, gi_iframe), \
         .gi_frame_state = offsetof(PyGenObject, gi_frame_state), \
+    }, \
+    .debugger_support = { \
+        .eval_breaker = offsetof(PyInterpreterState, ceval) + offsetof(struct _ceval_state, pending) + offsetof(struct _pending_calls, calls_to_do), \
+        .remote_debugger_support = offsetof(PyThreadState, remote_debugger_support), \
+        .remote_debugging_enabled = offsetof(PyInterpreterState, remote_debugging_enabled), \
+        .debugger_pending_call = offsetof(_PyRemoteDebuggerSupport, debugger_pending_call), \
+        .debugger_script_path = offsetof(_PyRemoteDebuggerSupport, debugger_script_path), \
+        .debugger_script_path_size = _Py_MAX_SCRIPT_PATH_SIZE, \
     }, \
 }
 

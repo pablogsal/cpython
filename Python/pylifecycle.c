@@ -1249,6 +1249,11 @@ init_interp_main(PyThreadState *tstate)
 
     assert(!_PyErr_Occurred(tstate));
 
+    /* Enable remote debugging support (PEP 768) by default on Linux */
+#ifdef __linux__
+    interp->remote_debugging_enabled = 1;
+#endif
+
     return _PyStatus_OK();
 }
 
