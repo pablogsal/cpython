@@ -358,6 +358,25 @@ class TestReader(ScreenEqualMixin, TestCase):
         reader.setpos_from_xy(8, 0)
         self.assertEqual(reader.pos, 7)
 
+    def test_render_state_tracks_viewport_offset(self):
+        code = "a\nb\nc\nd"
+        events = code_to_events(code)
+        reader, _ = handle_all_events(
+            events,
+            prepare_console=functools.partial(prepare_console, height=2, width=80),
+        )
+        self.assertEqual(reader.cxy[1], 3)
+        self.assertEqual(reader.render_state.viewport_offset, 2)
+
+    def test_render_state_size_generation_increments_on_resize(self):
+        code = "hello"
+        events = code_to_events(code)
+        reader, console = handle_all_events(events)
+        old_size_gen = reader.render_state.size_gen
+        console.width = 40
+        reader.refresh()
+        self.assertGreater(reader.render_state.size_gen, old_size_gen)
+
 @force_colorized_test_class
 class TestReaderInColor(ScreenEqualMixin, TestCase):
     def test_syntax_highlighting_basic(self):

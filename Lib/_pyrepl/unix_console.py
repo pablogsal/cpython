@@ -36,9 +36,9 @@ from fcntl import ioctl
 from . import terminfo
 from .console import Console, Event
 from .fancy_termios import tcgetattr, tcsetattr, TermState
+from .rendering import DiffUpdate, RenderFrame, RowUpdate, diff_frames
 from .trace import trace
 from .unix_eventqueue import EventQueue
-from .utils import wlen
 
 # declare posix optional to allow None assignment on other platforms
 posix: types.ModuleType | None
@@ -167,6 +167,17 @@ class UnixConsole(Console):
             platform.system() == "Darwin"
             and os.getenv("TERM_PROGRAM") == "Apple_Terminal"
         )
+        mode = os.getenv("PYREPL_HIGHLIGHT_UPDATES", "")
+        self._highlight_updates = mode not in ("", "0", "false", "False")
+        self._highlight_palette = (
+            "\x1b[48;5;17m\x1b[38;5;231m",
+            "\x1b[48;5;52m\x1b[38;5;231m",
+            "\x1b[48;5;22m\x1b[38;5;231m",
+            "\x1b[48;5;94m\x1b[38;5;231m",
+            "\x1b[48;5;130m\x1b[38;5;231m",
+            "\x1b[48;5;24m\x1b[38;5;231m",
+        )
+        self._highlight_frame = 0
 
         try:
             self.__input_fd_set(tcgetattr(self.input_fd), ignore=frozenset())
@@ -202,8 +213,6 @@ class UnixConsole(Console):
         self._cup = _my_getstr("cup")
         self._cuu = _my_getstr("cuu", optional=True)
         self._cuu1 = _my_getstr("cuu1", optional=True)
-        self._dch1 = _my_getstr("dch1", optional=True)
-        self._dch = _my_getstr("dch", optional=True)
         self._el = _my_getstr("el")
         self._hpa = _my_getstr("hpa", optional=True)
         self._ich = _my_getstr("ich", optional=True)
@@ -220,6 +229,7 @@ class UnixConsole(Console):
             self.input_fd, self.encoding, self.terminfo
         )
         self.cursor_visible = 1
+        self._last_rendered_frame: RenderFrame | None = None
 
         signal.signal(signal.SIGCONT, self._sigcont_handler)
 
@@ -248,6 +258,24 @@ class UnixConsole(Console):
         - c_xy (tuple): Cursor position (x, y) on the screen.
         """
         cx, cy = c_xy
+        self._highlight_frame += 1
+        if (
+            self._last_rendered_frame is not None
+            and self.screen != self._last_rendered_frame.lines
+        ):
+            # Some commands still mutate console.screen directly.
+            self._last_rendered_frame = None
+
+        frame = RenderFrame(
+            lines=screen.copy(),
+            cursor_xy=(cx, cy),
+            width=self.width,
+            height=self.height,
+        )
+        diff, offset = diff_frames(
+            self._last_rendered_frame, frame, previous_offset=self.__offset
+        )
+
         if not self.__gone_tall:
             while len(self.screen) < min(len(screen), self.height):
                 self.__hide_cursor()
@@ -264,19 +292,8 @@ class UnixConsole(Console):
             self.__gone_tall = 1
             self.__move = self.__move_tall
 
-        px, py = self.posxy
-        old_offset = offset = self.__offset
+        old_offset = self.__offset
         height = self.height
-
-        # we make sure the cursor is on the screen, and that we're
-        # using all of the screen if we can
-        if cy < offset:
-            offset = cy
-        elif cy >= offset + height:
-            offset = cy - height + 1
-        elif offset > 0 and len(screen) < offset + height:
-            offset = max(len(screen) - height, 0)
-            screen.append("")
 
         oldscr = self.screen[old_offset : old_offset + height]
         newscr = screen[offset : offset + height]
@@ -301,27 +318,77 @@ class UnixConsole(Console):
 
         self.__offset = offset
 
-        for (
-            y,
-            oldline,
-            newline,
-        ) in zip(range(offset, offset + height), oldscr, newscr):
-            if oldline != newline:
-                self.__write_changed_line(y, oldline, newline, px)
-
-        y = len(newscr)
-        while y < len(oldscr):
-            self.__hide_cursor()
-            self.__move(0, y)
-            self.posxy = 0, y
-            self.__write_code(self._el)
-            y += 1
+        self.__hide_cursor()
+        self.__apply_diff(diff)
 
         self.__show_cursor()
 
         self.screen = screen.copy()
+        self._last_rendered_frame = frame
         self.move_cursor(cx, cy)
         self.flushoutput()
+
+    def __apply_diff(self, diff: DiffUpdate) -> None:
+        for y, row_update in diff.row_updates:
+            self.__apply_row_update(y, row_update)
+        if diff.clear_rows_from is not None:
+            for y in range(diff.clear_rows_from, self.__offset + self.height):
+                self.__move(0, y)
+                self.posxy = 0, y
+                self.__write_code(self._el)
+
+    def __apply_row_update(self, y: int, update: RowUpdate) -> None:
+        self.__move(update.start_x, y)
+        self.posxy = (update.start_x, y)
+        if self._highlight_updates and update.cells:
+            text = "".join(cell.char for cell in update.cells)
+            width = sum(cell.width for cell in update.cells)
+            # Debug-only visualization: paint updated segments with a fixed style.
+            style = self._highlight_palette[self._highlight_frame % len(self._highlight_palette)]
+            self.__write(style)
+            self.__write(text)
+            self.__write("\x1b[0m")
+            self.posxy = (self.posxy[0] + width, y)
+            if update.erase_to_eol:
+                self.__write_code(self._el)
+            return
+
+        current_style: str | None = None
+        run_chars: list[str] = []
+        run_width = 0
+
+        if update.insert_cells and self.ich1:
+            for _ in range(update.insert_cells):
+                self.__write_code(self.ich1)
+
+        def flush_run() -> None:
+            nonlocal run_width
+            if run_chars:
+                self.__write("".join(run_chars))
+                run_chars.clear()
+                self.posxy = (self.posxy[0] + run_width, y)
+                run_width = 0
+
+        for cell in update.cells:
+            if cell.prefix:
+                flush_run()
+            if cell.prefix:
+                self.__write(cell.prefix)
+            if cell.style != current_style:
+                flush_run()
+                if current_style is not None:
+                    self.__write("\x1b[0m")
+                if cell.style:
+                    self.__write(cell.style)
+                current_style = cell.style
+            run_chars.append(cell.char)
+            run_width += cell.width
+
+        flush_run()
+        if current_style:
+            self.__write("\x1b[0m")
+        if update.erase_to_eol:
+            self.__write_code(self._el)
 
     def move_cursor(self, x, y):
         """
@@ -368,6 +435,7 @@ class UnixConsole(Console):
         self.__gone_tall = 0
         self.__move = self.__move_short
         self.__offset = 0
+        self._last_rendered_frame = None
 
         self.__maybe_write_code(self._smkx)
 
@@ -584,6 +652,7 @@ class UnixConsole(Console):
         self.__move = self.__move_tall
         self.posxy = 0, 0
         self.screen = []
+        self._last_rendered_frame = None
 
     @property
     def input_hook(self):
@@ -618,13 +687,6 @@ class UnixConsole(Console):
         else:
             raise RuntimeError("insufficient terminal (vertical)")
 
-        if self._dch1:
-            self.dch1 = self._dch1
-        elif self._dch:
-            self.dch1 = terminfo.tparm(self._dch, 1)
-        else:
-            self.dch1 = None
-
         if self._ich1:
             self.ich1 = self._ich1
         elif self._ich:
@@ -633,93 +695,6 @@ class UnixConsole(Console):
             self.ich1 = None
 
         self.__move = self.__move_short
-
-    def __write_changed_line(self, y, oldline, newline, px_coord):
-        # this is frustrating; there's no reason to test (say)
-        # self.dch1 inside the loop -- but alternative ways of
-        # structuring this function are equally painful (I'm trying to
-        # avoid writing code generators these days...)
-        minlen = min(wlen(oldline), wlen(newline))
-        x_pos = 0
-        x_coord = 0
-
-        px_pos = 0
-        j = 0
-        for c in oldline:
-            if j >= px_coord:
-                break
-            j += wlen(c)
-            px_pos += 1
-
-        # reuse the oldline as much as possible, but stop as soon as we
-        # encounter an ESCAPE, because it might be the start of an escape
-        # sequence
-        while (
-            x_coord < minlen
-            and oldline[x_pos] == newline[x_pos]
-            and newline[x_pos] != "\x1b"
-        ):
-            x_coord += wlen(newline[x_pos])
-            x_pos += 1
-
-        # if we need to insert a single character right after the first detected change
-        if oldline[x_pos:] == newline[x_pos + 1 :] and self.ich1:
-            if (
-                y == self.posxy[1]
-                and x_coord > self.posxy[0]
-                and oldline[px_pos:x_pos] == newline[px_pos + 1 : x_pos + 1]
-            ):
-                x_pos = px_pos
-                x_coord = px_coord
-            character_width = wlen(newline[x_pos])
-            self.__move(x_coord, y)
-            self.__write_code(self.ich1)
-            self.__write(newline[x_pos])
-            self.posxy = x_coord + character_width, y
-
-        # if it's a single character change in the middle of the line
-        elif (
-            x_coord < minlen
-            and oldline[x_pos + 1 :] == newline[x_pos + 1 :]
-            and wlen(oldline[x_pos]) == wlen(newline[x_pos])
-        ):
-            character_width = wlen(newline[x_pos])
-            self.__move(x_coord, y)
-            self.__write(newline[x_pos])
-            self.posxy = x_coord + character_width, y
-
-        # if this is the last character to fit in the line and we edit in the middle of the line
-        elif (
-            self.dch1
-            and self.ich1
-            and wlen(newline) == self.width
-            and x_coord < wlen(newline) - 2
-            and newline[x_pos + 1 : -1] == oldline[x_pos:-2]
-        ):
-            self.__hide_cursor()
-            self.__move(self.width - 2, y)
-            self.posxy = self.width - 2, y
-            self.__write_code(self.dch1)
-
-            character_width = wlen(newline[x_pos])
-            self.__move(x_coord, y)
-            self.__write_code(self.ich1)
-            self.__write(newline[x_pos])
-            self.posxy = character_width + 1, y
-
-        else:
-            self.__hide_cursor()
-            self.__move(x_coord, y)
-            if wlen(oldline) > wlen(newline):
-                self.__write_code(self._el)
-            self.__write(newline[x_pos:])
-            self.posxy = wlen(newline), y
-
-        if "\x1b" in newline:
-            # ANSI escape characters are present, so we can't assume
-            # anything about the position of the cursor.  Moving the cursor
-            # to the left margin should work to get to a known position.
-            self.move_cursor(0, y)
 
     def __write(self, text):
         self.__buffer.append((text, 0))
@@ -800,6 +775,7 @@ class UnixConsole(Console):
             self.__move(0, self.__offset)
             ns = self.height * ["\000" * self.width]
             self.screen = ns
+        self._last_rendered_frame = None
 
     def __tputs(self, fmt, prog=delayprog):
         """A Python implementation of the curses tputs function; the

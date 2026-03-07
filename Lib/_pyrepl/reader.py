@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+from enum import IntFlag, auto
 import sys
 import _colorize
 
@@ -131,6 +132,100 @@ default_keymap: tuple[tuple[KeySpec, CommandName], ...] = tuple(
 )
 
 
+class Invalidation(IntFlag):
+    NONE = 0
+    CONTENT = auto()
+    CURSOR_ONLY = auto()
+    VIEWPORT_ONLY = auto()
+    STYLE = auto()
+    SIZE = auto()
+    FORCE_FULL_VISIBLE = auto()
+
+
+@dataclass(slots=True)
+class RenderState:
+    screen: list[str] = field(default_factory=list)
+    screeninfo: list[tuple[int, list[int]]] = field(default_factory=list)
+    line_end_offsets: list[int] = field(default_factory=list)
+    pos: int = 0
+    cxy: tuple[int, int] = (0, 0)
+    dimensions: tuple[int, int] = (0, 0)
+    invalidated: bool = False
+    invalidation: Invalidation = Invalidation.NONE
+    viewport_offset: int = 0
+    viewport_height: int = 0
+    viewport_width: int = 0
+    buffer_gen: int = 0
+    cursor_gen: int = 0
+    prompt_gen: int = 0
+    style_gen: int = 0
+    size_gen: int = 0
+
+    def invalidate(self, flags: Invalidation = Invalidation.CONTENT) -> None:
+        self.invalidated = True
+        self.invalidation |= flags
+
+    def valid(self, reader: Reader) -> bool:
+        if self.invalidated:
+            return False
+        dimensions = reader.console.width, reader.console.height
+        return dimensions == self.dimensions
+
+    def get_cached_location(self, reader: Reader) -> tuple[int, int]:
+        if self.invalidated:
+            raise ValueError("Cache is invalidated")
+        offset = 0
+        earliest_common_pos = min(reader.pos, self.pos)
+        num_common_lines = len(self.line_end_offsets)
+        while num_common_lines > 0:
+            offset = self.line_end_offsets[num_common_lines - 1]
+            if earliest_common_pos > offset:
+                break
+            num_common_lines -= 1
+        else:
+            offset = 0
+        return offset, num_common_lines
+
+    def update_cache(
+        self,
+        reader: Reader,
+        screen: list[str],
+        screeninfo: list[tuple[int, list[int]]],
+    ) -> None:
+        self.screen = screen.copy()
+        self.screeninfo = screeninfo.copy()
+        self.pos = reader.pos
+        self.cxy = reader.cxy
+        self.dimensions = (reader.console.width, reader.console.height)
+        self.viewport_width = reader.console.width
+        self.viewport_height = reader.console.height
+        self.viewport_offset = self.compute_viewport_offset(
+            cursor_y=reader.cxy[1],
+            line_count=len(screen),
+            previous_offset=self.viewport_offset,
+            height=reader.console.height,
+        )
+        self.invalidated = False
+        self.invalidation = Invalidation.NONE
+
+    @staticmethod
+    def compute_viewport_offset(
+        *,
+        cursor_y: int,
+        line_count: int,
+        previous_offset: int,
+        height: int,
+    ) -> int:
+        offset = previous_offset
+        if cursor_y < offset:
+            offset = cursor_y
+        elif cursor_y >= offset + height:
+            offset = cursor_y - height + 1
+        elif offset > 0 and line_count < offset + height:
+            offset = max(line_count - height, 0)
+        return offset
+
+
 @dataclass(slots=True)
 class Reader:
     """The Reader class implements the bare bones of a command reader,
@@ -215,52 +310,7 @@ class Reader:
     can_colorize: bool = False
     threading_hook: Callback | None = None
 
-    ## cached metadata to speed up screen refreshes
-    @dataclass
-    class RefreshCache:
-        screen: list[str] = field(default_factory=list)
-        screeninfo: list[tuple[int, list[int]]] = field(init=False)
-        line_end_offsets: list[int] = field(default_factory=list)
-        pos: int = field(init=False)
-        cxy: tuple[int, int] = field(init=False)
-        dimensions: tuple[int, int] = field(init=False)
-        invalidated: bool = False
-
-        def update_cache(self,
-                         reader: Reader,
-                         screen: list[str],
-                         screeninfo: list[tuple[int, list[int]]],
-            ) -> None:
-            self.screen = screen.copy()
-            self.screeninfo = screeninfo.copy()
-            self.pos = reader.pos
-            self.cxy = reader.cxy
-            self.dimensions = reader.console.width, reader.console.height
-            self.invalidated = False
-
-        def valid(self, reader: Reader) -> bool:
-            if self.invalidated:
-                return False
-            dimensions = reader.console.width, reader.console.height
-            dimensions_changed = dimensions != self.dimensions
-            return not dimensions_changed
-
-        def get_cached_location(self, reader: Reader) -> tuple[int, int]:
-            if self.invalidated:
-                raise ValueError("Cache is invalidated")
-            offset = 0
-            earliest_common_pos = min(reader.pos, self.pos)
-            num_common_lines = len(self.line_end_offsets)
-            while num_common_lines > 0:
-                offset = self.line_end_offsets[num_common_lines - 1]
-                if earliest_common_pos > offset:
-                    break
-                num_common_lines -= 1
-            else:
-                offset = 0
-            return offset, num_common_lines
-
-    last_refresh_cache: RefreshCache = field(default_factory=RefreshCache)
+    render_state: RenderState = field(default_factory=RenderState)
 
     def __post_init__(self) -> None:
         # Enable the use of `insert` without a `prepare` call - necessary to
@@ -275,10 +325,19 @@ class Reader:
         self.lxy = (self.pos, 0)
         self.can_colorize = _colorize.can_colorize()
 
-        self.last_refresh_cache.screeninfo = self.screeninfo
-        self.last_refresh_cache.pos = self.pos
-        self.last_refresh_cache.cxy = self.cxy
-        self.last_refresh_cache.dimensions = (0, 0)
+        self.render_state.screeninfo = self.screeninfo
+        self.render_state.pos = self.pos
+        self.render_state.cxy = self.cxy
+        self.render_state.dimensions = (0, 0)
+
+    @property
+    def last_refresh_cache(self) -> RenderState:
+        # Compatibility shim for existing command/readline code.
+        return self.render_state
+
+    def viewport(self) -> tuple[int, int, int]:
+        rs = self.render_state
+        return rs.viewport_offset, rs.viewport_height, rs.viewport_width
 
     def collect_keymap(self) -> tuple[tuple[KeySpec, CommandName], ...]:
         return default_keymap
@@ -292,18 +351,19 @@ class Reader:
         # Lines that are above both the old and new cursor position can't have changed,
         # unless the terminal has been resized (which might cause reflowing) or we've
         # entered or left paste mode (which changes prompts, causing reflowing).
+        render_state = self.render_state
         num_common_lines = 0
         offset = 0
-        if self.last_refresh_cache.valid(self):
-            offset, num_common_lines = self.last_refresh_cache.get_cached_location(self)
+        if render_state.valid(self):
+            offset, num_common_lines = render_state.get_cached_location(self)
 
-        screen = self.last_refresh_cache.screen
+        screen = render_state.screen
         del screen[num_common_lines:]
 
-        screeninfo = self.last_refresh_cache.screeninfo
+        screeninfo = render_state.screeninfo
         del screeninfo[num_common_lines:]
 
-        last_refresh_line_end_offsets = self.last_refresh_cache.line_end_offsets
+        last_refresh_line_end_offsets = render_state.line_end_offsets
         del last_refresh_line_end_offsets[num_common_lines:]
 
         pos = self.pos
@@ -385,7 +445,7 @@ class Reader:
                 screen.append(mline)
                 screeninfo.append((0, []))
 
-        self.last_refresh_cache.update_cache(self, screen, screeninfo)
+        self.render_state.update_cache(self, screen, screeninfo)
         return screen
 
     @staticmethod
@@ -563,10 +623,13 @@ class Reader:
         self.buffer[self.pos : self.pos] = list(text)
         self.pos += len(text)
         self.dirty = True
+        self.render_state.buffer_gen += 1
+        self.render_state.invalidate(Invalidation.CONTENT)
 
     def update_cursor(self) -> None:
         """Move the cursor to reflect changes in self.pos"""
         self.cxy = self.pos2xy()
+        self.render_state.cursor_gen += 1
         trace("update_cursor({pos}) = {cxy}", pos=self.pos, cxy=self.cxy)
         self.console.move_cursor(*self.cxy)
 
@@ -588,6 +651,7 @@ class Reader:
             del self.buffer[:]
             self.pos = 0
             self.dirty = True
+            self.render_state.invalidate(Invalidation.FORCE_FULL_VISIBLE)
             self.last_command = None
             self.calc_screen()
         except BaseException:
@@ -636,6 +700,7 @@ class Reader:
     def error(self, msg: str = "none") -> None:
         self.msg = "! " + msg + " "
         self.dirty = True
+        self.render_state.invalidate(Invalidation.CONTENT)
         self.console.beep()
 
     def update_screen(self) -> None:
@@ -644,6 +709,11 @@ class Reader:
 
     def refresh(self) -> None:
         """Recalculate and refresh the screen."""
+        previous_dimensions = self.render_state.dimensions
+        current_dimensions = (self.console.width, self.console.height)
+        if current_dimensions != previous_dimensions:
+            self.render_state.size_gen += 1
+            self.render_state.invalidate(Invalidation.SIZE | Invalidation.FORCE_FULL_VISIBLE)
         # this call sets up self.cxy, so call it first.
         self.screen = self.calc_screen()
         self.console.refresh(self.screen, self.cxy)

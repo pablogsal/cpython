@@ -38,8 +38,8 @@ from ctypes.wintypes import (
 )
 from ctypes import Structure, POINTER, Union
 from .console import Event, Console
+from .rendering import DiffUpdate, RenderFrame, RowUpdate, diff_frames
 from .trace import trace
-from .utils import wlen
 from .windows_eventqueue import EventQueue
 
 try:
@@ -164,6 +164,18 @@ class WindowsConsole(Console):
         self.height = 25
         self.__offset = 0
         self.event_queue = EventQueue(encoding)
+        self._last_rendered_frame: RenderFrame | None = None
+        mode = os.getenv("PYREPL_HIGHLIGHT_UPDATES", "")
+        self._highlight_updates = mode not in ("", "0", "false", "False")
+        self._highlight_palette = (
+            "\x1b[48;5;17m\x1b[38;5;231m",
+            "\x1b[48;5;52m\x1b[38;5;231m",
+            "\x1b[48;5;22m\x1b[38;5;231m",
+            "\x1b[48;5;94m\x1b[38;5;231m",
+            "\x1b[48;5;130m\x1b[38;5;231m",
+            "\x1b[48;5;24m\x1b[38;5;231m",
+        )
+        self._highlight_frame = 0
         try:
             self.out = io._WindowsConsoleIO(self.output_fd, "w")  # type: ignore[attr-defined]
         except ValueError:
@@ -179,6 +191,23 @@ class WindowsConsole(Console):
         - c_xy (tuple): Cursor position (x, y) on the screen.
         """
         cx, cy = c_xy
+        self._highlight_frame += 1
+        if (
+            self._last_rendered_frame is not None
+            and self.screen != self._last_rendered_frame.lines
+        ):
+            # Some commands still mutate console.screen directly.
+            self._last_rendered_frame = None
+
+        frame = RenderFrame(
+            lines=screen.copy(),
+            cursor_xy=(cx, cy),
+            width=self.width,
+            height=self.height,
+        )
+        diff, offset = diff_frames(
+            self._last_rendered_frame, frame, previous_offset=self.__offset
+        )
 
         while len(self.screen) < min(len(screen), self.height):
             self._hide_cursor()
@@ -188,16 +217,10 @@ class WindowsConsole(Console):
             self.posxy = 0, len(self.screen)
             self.screen.append("")
 
-        px, py = self.posxy
-        old_offset = offset = self.__offset
+        old_offset = self.__offset
         height = self.height
 
-        # we make sure the cursor is on the screen, and that we're
-        # using all of the screen if we can
-        if cy < offset:
-            offset = cy
-        elif cy >= offset + height:
-            offset = cy - height + 1
+        if offset > old_offset:
             scroll_lines = offset - old_offset
 
             # Scrolling the buffer as the current input is greater than the visible
@@ -209,35 +232,75 @@ class WindowsConsole(Console):
 
             for i in range(scroll_lines):
                 self.screen.append("")
-        elif offset > 0 and len(screen) < offset + height:
-            offset = max(len(screen) - height, 0)
-            screen.append("")
-
-        oldscr = self.screen[old_offset : old_offset + height]
-        newscr = screen[offset : offset + height]
 
         self.__offset = offset
 
         self._hide_cursor()
-        for (
-            y,
-            oldline,
-            newline,
-        ) in zip(range(offset, offset + height), oldscr, newscr):
-            if oldline != newline:
-                self.__write_changed_line(y, oldline, newline, px)
-
-        y = len(newscr)
-        while y < len(oldscr):
-            self._move_relative(0, y)
-            self.posxy = 0, y
-            self._erase_to_end()
-            y += 1
+        self.__apply_diff(diff)
 
         self._show_cursor()
 
-        self.screen = screen
+        self.screen = screen.copy()
+        self._last_rendered_frame = frame
         self.move_cursor(cx, cy)
+
+    def __apply_diff(self, diff: DiffUpdate) -> None:
+        for y, row_update in diff.row_updates:
+            self.__apply_row_update(y, row_update)
+        if diff.clear_rows_from is not None:
+            for y in range(diff.clear_rows_from, self.__offset + self.height):
+                self._move_relative(0, y)
+                self.posxy = (0, y)
+                self._erase_to_end()
+
+    def __apply_row_update(self, y: int, update: RowUpdate) -> None:
+        self._move_relative(update.start_x, y)
+        self.posxy = (update.start_x, y)
+        if self._highlight_updates and update.cells:
+            text = "".join(cell.char for cell in update.cells)
+            width = sum(cell.width for cell in update.cells)
+            # Debug-only visualization: paint updated segments with a fixed style.
+            style = self._highlight_palette[self._highlight_frame % len(self._highlight_palette)]
+            self.__write(style)
+            self.__write(text)
+            self.__write("\x1b[0m")
+            self.posxy = (self.posxy[0] + width, y)
+            if update.erase_to_eol:
+                self._erase_to_end()
+            return
+
+        current_style: str | None = None
+        run_chars: list[str] = []
+        run_width = 0
+
+        def flush_run() -> None:
+            nonlocal run_width
+            if run_chars:
+                self.__write("".join(run_chars))
+                run_chars.clear()
+                self.posxy = (self.posxy[0] + run_width, y)
+                run_width = 0
+
+        for cell in update.cells:
+            if cell.prefix:
+                flush_run()
+            if cell.prefix:
+                self.__write(cell.prefix)
+            if cell.style != current_style:
+                flush_run()
+                if current_style is not None:
+                    self.__write("\x1b[0m")
+                if cell.style:
+                    self.__write(cell.style)
+                current_style = cell.style
+            run_chars.append(cell.char)
+            run_width += cell.width
+
+        flush_run()
+        if current_style:
+            self.__write("\x1b[0m")
+        if update.erase_to_eol:
+            self._erase_to_end()
 
     @property
     def input_hook(self):
@@ -245,43 +308,6 @@ class WindowsConsole(Console):
         # with import logging from -X importtime=2
         if nt is not None and nt._is_inputhook_installed():
             return nt._inputhook
-
-    def __write_changed_line(
-        self, y: int, oldline: str, newline: str, px_coord: int
-    ) -> None:
-        minlen = min(wlen(oldline), wlen(newline))
-        x_pos = 0
-        x_coord = 0
-
-        # reuse the oldline as much as possible, but stop as soon as we
-        # encounter an ESCAPE, because it might be the start of an escape
-        # sequence
-        while (
-            x_coord < minlen
-            and oldline[x_pos] == newline[x_pos]
-            and newline[x_pos] != "\x1b"
-        ):
-            x_coord += wlen(newline[x_pos])
-            x_pos += 1
-
-        self._hide_cursor()
-        self._move_relative(x_coord, y)
-        if wlen(oldline) > wlen(newline):
-            self._erase_to_end()
-
-        self.__write(newline[x_pos:])
-        if wlen(newline) == self.width:
-            # If we wrapped we want to start at the next line
-            self._move_relative(0, y + 1)
-            self.posxy = 0, y + 1
-        else:
-            self.posxy = wlen(newline), y
-
-            if "\x1b" in newline or y != self.posxy[1] or '\x1a' in newline:
-                # ANSI escape characters are present, so we can't assume
-                # anything about the position of the cursor.  Moving the cursor
-                # to the left margin should work to get to a known position.
-                self.move_cursor(0, y)
 
     def _scroll(
         self, top: int, bottom: int, left: int | None = None, right: int | None = None
@@ -347,6 +373,7 @@ class WindowsConsole(Console):
 
         self.posxy = 0, 0
         self.__offset = 0
+        self._last_rendered_frame = None
 
         if self.__vt_support:
             if not SetConsoleMode(InHandle, self.__original_input_mode | ENABLE_VIRTUAL_TERMINAL_INPUT):
@@ -504,6 +531,7 @@ class WindowsConsole(Console):
         self.__write(CLEAR)
         self.posxy = 0, 0
         self.screen = []
+        self._last_rendered_frame = None
 
     def finish(self) -> None:
         """Move the cursor to the end of the display and otherwise get
