@@ -76,23 +76,26 @@ def _build_tree(id2name, awaits, task_stacks):
         cor_nodes[parent][frame] = node_key
         return node_key
 
-    # Build task dependency tree with coroutine frames
-    for parent_id, stack, child_id in awaits:
-        cur = (NodeType.TASK, parent_id)
+    # Render each task's own coroutine stack under the task node.  For real
+    # snapshots, await-edges reuse the waiter's current stack, which can place
+    # child tasks under unrelated frames such as sleep().
+    for task_id, stack in task_stacks.items():
+        cur = (NodeType.TASK, task_id)
         for frame in reversed(stack):
             cur = get_or_create_cor_node(cur, frame)
+
+    # Build task dependency tree.  If we already know the parent task's own
+    # stack, attach children directly to the task node and keep the stack as a
+    # sibling branch.  Fall back to the edge stack only when that's all we have.
+    for parent_id, stack, child_id in awaits:
+        cur = (NodeType.TASK, parent_id)
+        if not task_stacks.get(parent_id):
+            for frame in reversed(stack):
+                cur = get_or_create_cor_node(cur, frame)
 
         child_key = (NodeType.TASK, child_id)
         if child_key not in children[cur]:
             children[cur].append(child_key)
-
-    # Add coroutine stacks for leaf tasks
-    awaiting_tasks = {parent_id for parent_id, _, _ in awaits}
-    for task_id in id2name:
-        if task_id not in awaiting_tasks and task_id in task_stacks:
-            cur = (NodeType.TASK, task_id)
-            for frame in reversed(task_stacks[task_id]):
-                cur = get_or_create_cor_node(cur, frame)
 
     return id2label, children
 

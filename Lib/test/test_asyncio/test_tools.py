@@ -1544,6 +1544,143 @@ class TestAsyncioToolsBasic(unittest.TestCase):
 
 class TestAsyncioToolsEdgeCases(unittest.TestCase):
 
+    def test_parent_stack_is_not_used_as_child_container(self):
+        input_ = [
+            AwaitedInfo(
+                thread_id=1,
+                awaited_by=[
+                    TaskInfo(
+                        task_id=1,
+                        task_name="Task-1",
+                        coroutine_stack=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("sleep", "", LocationInfo(0)),
+                                    FrameInfo("main", "", LocationInfo(0)),
+                                ],
+                                task_name=1,
+                            )
+                        ],
+                        awaited_by=[],
+                    ),
+                    TaskInfo(
+                        task_id=2,
+                        task_name="Task-2",
+                        coroutine_stack=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("sleep", "", LocationInfo(0)),
+                                    FrameInfo("foo", "", LocationInfo(0)),
+                                ],
+                                task_name=2,
+                            )
+                        ],
+                        awaited_by=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("sleep", "", LocationInfo(0)),
+                                    FrameInfo("main", "", LocationInfo(0)),
+                                ],
+                                task_name=1,
+                            )
+                        ],
+                    ),
+                    TaskInfo(
+                        task_id=3,
+                        task_name="Task-3",
+                        coroutine_stack=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("sleep", "", LocationInfo(0)),
+                                    FrameInfo("foo", "", LocationInfo(0)),
+                                ],
+                                task_name=3,
+                            )
+                        ],
+                        awaited_by=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("sleep", "", LocationInfo(0)),
+                                    FrameInfo("main", "", LocationInfo(0)),
+                                ],
+                                task_name=1,
+                            )
+                        ],
+                    ),
+                ],
+            )
+        ]
+
+        expected = [[
+            "└── (T) Task-1",
+            "    ├──  main",
+            "    │   └──  sleep",
+            "    ├── (T) Task-2",
+            "    │   └──  foo",
+            "    │       └──  sleep",
+            "    └── (T) Task-3",
+            "        └──  foo",
+            "            └──  sleep",
+        ]]
+
+        self.assertEqual(tools.build_async_tree(input_), expected)
+
+    def test_parent_stack_takes_precedence_over_edge_stack(self):
+        input_ = [
+            AwaitedInfo(
+                thread_id=1,
+                awaited_by=[
+                    TaskInfo(
+                        task_id=1,
+                        task_name="Task-1",
+                        coroutine_stack=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("sleep", "", LocationInfo(0)),
+                                    FrameInfo("main", "", LocationInfo(0)),
+                                ],
+                                task_name=1,
+                            )
+                        ],
+                        awaited_by=[],
+                    ),
+                    TaskInfo(
+                        task_id=2,
+                        task_name="Task-2",
+                        coroutine_stack=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("sleep", "", LocationInfo(0)),
+                                    FrameInfo("foo", "", LocationInfo(0)),
+                                ],
+                                task_name=2,
+                            )
+                        ],
+                        awaited_by=[
+                            CoroInfo(
+                                call_stack=[
+                                    FrameInfo("create_task", "", LocationInfo(0)),
+                                    FrameInfo("main", "", LocationInfo(0)),
+                                ],
+                                task_name=1,
+                            )
+                        ],
+                    ),
+                ],
+            )
+        ]
+
+        expected = [[
+            "└── (T) Task-1",
+            "    ├──  main",
+            "    │   └──  sleep",
+            "    └── (T) Task-2",
+            "        └──  foo",
+            "            └──  sleep",
+        ]]
+
+        self.assertEqual(tools.build_async_tree(input_), expected)
+
     def test_task_awaits_self(self):
         """A task directly awaits itself - should raise a cycle."""
         input_ = [
