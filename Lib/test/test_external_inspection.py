@@ -183,6 +183,74 @@ class TestGetStackTrace(unittest.TestCase):
         sys.platform == "linux" and not PROCESS_VM_READV_SUPPORTED,
         "Test only runs on Linux with process_vm_readv support",
     )
+    def test_remote_stack_trace_non_ascii_names(self):
+        # Validate non-ASCII file and function names are recovered correctly.
+        port = find_unused_port()
+        script = textwrap.dedent(
+            f"""\
+            import socket
+            import time
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect(('localhost', {port}))
+
+            def zażółć_gęślą_jaźń():
+                sock.sendall(b"ready"); time.sleep(10_000)
+
+            zażółć_gęślą_jaźń()
+            """
+        )
+        with os_helper.temp_dir() as work_dir:
+            script_dir = os.path.join(work_dir, "script_pkg")
+            os.mkdir(script_dir)
+
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.bind(("localhost", port))
+            server_socket.settimeout(SHORT_TIMEOUT)
+            server_socket.listen(1)
+
+            script_name = _make_test_script(script_dir, "zażółćgęśląjaźń", script)
+            client_socket = None
+            try:
+                p = subprocess.Popen([sys.executable, script_name])
+                client_socket, _ = server_socket.accept()
+                server_socket.close()
+                self.assertEqual(client_socket.recv(len(b"ready")), b"ready")
+
+                stack_trace = get_stack_trace(p.pid)
+            except PermissionError:
+                self.skipTest("Insufficient permissions to read the stack trace")
+            finally:
+                if client_socket is not None:
+                    client_socket.close()
+                p.kill()
+                p.terminate()
+                p.wait(timeout=SHORT_TIMEOUT)
+
+            found_expected_stack = False
+            for interpreter_info in stack_trace:
+                for thread_info in interpreter_info.threads:
+                    for frame in thread_info.frame_info:
+                        if frame.code_name == "zażółć_gęślą_jaźń":
+                            self.assertEqual(frame.filename, script_name)
+                            found_expected_stack = True
+                            break
+                    if found_expected_stack:
+                        break
+                if found_expected_stack:
+                    break
+
+            self.assertTrue(
+                found_expected_stack,
+                "Expected non-ASCII function name not found in stack trace",
+            )
+
+    @skip_if_not_supported
+    @unittest.skipIf(
+        sys.platform == "linux" and not PROCESS_VM_READV_SUPPORTED,
+        "Test only runs on Linux with process_vm_readv support",
+    )
     def test_async_remote_stack_trace(self):
         # Spawn a process with some realistic Python code
         port = find_unused_port()
