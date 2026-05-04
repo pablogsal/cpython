@@ -143,6 +143,7 @@ static PyStructSequence_Field GCStatsInfo_fields[] = {
     {"collected", "Total number of collected objects"},
     {"uncollectable", "Total number of uncollectable objects"},
     {"candidates", "Total objects considered and traversed"},
+    {"heap_size", "Number of live objects"},
     {"duration", "Total collection time, in seconds"},
     {NULL}
 };
@@ -151,7 +152,7 @@ PyStructSequence_Desc GCStatsInfo_desc = {
     "_remote_debugging.GCStatsInfo",
     "Information about a garbage collector stats sample",
     GCStatsInfo_fields,
-    9
+    10
 };
 
 /* ============================================================================
@@ -1225,6 +1226,7 @@ Returns:
         - collected: Total number of collected objects.
         - uncollectable: Total number of uncollectable objects.
         - candidates: Total objects considered and traversed.
+        - heap_size: number of live objects.
         - duration: Total collection time, in seconds.
 
 Raises:
@@ -1235,7 +1237,7 @@ Raises:
 static PyObject *
 _remote_debugging_GCMonitor_get_gc_stats_impl(GCMonitorObject *self,
                                               int all_interpreters)
-/*[clinic end generated code: output=f73f365725224f7a input=09e647719c65f9e4]*/
+/*[clinic end generated code: output=f73f365725224f7a input=12f7c1a288cf2741]*/
 {
     RemoteDebuggingState *st = RemoteDebugging_GetStateFromType(Py_TYPE(self));
     return get_gc_stats(&self->offsets, all_interpreters, st->GCStatsInfo_Type);
