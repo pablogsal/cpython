@@ -702,6 +702,8 @@ class IncompatibleExtensionModuleRestrictionsTests(unittest.TestCase):
                 self.run_with_own_gil(script)
 
     @unittest.skipIf(_testmultiphase is None, "test requires _testmultiphase module")
+    @unittest.skipIf(not getattr(_testmultiphase, "__file__", None),
+                     "test requires _testmultiphase as a shared library")
     def test_incomplete_multi_phase_init_module(self):
         prescript = textwrap.dedent(f'''
             from importlib.util import spec_from_loader, module_from_spec

@@ -1940,6 +1940,8 @@ class SubinterpreterTest(unittest.TestCase):
         self.assertFalse(hasattr(binascii.Error, "foobar"))
 
     @unittest.skipIf(_testmultiphase is None, "test requires _testmultiphase module")
+    @unittest.skipIf(not getattr(_testmultiphase, "__file__", None),
+                     "test requires _testmultiphase as a shared library")
     def test_module_state_shared_in_global(self):
         """
         bpo-44050: Extension module state should be shared between interpreters
@@ -2120,6 +2122,8 @@ class Test_testinternalcapi(unittest.TestCase):
 
 
 @unittest.skipIf(_testmultiphase is None, "test requires _testmultiphase module")
+@unittest.skipIf(not getattr(_testmultiphase, "__file__", None),
+                 "test requires _testmultiphase as a shared library")
 class Test_ModuleStateAccess(unittest.TestCase):
     """Test access to module start (PEP 573)"""
 

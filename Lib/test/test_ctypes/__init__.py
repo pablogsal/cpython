@@ -6,6 +6,10 @@ from test.support import import_helper
 
 # skip tests if _ctypes was not built
 ctypes = import_helper.import_module('ctypes')
+_ctypes_test = import_helper.import_module('_ctypes_test')
+if not getattr(_ctypes_test, "__file__", None):
+    raise unittest.SkipTest("test requires _ctypes_test as a shared library")
+
 ctypes_symbols = dir(ctypes)
 
 def need_symbol(name):

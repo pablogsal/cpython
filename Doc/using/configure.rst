@@ -527,6 +527,36 @@ Linker options
 
    .. versionadded:: 3.10
 
+.. option:: --enable-static-libpython-for-interpreter
+
+   Do not link the Python interpreter binary (``python3``) against the
+   shared Python library; instead, statically link the interpreter against
+   ``libpython`` as if ``--enable-shared`` had not been used, but continue
+   to build the shared ``libpython`` for use by other programs.
+
+   This option does nothing if ``--enable-shared`` is not used.
+
+   The default when ``--enable-shared`` is used is to link the Python
+   interpreter against the built shared library.
+
+   .. versionadded:: next
+
+.. option:: --enable-static-stdlib-extensions
+
+   Build detected standard library extension modules as built-in modules
+   linked into ``libpython`` instead of building them as shared extension
+   modules. The generated :file:`Modules/Setup.stdlib` contains no shared
+   extension module section in this mode, so no standard library extension
+   modules are built as shared libraries.
+
+   For production builds that do not need CPython's test extension modules,
+   combine this option with :option:`--disable-test-modules` to reduce the
+   static interpreter size and startup relocation work.
+
+   The default is yes on wasm targets and no otherwise.
+
+   .. versionadded:: next
+
 
 Libraries options
 -----------------
