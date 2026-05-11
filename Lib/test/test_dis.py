@@ -200,8 +200,9 @@ def bug1333982(x=[]):
 dis_bug1333982 = """\
 %3d           RESUME                   0
 
-%3d           LOAD_COMMON_CONSTANT     0 (AssertionError)
-              LOAD_CONST               1 (<code object <genexpr> at 0x..., file "%s", line %d>)
+%3d           LOAD_CONST               1 (('0',))
+              LOAD_CONST               4 ((0,))
+              LOAD_CONST               2 (<code object <genexpr> at 0x..., file "%s", line %d>)
               MAKE_FUNCTION
               LOAD_FAST_BORROW         0 (x)
               CALL                     0
@@ -209,7 +210,18 @@ dis_bug1333982 = """\
 %3d           LOAD_SMALL_INT           1
 
 %3d           BINARY_OP                0 (+)
+              LOAD_CONST               3 ('0')
+              BUILD_TUPLE              4
+              CALL_INTRINSIC_1        12 (INTRINSIC_FORMAT_ASSERT)
+              COPY                     1
+              POP_JUMP_IF_NONE         8 (to L1)
+              NOT_TAKEN
+              LOAD_COMMON_CONSTANT     0 (AssertionError)
+              SWAP                     2
               CALL                     0
+              RAISE_VARARGS            1
+      L1:     POP_TOP
+              LOAD_COMMON_CONSTANT     0 (AssertionError)
               RAISE_VARARGS            1
 """ % (bug1333982.__code__.co_firstlineno,
        bug1333982.__code__.co_firstlineno + 1,

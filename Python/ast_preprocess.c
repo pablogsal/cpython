@@ -395,6 +395,115 @@ fold_binop(expr_ty node, PyArena *arena, _PyASTPreprocessState *state)
 static int astfold_mod(mod_ty node_, PyArena *ctx_, _PyASTPreprocessState *state);
 static int astfold_stmt(stmt_ty node_, PyArena *ctx_, _PyASTPreprocessState *state);
 static int astfold_expr(expr_ty node_, PyArena *ctx_, _PyASTPreprocessState *state);
+
+/* Build a "extended tree" capture for an assert test expression.
+ *
+ * The returned expression is an ast.Tuple whose elements are the
+ * "interesting" sub-expressions of `test` (operands of Compare/BoolOp,
+ * operand of UnaryOp, arguments of Call, value/slice of Subscript, value
+ * of Attribute).  At runtime the codegen evaluates this Tuple on assert
+ * failure so the assertion hook can show intermediate values to the user
+ * (pytest-style diff support).
+ *
+ * The sub-expression pointers are shared with `test` itself (the AST is
+ * arena-allocated and immutable, so this is safe).
+ *
+ * Returns a fresh expr_ty (Tuple_kind) on success, NULL on failure.
+ */
+expr_ty
+_PyAST_BuildAssertExtendedTree(expr_ty test, PyArena *arena)
+{
+    if (test == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+
+    asdl_expr_seq *capture = NULL;
+    Py_ssize_t i;
+
+    switch (test->kind) {
+    case Compare_kind: {
+        Py_ssize_t n = asdl_seq_LEN(test->v.Compare.comparators);
+        capture = _Py_asdl_expr_seq_new(n + 1, arena);
+        if (capture == NULL) {
+            return NULL;
+        }
+        asdl_seq_SET(capture, 0, test->v.Compare.left);
+        for (i = 0; i < n; i++) {
+            asdl_seq_SET(capture, i + 1,
+                         (expr_ty)asdl_seq_GET(test->v.Compare.comparators, i));
+        }
+        break;
+    }
+    case BoolOp_kind: {
+        Py_ssize_t n = asdl_seq_LEN(test->v.BoolOp.values);
+        capture = _Py_asdl_expr_seq_new(n, arena);
+        if (capture == NULL) {
+            return NULL;
+        }
+        for (i = 0; i < n; i++) {
+            asdl_seq_SET(capture, i,
+                         (expr_ty)asdl_seq_GET(test->v.BoolOp.values, i));
+        }
+        break;
+    }
+    case UnaryOp_kind: {
+        capture = _Py_asdl_expr_seq_new(1, arena);
+        if (capture == NULL) {
+            return NULL;
+        }
+        asdl_seq_SET(capture, 0, test->v.UnaryOp.operand);
+        break;
+    }
+    case Call_kind: {
+        Py_ssize_t n_args = asdl_seq_LEN(test->v.Call.args);
+        Py_ssize_t n_kw = asdl_seq_LEN(test->v.Call.keywords);
+        capture = _Py_asdl_expr_seq_new(n_args + n_kw, arena);
+        if (capture == NULL) {
+            return NULL;
+        }
+        for (i = 0; i < n_args; i++) {
+            asdl_seq_SET(capture, i,
+                         (expr_ty)asdl_seq_GET(test->v.Call.args, i));
+        }
+        for (i = 0; i < n_kw; i++) {
+            keyword_ty kw = (keyword_ty)asdl_seq_GET(test->v.Call.keywords, i);
+            asdl_seq_SET(capture, n_args + i, kw->value);
+        }
+        break;
+    }
+    case Subscript_kind: {
+        capture = _Py_asdl_expr_seq_new(2, arena);
+        if (capture == NULL) {
+            return NULL;
+        }
+        asdl_seq_SET(capture, 0, test->v.Subscript.value);
+        asdl_seq_SET(capture, 1, test->v.Subscript.slice);
+        break;
+    }
+    case Attribute_kind: {
+        capture = _Py_asdl_expr_seq_new(1, arena);
+        if (capture == NULL) {
+            return NULL;
+        }
+        asdl_seq_SET(capture, 0, test->v.Attribute.value);
+        break;
+    }
+    default: {
+        /* Fallback: capture the whole test expression so the hook has at
+         * least the resulting value to report. */
+        capture = _Py_asdl_expr_seq_new(1, arena);
+        if (capture == NULL) {
+            return NULL;
+        }
+        asdl_seq_SET(capture, 0, test);
+        break;
+    }
+    }
+
+    return _PyAST_Tuple(capture, Load, test->lineno, test->col_offset,
+                        test->end_lineno, test->end_col_offset, arena);
+}
 static int astfold_arguments(arguments_ty node_, PyArena *ctx_, _PyASTPreprocessState *state);
 static int astfold_comprehension(comprehension_ty node_, PyArena *ctx_, _PyASTPreprocessState *state);
 static int astfold_keyword(keyword_ty node_, PyArena *ctx_, _PyASTPreprocessState *state);
@@ -807,6 +916,23 @@ astfold_stmt(stmt_ty node_, PyArena *ctx_, _PyASTPreprocessState *state)
     case Assert_kind:
         CALL(astfold_expr, expr_ty, node_->v.Assert.test);
         CALL_OPT(astfold_expr, expr_ty, node_->v.Assert.msg);
+        /* Always rebuild extended_tree here.  The compiler relies on the
+         * extended_tree's sub-expression pointers being the same C nodes
+         * referenced from `test` so the symbol table built for `test`
+         * applies (lambdas/comprehensions create per-node symtable
+         * children).  When an AST round-trips through Python -- e.g.
+         * ``compile(ast.parse(src), ..., 'exec')`` -- obj2ast creates a
+         * fresh C node for every Python AST object visit, which would
+         * otherwise leave the captured pointers inside extended_tree
+         * disjoint from those inside test. */
+        {
+            expr_ty ext = _PyAST_BuildAssertExtendedTree(
+                node_->v.Assert.test, ctx_);
+            if (ext == NULL) {
+                return 0;
+            }
+            node_->v.Assert.extended_tree = ext;
+        }
         break;
     case Expr_kind:
         CALL(astfold_expr, expr_ty, node_->v.Expr.value);

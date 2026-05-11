@@ -18,8 +18,9 @@
 #define INTRINSIC_TYPEVARTUPLE                   9
 #define INTRINSIC_SUBSCRIPT_GENERIC             10
 #define INTRINSIC_TYPEALIAS                     11
+#define INTRINSIC_FORMAT_ASSERT                 12
 
-#define MAX_INTRINSIC_1                         11
+#define MAX_INTRINSIC_1                         12
 
 
 /* Binary Functions: */
@@ -47,5 +48,9 @@ typedef struct {
 
 PyAPI_DATA(const intrinsic_func1_info) _PyIntrinsics_UnaryFunctions[];
 PyAPI_DATA(const intrinsic_func2_info) _PyIntrinsics_BinaryFunctions[];
+
+/* Defined in Python/asserthook.c.  Used by INTRINSIC_FORMAT_ASSERT. */
+PyAPI_FUNC(PyObject *) _PyAssertion_FormatFromTuple(PyThreadState *tstate,
+                                                    PyObject *args);
 
 #endif  // !Py_INTERNAL_INTRINSIC_H

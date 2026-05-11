@@ -325,6 +325,7 @@ struct _stmt {
         struct {
             expr_ty test;
             expr_ty msg;
+            expr_ty extended_tree;
         } Assert;
 
         struct {
@@ -764,8 +765,9 @@ stmt_ty _PyAST_TryStar(asdl_stmt_seq * body, asdl_excepthandler_seq * handlers,
                        asdl_stmt_seq * orelse, asdl_stmt_seq * finalbody, int
                        lineno, int col_offset, int end_lineno, int
                        end_col_offset, PyArena *arena);
-stmt_ty _PyAST_Assert(expr_ty test, expr_ty msg, int lineno, int col_offset,
-                      int end_lineno, int end_col_offset, PyArena *arena);
+stmt_ty _PyAST_Assert(expr_ty test, expr_ty msg, expr_ty extended_tree, int
+                      lineno, int col_offset, int end_lineno, int
+                      end_col_offset, PyArena *arena);
 stmt_ty _PyAST_Import(asdl_alias_seq * names, int is_lazy, int lineno, int
                       col_offset, int end_lineno, int end_col_offset, PyArena
                       *arena);
@@ -936,6 +938,11 @@ extern int _PyAST_Validate(mod_ty);
 
 /* _PyAST_ExprAsUnicode is defined in ast_unparse.c */
 extern PyObject* _PyAST_ExprAsUnicode(expr_ty);
+
+/* Build the default "extended tree" for an assert test expression.
+   Defined in ast_preprocess.c.  Returns a Tuple expr on success, NULL on
+   failure (with an exception set). */
+extern expr_ty _PyAST_BuildAssertExtendedTree(expr_ty test, PyArena *arena);
 
 /* Return the borrowed reference to the first literal string in the
    sequence of statements or NULL if it doesn't start from a literal string.

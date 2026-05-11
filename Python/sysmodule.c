@@ -4023,6 +4023,11 @@ _PySys_InitCore(PyThreadState *tstate, PyObject *sysdict)
 
 #undef COPY_SYS_ATTR
 
+    /* sys.__assertion_hook__: if non-None, callable invoked on assertion
+       failure with (source_strs, values, msg, expr_source).  See
+       Python/asserthook.c for the protocol. */
+    SET_SYS("__assertion_hook__", Py_NewRef(Py_None));
+
     SET_SYS_FROM_STRING("version", Py_GetVersion());
     SET_SYS("hexversion", PyLong_FromLong(PY_VERSION_HEX));
     SET_SYS("_git", Py_BuildValue("(szz)", "CPython", _Py_gitidentifier(),

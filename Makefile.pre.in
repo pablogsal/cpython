@@ -435,6 +435,7 @@ PYTHON_OBJS=	\
 		Python/ast.o \
 		Python/ast_preprocess.o \
 		Python/ast_unparse.o \
+		Python/asserthook.o \
 		Python/bltinmodule.o \
 		Python/brc.o \
 		Python/ceval.o \

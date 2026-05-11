@@ -214,6 +214,7 @@ void _PyAST_Fini(PyInterpreterState *interp)
     Py_CLEAR(state->excepthandler_type);
     Py_CLEAR(state->expr_context_type);
     Py_CLEAR(state->expr_type);
+    Py_CLEAR(state->extended_tree);
     Py_CLEAR(state->finalbody);
     Py_CLEAR(state->format_spec);
     Py_CLEAR(state->func);
@@ -320,6 +321,7 @@ static int init_identifiers(struct ast_state *state)
     if ((state->end_col_offset = PyUnicode_InternFromString("end_col_offset")) == NULL) return -1;
     if ((state->end_lineno = PyUnicode_InternFromString("end_lineno")) == NULL) return -1;
     if ((state->exc = PyUnicode_InternFromString("exc")) == NULL) return -1;
+    if ((state->extended_tree = PyUnicode_InternFromString("extended_tree")) == NULL) return -1;
     if ((state->finalbody = PyUnicode_InternFromString("finalbody")) == NULL) return -1;
     if ((state->format_spec = PyUnicode_InternFromString("format_spec")) == NULL) return -1;
     if ((state->func = PyUnicode_InternFromString("func")) == NULL) return -1;
@@ -527,6 +529,7 @@ static const char * const TryStar_fields[]={
 static const char * const Assert_fields[]={
     "test",
     "msg",
+    "extended_tree",
 };
 static const char * const Import_fields[]={
     "names",
@@ -2223,6 +2226,22 @@ add_ast_annotations(struct ast_state *state)
             return 0;
         }
         cond = PyDict_SetItemString(Assert_annotations, "msg", type) == 0;
+        Py_DECREF(type);
+        if (!cond) {
+            Py_DECREF(Assert_annotations);
+            return 0;
+        }
+    }
+    {
+        PyObject *type = state->expr_type;
+        type = _Py_union_type_or(type, Py_None);
+        cond = type != NULL;
+        if (!cond) {
+            Py_DECREF(Assert_annotations);
+            return 0;
+        }
+        cond = PyDict_SetItemString(Assert_annotations, "extended_tree", type)
+                                    == 0;
         Py_DECREF(type);
         if (!cond) {
             Py_DECREF(Assert_annotations);
@@ -6169,7 +6188,7 @@ init_types(void *arg)
         "     | Raise(expr? exc, expr? cause)\n"
         "     | Try(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)\n"
         "     | TryStar(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)\n"
-        "     | Assert(expr test, expr? msg)\n"
+        "     | Assert(expr test, expr? msg, expr? extended_tree)\n"
         "     | Import(alias* names, int? is_lazy)\n"
         "     | ImportFrom(identifier? module, alias* names, int? level, int? is_lazy)\n"
         "     | Global(identifier* names)\n"
@@ -6295,10 +6314,13 @@ init_types(void *arg)
         "TryStar(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)");
     if (!state->TryStar_type) return -1;
     state->Assert_type = make_type(state, "Assert", state->stmt_type,
-                                   Assert_fields, 2,
-        "Assert(expr test, expr? msg)");
+                                   Assert_fields, 3,
+        "Assert(expr test, expr? msg, expr? extended_tree)");
     if (!state->Assert_type) return -1;
     if (PyObject_SetAttr(state->Assert_type, state->msg, Py_None) == -1)
+        return -1;
+    if (PyObject_SetAttr(state->Assert_type, state->extended_tree, Py_None) ==
+        -1)
         return -1;
     state->Import_type = make_type(state, "Import", state->stmt_type,
                                    Import_fields, 2,
@@ -7547,8 +7569,8 @@ _PyAST_TryStar(asdl_stmt_seq * body, asdl_excepthandler_seq * handlers,
 }
 
 stmt_ty
-_PyAST_Assert(expr_ty test, expr_ty msg, int lineno, int col_offset, int
-              end_lineno, int end_col_offset, PyArena *arena)
+_PyAST_Assert(expr_ty test, expr_ty msg, expr_ty extended_tree, int lineno, int
+              col_offset, int end_lineno, int end_col_offset, PyArena *arena)
 {
     stmt_ty p;
     if (!test) {
@@ -7562,6 +7584,7 @@ _PyAST_Assert(expr_ty test, expr_ty msg, int lineno, int col_offset, int
     p->kind = Assert_kind;
     p->v.Assert.test = test;
     p->v.Assert.msg = msg;
+    p->v.Assert.extended_tree = extended_tree;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -9421,6 +9444,11 @@ ast2obj_stmt(struct ast_state *state, void* _o)
         value = ast2obj_expr(state, o->v.Assert.msg);
         if (!value) goto failed;
         if (PyObject_SetAttr(result, state->msg, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        value = ast2obj_expr(state, o->v.Assert.extended_tree);
+        if (!value) goto failed;
+        if (PyObject_SetAttr(result, state->extended_tree, value) == -1)
             goto failed;
         Py_DECREF(value);
         break;
@@ -13413,6 +13441,7 @@ obj2ast_stmt(struct ast_state *state, PyObject* obj, stmt_ty* out, PyArena*
     if (isinstance) {
         expr_ty test;
         expr_ty msg;
+        expr_ty extended_tree;
 
         if (PyObject_GetOptionalAttr(obj, state->test, &tmp) < 0) {
             return -1;
@@ -13448,8 +13477,25 @@ obj2ast_stmt(struct ast_state *state, PyObject* obj, stmt_ty* out, PyArena*
             if (res != 0) goto failed;
             Py_CLEAR(tmp);
         }
-        *out = _PyAST_Assert(test, msg, lineno, col_offset, end_lineno,
-                             end_col_offset, arena);
+        if (PyObject_GetOptionalAttr(obj, state->extended_tree, &tmp) < 0) {
+            return -1;
+        }
+        if (tmp == NULL || tmp == Py_None) {
+            Py_CLEAR(tmp);
+            extended_tree = NULL;
+        }
+        else {
+            int res;
+            if (_Py_EnterRecursiveCall(" while traversing 'Assert' node")) {
+                goto failed;
+            }
+            res = obj2ast_expr(state, tmp, &extended_tree, arena);
+            _Py_LeaveRecursiveCall();
+            if (res != 0) goto failed;
+            Py_CLEAR(tmp);
+        }
+        *out = _PyAST_Assert(test, msg, extended_tree, lineno, col_offset,
+                             end_lineno, end_col_offset, arena);
         if (*out == NULL) goto failed;
         return 0;
     }

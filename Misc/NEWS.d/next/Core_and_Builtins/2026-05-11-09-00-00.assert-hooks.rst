@@ -1,0 +1,10 @@
+Add ``sys.__assertion_hook__``, a per-interpreter hook called by the
+compiler when an ``assert`` statement fails.  The hook receives the source
+text and runtime values of the "interesting" sub-expressions of the
+failing test (operands of compares, bool-ops, calls, etc.), along with the
+optional user message, and returns the string used to build the resulting
+:exc:`AssertionError`.  The capture itself is performed entirely in C: the
+new ``Assert.extended_tree`` AST attribute holds a :class:`ast.Tuple` of
+the captured sub-expressions, populated automatically by the AST
+preprocessor with no Python-level round-trip.  A pytest-style reference
+hook is shipped as ``_assertion_hook.default_hook``.

@@ -2315,6 +2315,12 @@ def write_header(mod, metadata, f):
         /* _PyAST_ExprAsUnicode is defined in ast_unparse.c */
         extern PyObject* _PyAST_ExprAsUnicode(expr_ty);
 
+        /* Build the default "extended tree" for an assert test expression.
+           Defined in ast_preprocess.c.  Returns a Tuple expr on success,
+           NULL on failure (with an exception set). */
+        extern expr_ty _PyAST_BuildAssertExtendedTree(expr_ty test,
+                                                      PyArena *arena);
+
         /* Return the borrowed reference to the first literal string in the
            sequence of statements or NULL if it doesn't start from a literal string.
            Doesn't set exception. */

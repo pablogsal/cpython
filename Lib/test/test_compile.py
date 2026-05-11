@@ -2017,9 +2017,20 @@ class TestSourcePositions(unittest.TestCase):
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'LOAD_COMMON_CONSTANT',
             line=1, end_line=3, column=0, end_column=36, occurrence=1)
-        #  The "error msg":
-        self.assertOpcodeSourcePositionIs(compiled_code, 'LOAD_CONST',
-            line=3, end_line=3, column=25, end_column=36, occurrence=2)
+        #  The "error msg" LOAD_CONST.  Find it by walking the instructions
+        #  -- the assertion-hook codegen interleaves additional LOAD_CONSTs
+        #  for the source-string tuple and the test source representation,
+        #  so it is no longer at a fixed occurrence index.
+        found = False
+        for instr in dis.get_instructions(compiled_code, show_caches=False):
+            if instr.opname == 'LOAD_CONST' and instr.argval == 'error msg':
+                self.assertEqual(instr.positions.lineno, 3)
+                self.assertEqual(instr.positions.end_lineno, 3)
+                self.assertEqual(instr.positions.col_offset, 25)
+                self.assertEqual(instr.positions.end_col_offset, 36)
+                found = True
+                break
+        self.assertTrue(found, "did not find LOAD_CONST 'error msg'")
         self.assertOpcodeSourcePositionIs(compiled_code, 'CALL',
             line=1, end_line=3, column=0, end_column=36, occurrence=1)
         self.assertOpcodeSourcePositionIs(compiled_code, 'RAISE_VARARGS',

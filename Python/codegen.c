@@ -3023,6 +3023,32 @@ codegen_from_import(compiler *c, stmt_ty s)
     return SUCCESS;
 }
 
+/* Build a constant tuple of unparsed source strings for each element of
+ * an assert's extended_tree.  These strings are stored in the code object's
+ * co_consts and handed to sys.__assertion_hook__ at failure time so the
+ * hook can render `<source> = <value>` style diffs without ever having to
+ * re-parse Python source.  Returns a new reference. */
+static PyObject *
+build_assert_source_strings(expr_ty extended_tree)
+{
+    assert(extended_tree->kind == Tuple_kind);
+    asdl_expr_seq *elts = extended_tree->v.Tuple.elts;
+    Py_ssize_t n = asdl_seq_LEN(elts);
+    PyObject *t = PyTuple_New(n);
+    if (t == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *s = _PyAST_ExprAsUnicode((expr_ty)asdl_seq_GET(elts, i));
+        if (s == NULL) {
+            Py_DECREF(t);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(t, i, s);
+    }
+    return t;
+}
+
 static int
 codegen_assert(compiler *c, stmt_ty s)
 {
@@ -3042,10 +3068,88 @@ codegen_assert(compiler *c, stmt_ty s)
     }
     NEW_JUMP_TARGET_LABEL(c, end);
     RETURN_IF_ERROR(codegen_jump_if(c, LOC(s), s->v.Assert.test, end, 1));
-    ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
-    if (s->v.Assert.msg) {
-        VISIT(c, expr, s->v.Assert.msg);
+
+    /* Failure path.  When an extended_tree is present (the common case for
+     * everything but `assert` statements built from raw AST via the Python
+     * API), emit:
+     *
+     *   LOAD_CONST  <source_strs_tuple>     # compile-time const
+     *   <evaluate extended_tree as Tuple>   # runtime values
+     *   <load msg or None>
+     *   LOAD_CONST  <test source string>
+     *   BUILD_TUPLE 4
+     *   CALL_INTRINSIC_1 INTRINSIC_FORMAT_ASSERT
+     *   # stack top: new message string (or None)
+     *   LOAD_COMMON_CONSTANT AssertionError
+     *   SWAP 2
+     *   CALL 1                              # AssertionError(msg)
+     *   RAISE_VARARGS 1
+     *
+     * If there is no extended_tree, fall back to the original behavior of
+     * raising `AssertionError(msg)` directly.
+     */
+    expr_ty extended_tree = s->v.Assert.extended_tree;
+    if (extended_tree != NULL && extended_tree->kind == Tuple_kind) {
+        PyObject *source_strs = build_assert_source_strings(extended_tree);
+        if (source_strs == NULL) {
+            return ERROR;
+        }
+        ADDOP_LOAD_CONST_NEW(c, LOC(s), source_strs);
+
+        /* Evaluating the Tuple at runtime gives us a tuple of captured
+         * values.  This may re-execute sub-expressions of the test, which
+         * is the documented tradeoff -- the extended hook fires only on
+         * assertion *failure*, so the cost is limited to the failure path
+         * and only one assert fails per traceback. */
+        VISIT(c, expr, extended_tree);
+
+        if (s->v.Assert.msg) {
+            VISIT(c, expr, s->v.Assert.msg);
+        } else {
+            ADDOP_LOAD_CONST(c, LOC(s), Py_None);
+        }
+
+        PyObject *test_src = _PyAST_ExprAsUnicode(s->v.Assert.test);
+        if (test_src == NULL) {
+            return ERROR;
+        }
+        ADDOP_LOAD_CONST_NEW(c, LOC(s), test_src);
+
+        ADDOP_I(c, LOC(s), BUILD_TUPLE, 4);
+        ADDOP_I(c, LOC(s), CALL_INTRINSIC_1, INTRINSIC_FORMAT_ASSERT);
+
+        /* Stack: [hook_result].  When the hook (or the default fallback
+         * when no hook is set and no user message was given) returns
+         * None, raise `AssertionError()` with no arguments to match
+         * legacy behavior.  Otherwise raise `AssertionError(hook_result)`. */
+        NEW_JUMP_TARGET_LABEL(c, no_message);
+        NEW_JUMP_TARGET_LABEL(c, do_raise);
+        ADDOP_I(c, LOC(s), COPY, 1);
+        ADDOP_JUMP(c, LOC(s), POP_JUMP_IF_NONE, no_message);
+
+        /* Has message path -- stack: [hook_result]. */
+        ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
+        ADDOP_I(c, LOC(s), SWAP, 2);
+        /* CALL 0 with two stack items treats the deeper slot as the
+         * callable and the top as the "self_or_null" / single argument --
+         * matching how the original assert path calls AssertionError(msg). */
         ADDOP_I(c, LOC(s), CALL, 0);
+        ADDOP_JUMP(c, LOC(s), JUMP, do_raise);
+
+        /* No message path -- POP_JUMP_IF_NONE popped one None, leaving
+         * the original None still on the stack from the COPY. */
+        USE_LABEL(c, no_message);
+        ADDOP(c, LOC(s), POP_TOP);
+        ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
+
+        USE_LABEL(c, do_raise);
+    }
+    else {
+        ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
+        if (s->v.Assert.msg) {
+            VISIT(c, expr, s->v.Assert.msg);
+            ADDOP_I(c, LOC(s), CALL, 0);
+        }
     }
     ADDOP_I(c, LOC(s->v.Assert.test), RAISE_VARARGS, 1);
 
