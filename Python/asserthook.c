@@ -9,7 +9,11 @@
  *                   captured sub-expression of the assert test
  *                   (built at compile time by ast_preprocess.c).
  *   - values      : tuple of the runtime values of each captured
- *                   sub-expression (re-evaluated on failure only).
+ *                   sub-expression.  Codegen captures these *inline*
+ *                   while evaluating the test (single-pass): they are
+ *                   the same evaluations the test itself ran, kept on
+ *                   the operand stack for the failure path.  Sub-
+ *                   expressions are never re-executed.
  *   - msg         : the user-provided `assert expr, msg` value, or None.
  *   - expr_source : the unparsed source of the whole test expression
  *                   (a string), so the hook can render `assert <expr>`.

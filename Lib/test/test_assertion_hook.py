@@ -33,7 +33,13 @@ class HookContext:
 
 
 class ExtendedTreeASTTests(unittest.TestCase):
-    """The compiler populates ``Assert.extended_tree`` automatically."""
+    """The compiler populates ``Assert.extended_tree`` automatically.
+
+    The extended_tree must only contain sub-expressions whose values the
+    runtime can capture with a *single* evaluation of the test; otherwise
+    the assertion would have to re-execute code on failure which would
+    re-run side effects.
+    """
 
     def get_assert(self, source):
         return ast.parse(source).body[0]
@@ -43,43 +49,24 @@ class ExtendedTreeASTTests(unittest.TestCase):
         self.assertIn("extended_tree", node._fields)
         self.assertIsInstance(node.extended_tree, ast.Tuple)
 
-    def test_compare_two_operands(self):
+    def test_simple_compare_captures_two_operands(self):
         node = self.get_assert("assert a == b")
         elts = node.extended_tree.elts
         self.assertEqual([e.id for e in elts], ["a", "b"])
 
-    def test_compare_chain(self):
+    def test_chained_compare_falls_back_to_whole(self):
+        # Chained compares short-circuit, so single-pass operand capture
+        # is not implemented for them yet.
         node = self.get_assert("assert a < b < c")
         elts = node.extended_tree.elts
-        self.assertEqual([e.id for e in elts], ["a", "b", "c"])
+        self.assertEqual(len(elts), 1)
+        self.assertIsInstance(elts[0], ast.Compare)
 
-    def test_boolop(self):
-        node = self.get_assert("assert a and b and c")
+    def test_boolop_falls_back_to_whole(self):
+        node = self.get_assert("assert a and b")
         elts = node.extended_tree.elts
-        self.assertEqual([e.id for e in elts], ["a", "b", "c"])
-
-    def test_unary_not(self):
-        node = self.get_assert("assert not x")
-        elts = node.extended_tree.elts
-        self.assertEqual([e.id for e in elts], ["x"])
-
-    def test_call_skips_func(self):
-        node = self.get_assert("assert f(a, b, k=c)")
-        # `f` is intentionally NOT captured (calling it again on failure
-        # would re-execute side effects); only the arguments are.
-        elts = node.extended_tree.elts
-        ids = [e.id for e in elts]
-        self.assertEqual(ids, ["a", "b", "c"])
-
-    def test_subscript(self):
-        node = self.get_assert("assert d[k]")
-        elts = node.extended_tree.elts
-        self.assertEqual([e.id for e in elts], ["d", "k"])
-
-    def test_attribute(self):
-        node = self.get_assert("assert obj.attr")
-        elts = node.extended_tree.elts
-        self.assertEqual([e.id for e in elts], ["obj"])
+        self.assertEqual(len(elts), 1)
+        self.assertIsInstance(elts[0], ast.BoolOp)
 
     def test_other_falls_back_to_whole(self):
         node = self.get_assert("assert x")
@@ -169,22 +156,60 @@ class HookRuntimeTests(unittest.TestCase):
                 assert False
             self.assertIsInstance(cm.exception.__context__, MyError)
 
-    def test_failure_path_re_evaluates_subexprs(self):
-        """The hook docs note that captured subexpressions are re-evaluated
-        on the failure path.  Pin that behavior down."""
+    def test_captured_subexprs_evaluated_exactly_once_compare(self):
+        """For ``assert a == b`` both operands run **once** even when the
+        assert fails and the hook is invoked.  Re-evaluation would re-run
+        side effects of the user's expression on the failure path -- the
+        entire point of doing the capture inline in bytecode."""
+        evaluations = []
+
+        def track(name, value):
+            def f():
+                evaluations.append(name)
+                return value
+            return f
+
+        a = track("a", 1)
+        b = track("b", 2)
+
+        hook = HookCalls(return_value="boom")
+        with HookContext(hook):
+            with self.assertRaises(AssertionError):
+                assert a() == b()
+        self.assertEqual(evaluations, ["a", "b"])
+        # The hook saw the actual captured values, not re-evaluated ones.
+        self.assertEqual(hook.calls[0][1], (1, 2))
+
+    def test_captured_test_evaluated_exactly_once_fallback(self):
+        """For test shapes other than simple Compare, the whole test value
+        is captured -- still exactly once."""
         evaluations = []
 
         def track():
             evaluations.append(None)
-            return 0
+            return False
 
-        hook = HookCalls(return_value="x")
+        hook = HookCalls(return_value="boom")
         with HookContext(hook):
             with self.assertRaises(AssertionError):
-                assert track() == 1
-        # Once for the test itself, once when extended_tree is evaluated
-        # on failure to capture the value for the hook.
-        self.assertEqual(len(evaluations), 2)
+                assert track()
+        self.assertEqual(len(evaluations), 1)
+        # Hook saw the single captured value.
+        self.assertEqual(hook.calls[0][1], (False,))
+
+    def test_no_double_eval_without_hook(self):
+        """When the hook is None we still must not double-evaluate."""
+        evaluations = []
+        def left():
+            evaluations.append("l")
+            return 0
+        def right():
+            evaluations.append("r")
+            return 1
+        with HookContext(None):
+            with self.assertRaises(AssertionError):
+                assert left() == right()
+        self.assertEqual(evaluations, ["l", "r"])
 
 
 class DefaultHookTests(unittest.TestCase):

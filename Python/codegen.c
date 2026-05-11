@@ -3049,6 +3049,72 @@ build_assert_source_strings(expr_ty extended_tree)
     return t;
 }
 
+/* Emit the failure tail for an assert that uses the hook protocol.
+ *
+ * Pre-condition: the operand stack holds `n_captures` captured values
+ * deep, with the bool test result on top.  This routine consumes the
+ * test result via POP_JUMP_IF_TRUE; on the failure (fall-through) path
+ * the captured values are gathered into a tuple and handed to
+ * `sys.__assertion_hook__` via INTRINSIC_FORMAT_ASSERT, after which an
+ * AssertionError is raised with the hook's returned message (or with no
+ * args if the hook returned None).
+ *
+ * The success path lands at `end` with the captures still on the stack;
+ * the caller is responsible for emitting matching POP_TOPs there.
+ */
+static int
+emit_assert_hook_tail(compiler *c, stmt_ty s, jump_target_label end,
+                      PyObject *source_strs, PyObject *test_src,
+                      Py_ssize_t n_captures)
+{
+    NEW_JUMP_TARGET_LABEL(c, no_message);
+    NEW_JUMP_TARGET_LABEL(c, do_raise);
+
+    /* Test result is on TOS; success jumps to `end` with captures still
+     * on the stack. */
+    ADDOP_JUMP(c, LOC(s), POP_JUMP_IF_TRUE, end);
+
+    /* Failure path -- stack is the captures. */
+    ADDOP_I(c, LOC(s), BUILD_TUPLE, n_captures);
+    /* Stack: [values_tuple] */
+
+    ADDOP_LOAD_CONST_NEW(c, LOC(s), Py_NewRef(source_strs));
+    ADDOP_I(c, LOC(s), SWAP, 2);
+    /* Stack: [source_strs, values_tuple] */
+
+    if (s->v.Assert.msg) {
+        VISIT(c, expr, s->v.Assert.msg);
+    }
+    else {
+        ADDOP_LOAD_CONST(c, LOC(s), Py_None);
+    }
+    ADDOP_LOAD_CONST_NEW(c, LOC(s), Py_NewRef(test_src));
+    /* Stack: [source_strs, values_tuple, msg, test_src] */
+
+    ADDOP_I(c, LOC(s), BUILD_TUPLE, 4);
+    ADDOP_I(c, LOC(s), CALL_INTRINSIC_1, INTRINSIC_FORMAT_ASSERT);
+    /* Stack: [hook_result] (str or None) */
+
+    ADDOP_I(c, LOC(s), COPY, 1);
+    ADDOP_JUMP(c, LOC(s), POP_JUMP_IF_NONE, no_message);
+
+    /* hook_result is a str -> AssertionError(hook_result). */
+    ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
+    ADDOP_I(c, LOC(s), SWAP, 2);
+    ADDOP_I(c, LOC(s), CALL, 0);
+    ADDOP_JUMP(c, LOC(s), JUMP, do_raise);
+
+    /* hook_result is None -> POP_JUMP_IF_NONE popped one None, leaving
+     * the second None from the COPY on the stack. */
+    USE_LABEL(c, no_message);
+    ADDOP(c, LOC(s), POP_TOP);
+    ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
+
+    USE_LABEL(c, do_raise);
+    ADDOP_I(c, LOC(s->v.Assert.test), RAISE_VARARGS, 1);
+    return SUCCESS;
+}
+
 static int
 codegen_assert(compiler *c, stmt_ty s)
 {
@@ -3066,95 +3132,107 @@ codegen_assert(compiler *c, stmt_ty s)
     if (OPTIMIZATION_LEVEL(c)) {
         return SUCCESS;
     }
-    NEW_JUMP_TARGET_LABEL(c, end);
-    RETURN_IF_ERROR(codegen_jump_if(c, LOC(s), s->v.Assert.test, end, 1));
 
-    /* Failure path.  When an extended_tree is present (the common case for
-     * everything but `assert` statements built from raw AST via the Python
-     * API), emit:
-     *
-     *   LOAD_CONST  <source_strs_tuple>     # compile-time const
-     *   <evaluate extended_tree as Tuple>   # runtime values
-     *   <load msg or None>
-     *   LOAD_CONST  <test source string>
-     *   BUILD_TUPLE 4
-     *   CALL_INTRINSIC_1 INTRINSIC_FORMAT_ASSERT
-     *   # stack top: new message string (or None)
-     *   LOAD_COMMON_CONSTANT AssertionError
-     *   SWAP 2
-     *   CALL 1                              # AssertionError(msg)
-     *   RAISE_VARARGS 1
-     *
-     * If there is no extended_tree, fall back to the original behavior of
-     * raising `AssertionError(msg)` directly.
-     */
+    expr_ty test = s->v.Assert.test;
     expr_ty extended_tree = s->v.Assert.extended_tree;
-    if (extended_tree != NULL && extended_tree->kind == Tuple_kind) {
-        PyObject *source_strs = build_assert_source_strings(extended_tree);
-        if (source_strs == NULL) {
-            return ERROR;
-        }
-        ADDOP_LOAD_CONST_NEW(c, LOC(s), source_strs);
 
-        /* Evaluating the Tuple at runtime gives us a tuple of captured
-         * values.  This may re-execute sub-expressions of the test, which
-         * is the documented tradeoff -- the extended hook fires only on
-         * assertion *failure*, so the cost is limited to the failure path
-         * and only one assert fails per traceback. */
-        VISIT(c, expr, extended_tree);
-
-        if (s->v.Assert.msg) {
-            VISIT(c, expr, s->v.Assert.msg);
-        } else {
-            ADDOP_LOAD_CONST(c, LOC(s), Py_None);
-        }
-
-        PyObject *test_src = _PyAST_ExprAsUnicode(s->v.Assert.test);
-        if (test_src == NULL) {
-            return ERROR;
-        }
-        ADDOP_LOAD_CONST_NEW(c, LOC(s), test_src);
-
-        ADDOP_I(c, LOC(s), BUILD_TUPLE, 4);
-        ADDOP_I(c, LOC(s), CALL_INTRINSIC_1, INTRINSIC_FORMAT_ASSERT);
-
-        /* Stack: [hook_result].  When the hook (or the default fallback
-         * when no hook is set and no user message was given) returns
-         * None, raise `AssertionError()` with no arguments to match
-         * legacy behavior.  Otherwise raise `AssertionError(hook_result)`. */
-        NEW_JUMP_TARGET_LABEL(c, no_message);
-        NEW_JUMP_TARGET_LABEL(c, do_raise);
-        ADDOP_I(c, LOC(s), COPY, 1);
-        ADDOP_JUMP(c, LOC(s), POP_JUMP_IF_NONE, no_message);
-
-        /* Has message path -- stack: [hook_result]. */
-        ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
-        ADDOP_I(c, LOC(s), SWAP, 2);
-        /* CALL 0 with two stack items treats the deeper slot as the
-         * callable and the top as the "self_or_null" / single argument --
-         * matching how the original assert path calls AssertionError(msg). */
-        ADDOP_I(c, LOC(s), CALL, 0);
-        ADDOP_JUMP(c, LOC(s), JUMP, do_raise);
-
-        /* No message path -- POP_JUMP_IF_NONE popped one None, leaving
-         * the original None still on the stack from the COPY. */
-        USE_LABEL(c, no_message);
-        ADDOP(c, LOC(s), POP_TOP);
-        ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
-
-        USE_LABEL(c, do_raise);
-    }
-    else {
+    /* Legacy path: no hook capture, just `raise AssertionError(msg)`.
+     * Only reachable for ASTs built directly via the Python API that
+     * never went through ast_preprocess. */
+    if (extended_tree == NULL || extended_tree->kind != Tuple_kind) {
+        NEW_JUMP_TARGET_LABEL(c, legacy_end);
+        RETURN_IF_ERROR(codegen_jump_if(c, LOC(s), test, legacy_end, 1));
         ADDOP_I(c, LOC(s), LOAD_COMMON_CONSTANT, CONSTANT_ASSERTIONERROR);
         if (s->v.Assert.msg) {
             VISIT(c, expr, s->v.Assert.msg);
             ADDOP_I(c, LOC(s), CALL, 0);
         }
+        ADDOP_I(c, LOC(test), RAISE_VARARGS, 1);
+        USE_LABEL(c, legacy_end);
+        return SUCCESS;
     }
-    ADDOP_I(c, LOC(s->v.Assert.test), RAISE_VARARGS, 1);
+
+    /* Single-pass capture path.  Every sub-expression of the test is
+     * evaluated exactly once.  Captured values are kept on the stack
+     * (below the bool result) so the failure tail can gather them into
+     * the values tuple handed to `sys.__assertion_hook__`.
+     *
+     * Two emit shapes:
+     *
+     *   SHAPE A -- simple binary Compare(left, [op], [right]).
+     *       <eval left>     ; stack: [left]
+     *       <eval right>    ; stack: [left, right]
+     *       COPY 2          ; stack: [left, right, left]
+     *       COPY 2          ; stack: [left, right, left, right]
+     *       COMPARE_OP <op> ; stack: [left, right, result]
+     *
+     *   SHAPE B -- any other test shape.
+     *       <eval test>     ; stack: [v]
+     *       COPY 1          ; stack: [v, v]
+     *       TO_BOOL         ; stack: [v, bool(v)]
+     *
+     * The failure tail then runs POP_JUMP_IF_TRUE/BUILD_TUPLE/... as
+     * documented in emit_assert_hook_tail().
+     */
+    PyObject *source_strs = build_assert_source_strings(extended_tree);
+    if (source_strs == NULL) {
+        return ERROR;
+    }
+    PyObject *test_src = _PyAST_ExprAsUnicode(test);
+    if (test_src == NULL) {
+        Py_DECREF(source_strs);
+        return ERROR;
+    }
+
+    NEW_JUMP_TARGET_LABEL(c, end);
+
+    Py_ssize_t n_captures;
+    int err;
+    if (test->kind == Compare_kind &&
+        asdl_seq_LEN(test->v.Compare.ops) == 1)
+    {
+        expr_ty left = test->v.Compare.left;
+        expr_ty right = (expr_ty)asdl_seq_GET(test->v.Compare.comparators, 0);
+        cmpop_ty op = (cmpop_ty)asdl_seq_GET(test->v.Compare.ops, 0);
+
+        err = codegen_visit_expr(c, left);
+        if (err < 0) goto cleanup;
+        err = codegen_visit_expr(c, right);
+        if (err < 0) goto cleanup;
+        err = codegen_addop_i(INSTR_SEQUENCE(c), COPY, 2, LOC(test));
+        if (err < 0) goto cleanup;
+        err = codegen_addop_i(INSTR_SEQUENCE(c), COPY, 2, LOC(test));
+        if (err < 0) goto cleanup;
+        err = codegen_addcompare(c, LOC(test), op);
+        if (err < 0) goto cleanup;
+        n_captures = 2;
+    }
+    else {
+        err = codegen_visit_expr(c, test);
+        if (err < 0) goto cleanup;
+        err = codegen_addop_i(INSTR_SEQUENCE(c), COPY, 1, LOC(test));
+        if (err < 0) goto cleanup;
+        err = codegen_addop_noarg(INSTR_SEQUENCE(c), TO_BOOL, LOC(test));
+        if (err < 0) goto cleanup;
+        n_captures = 1;
+    }
+
+    err = emit_assert_hook_tail(c, s, end, source_strs, test_src, n_captures);
+    if (err < 0) goto cleanup;
 
     USE_LABEL(c, end);
-    return SUCCESS;
+    /* Success path: the captures are still on the stack from the test
+     * computation; discard them. */
+    for (Py_ssize_t i = 0; i < n_captures; i++) {
+        err = codegen_addop_noarg(INSTR_SEQUENCE(c), POP_TOP, LOC(s));
+        if (err < 0) goto cleanup;
+    }
+
+    err = SUCCESS;
+cleanup:
+    Py_DECREF(source_strs);
+    Py_DECREF(test_src);
+    return err;
 }
 
 static int

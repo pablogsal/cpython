@@ -399,16 +399,21 @@ static int astfold_expr(expr_ty node_, PyArena *ctx_, _PyASTPreprocessState *sta
 /* Build a "extended tree" capture for an assert test expression.
  *
  * The returned expression is an ast.Tuple whose elements are the
- * "interesting" sub-expressions of `test` (operands of Compare/BoolOp,
- * operand of UnaryOp, arguments of Call, value/slice of Subscript, value
- * of Attribute).  At runtime the codegen evaluates this Tuple on assert
- * failure so the assertion hook can show intermediate values to the user
- * (pytest-style diff support).
+ * sub-expressions whose values the runtime should capture on assert
+ * failure.  The codegen evaluates each of these sub-expressions *exactly
+ * once* during the test computation -- it does NOT re-execute them on
+ * failure -- so the elements MUST be the operands of a test shape whose
+ * test result can be reconstructed from the captured values.
+ *
+ * The supported shapes are:
+ *   - Compare(left, [op], [right])     -> Tuple([left, right])
+ * Every other shape falls back to a single-element tuple containing the
+ * whole test expression.  In that case the codegen still does one
+ * evaluation: it duplicates the test result on the stack so the failure
+ * path can hand it to the hook.
  *
  * The sub-expression pointers are shared with `test` itself (the AST is
  * arena-allocated and immutable, so this is safe).
- *
- * Returns a fresh expr_ty (Tuple_kind) on success, NULL on failure.
  */
 expr_ty
 _PyAST_BuildAssertExtendedTree(expr_ty test, PyArena *arena)
@@ -419,86 +424,27 @@ _PyAST_BuildAssertExtendedTree(expr_ty test, PyArena *arena)
     }
 
     asdl_expr_seq *capture = NULL;
-    Py_ssize_t i;
 
-    switch (test->kind) {
-    case Compare_kind: {
-        Py_ssize_t n = asdl_seq_LEN(test->v.Compare.comparators);
-        capture = _Py_asdl_expr_seq_new(n + 1, arena);
-        if (capture == NULL) {
-            return NULL;
-        }
-        asdl_seq_SET(capture, 0, test->v.Compare.left);
-        for (i = 0; i < n; i++) {
-            asdl_seq_SET(capture, i + 1,
-                         (expr_ty)asdl_seq_GET(test->v.Compare.comparators, i));
-        }
-        break;
-    }
-    case BoolOp_kind: {
-        Py_ssize_t n = asdl_seq_LEN(test->v.BoolOp.values);
-        capture = _Py_asdl_expr_seq_new(n, arena);
-        if (capture == NULL) {
-            return NULL;
-        }
-        for (i = 0; i < n; i++) {
-            asdl_seq_SET(capture, i,
-                         (expr_ty)asdl_seq_GET(test->v.BoolOp.values, i));
-        }
-        break;
-    }
-    case UnaryOp_kind: {
-        capture = _Py_asdl_expr_seq_new(1, arena);
-        if (capture == NULL) {
-            return NULL;
-        }
-        asdl_seq_SET(capture, 0, test->v.UnaryOp.operand);
-        break;
-    }
-    case Call_kind: {
-        Py_ssize_t n_args = asdl_seq_LEN(test->v.Call.args);
-        Py_ssize_t n_kw = asdl_seq_LEN(test->v.Call.keywords);
-        capture = _Py_asdl_expr_seq_new(n_args + n_kw, arena);
-        if (capture == NULL) {
-            return NULL;
-        }
-        for (i = 0; i < n_args; i++) {
-            asdl_seq_SET(capture, i,
-                         (expr_ty)asdl_seq_GET(test->v.Call.args, i));
-        }
-        for (i = 0; i < n_kw; i++) {
-            keyword_ty kw = (keyword_ty)asdl_seq_GET(test->v.Call.keywords, i);
-            asdl_seq_SET(capture, n_args + i, kw->value);
-        }
-        break;
-    }
-    case Subscript_kind: {
+    if (test->kind == Compare_kind &&
+        asdl_seq_LEN(test->v.Compare.ops) == 1)
+    {
         capture = _Py_asdl_expr_seq_new(2, arena);
         if (capture == NULL) {
             return NULL;
         }
-        asdl_seq_SET(capture, 0, test->v.Subscript.value);
-        asdl_seq_SET(capture, 1, test->v.Subscript.slice);
-        break;
+        asdl_seq_SET(capture, 0, test->v.Compare.left);
+        asdl_seq_SET(capture, 1,
+                     (expr_ty)asdl_seq_GET(test->v.Compare.comparators, 0));
     }
-    case Attribute_kind: {
-        capture = _Py_asdl_expr_seq_new(1, arena);
-        if (capture == NULL) {
-            return NULL;
-        }
-        asdl_seq_SET(capture, 0, test->v.Attribute.value);
-        break;
-    }
-    default: {
-        /* Fallback: capture the whole test expression so the hook has at
-         * least the resulting value to report. */
+    else {
+        /* Fallback: capture the whole test.  At runtime its already-
+         * computed value is duplicated on the stack instead of being
+         * re-evaluated. */
         capture = _Py_asdl_expr_seq_new(1, arena);
         if (capture == NULL) {
             return NULL;
         }
         asdl_seq_SET(capture, 0, test);
-        break;
-    }
     }
 
     return _PyAST_Tuple(capture, Load, test->lineno, test->col_offset,

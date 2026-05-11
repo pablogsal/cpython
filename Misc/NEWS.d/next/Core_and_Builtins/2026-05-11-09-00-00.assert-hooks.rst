@@ -1,10 +1,16 @@
 Add ``sys.__assertion_hook__``, a per-interpreter hook called by the
 compiler when an ``assert`` statement fails.  The hook receives the source
-text and runtime values of the "interesting" sub-expressions of the
-failing test (operands of compares, bool-ops, calls, etc.), along with the
-optional user message, and returns the string used to build the resulting
-:exc:`AssertionError`.  The capture itself is performed entirely in C: the
-new ``Assert.extended_tree`` AST attribute holds a :class:`ast.Tuple` of
-the captured sub-expressions, populated automatically by the AST
-preprocessor with no Python-level round-trip.  A pytest-style reference
-hook is shipped as ``_assertion_hook.default_hook``.
+text and runtime values of the captured sub-expressions of the failing
+test, the optional user message and the unparsed test expression, and
+returns the string used to build the resulting :exc:`AssertionError`.
+
+Capture happens **inline in bytecode** (single evaluation): for
+``assert a == b`` both operands are evaluated exactly once and the values
+are kept on the operand stack for the failure path -- the hook never
+re-runs user expressions.  The new ``Assert.extended_tree`` AST attribute
+holds an :class:`ast.Tuple` describing which sub-expressions get
+captured; it is populated automatically by the AST preprocessor entirely
+in C, with no Python-level round-trip.
+
+A pytest-style reference hook is shipped as
+``_assertion_hook.default_hook``.
