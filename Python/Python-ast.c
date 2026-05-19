@@ -54,6 +54,7 @@ void _PyAST_Fini(PyInterpreterState *interp)
     Py_CLEAR(state->BitOr_type);
     Py_CLEAR(state->BitXor_singleton);
     Py_CLEAR(state->BitXor_type);
+    Py_CLEAR(state->Block_type);
     Py_CLEAR(state->BoolOp_type);
     Py_CLEAR(state->Break_type);
     Py_CLEAR(state->Call_type);
@@ -573,6 +574,9 @@ static const char * const UnaryOp_fields[]={
 };
 static const char * const Lambda_fields[]={
     "args",
+    "body",
+};
+static const char * const Block_fields[]={
     "body",
 };
 static const char * const IfExp_fields[]={
@@ -2684,6 +2688,36 @@ add_ast_annotations(struct ast_state *state)
         return 0;
     }
     Py_DECREF(Lambda_annotations);
+    PyObject *Block_annotations = PyDict_New();
+    if (!Block_annotations) return 0;
+    {
+        PyObject *type = state->stmt_type;
+        type = Py_GenericAlias((PyObject *)&PyList_Type, type);
+        cond = type != NULL;
+        if (!cond) {
+            Py_DECREF(Block_annotations);
+            return 0;
+        }
+        cond = PyDict_SetItemString(Block_annotations, "body", type) == 0;
+        Py_DECREF(type);
+        if (!cond) {
+            Py_DECREF(Block_annotations);
+            return 0;
+        }
+    }
+    cond = PyObject_SetAttrString(state->Block_type, "_field_types",
+                                  Block_annotations) == 0;
+    if (!cond) {
+        Py_DECREF(Block_annotations);
+        return 0;
+    }
+    cond = PyObject_SetAttrString(state->Block_type, "__annotations__",
+                                  Block_annotations) == 0;
+    if (!cond) {
+        Py_DECREF(Block_annotations);
+        return 0;
+    }
+    Py_DECREF(Block_annotations);
     PyObject *IfExp_annotations = PyDict_New();
     if (!IfExp_annotations) return 0;
     {
@@ -6344,6 +6378,7 @@ init_types(void *arg)
         "     | BinOp(expr left, operator op, expr right)\n"
         "     | UnaryOp(unaryop op, expr operand)\n"
         "     | Lambda(arguments args, expr body)\n"
+        "     | Block(stmt* body)\n"
         "     | IfExp(expr test, expr body, expr orelse)\n"
         "     | Dict(expr?* keys, expr* values)\n"
         "     | Set(expr* elts)\n"
@@ -6397,6 +6432,10 @@ init_types(void *arg)
                                    Lambda_fields, 2,
         "Lambda(arguments args, expr body)");
     if (!state->Lambda_type) return -1;
+    state->Block_type = make_type(state, "Block", state->expr_type,
+                                  Block_fields, 1,
+        "Block(stmt* body)");
+    if (!state->Block_type) return -1;
     state->IfExp_type = make_type(state, "IfExp", state->expr_type,
                                   IfExp_fields, 3,
         "IfExp(expr test, expr body, expr orelse)");
@@ -7846,6 +7885,23 @@ _PyAST_Lambda(arguments_ty args, expr_ty body, int lineno, int col_offset, int
     p->kind = Lambda_kind;
     p->v.Lambda.args = args;
     p->v.Lambda.body = body;
+    p->lineno = lineno;
+    p->col_offset = col_offset;
+    p->end_lineno = end_lineno;
+    p->end_col_offset = end_col_offset;
+    return p;
+}
+
+expr_ty
+_PyAST_Block(asdl_stmt_seq * body, int lineno, int col_offset, int end_lineno,
+             int end_col_offset, PyArena *arena)
+{
+    expr_ty p;
+    p = (expr_ty)_PyArena_Malloc(arena, sizeof(*p));
+    if (!p)
+        return NULL;
+    p->kind = Block_kind;
+    p->v.Block.body = body;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -9632,6 +9688,16 @@ ast2obj_expr(struct ast_state *state, void* _o)
             goto failed;
         Py_DECREF(value);
         value = ast2obj_expr(state, o->v.Lambda.body);
+        if (!value) goto failed;
+        if (PyObject_SetAttr(result, state->body, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        break;
+    case Block_kind:
+        tp = (PyTypeObject *)state->Block_type;
+        result = PyType_GenericNew(tp, NULL, NULL);
+        if (!result) goto failed;
+        value = ast2obj_list(state, (asdl_seq*)o->v.Block.body, ast2obj_stmt);
         if (!value) goto failed;
         if (PyObject_SetAttr(result, state->body, value) == -1)
             goto failed;
@@ -14166,6 +14232,57 @@ obj2ast_expr(struct ast_state *state, PyObject* obj, expr_ty* out, PyArena*
         if (*out == NULL) goto failed;
         return 0;
     }
+    tp = state->Block_type;
+    isinstance = PyObject_IsInstance(obj, tp);
+    if (isinstance == -1) {
+        return -1;
+    }
+    if (isinstance) {
+        asdl_stmt_seq* body;
+
+        if (PyObject_GetOptionalAttr(obj, state->body, &tmp) < 0) {
+            return -1;
+        }
+        if (tmp == NULL) {
+            tmp = PyList_New(0);
+            if (tmp == NULL) {
+                return -1;
+            }
+        }
+        {
+            int res;
+            Py_ssize_t len;
+            Py_ssize_t i;
+            if (!PyList_Check(tmp)) {
+                PyErr_Format(PyExc_TypeError, "Block field \"body\" must be a list, not a %.200s", _PyType_Name(Py_TYPE(tmp)));
+                goto failed;
+            }
+            len = PyList_GET_SIZE(tmp);
+            body = _Py_asdl_stmt_seq_new(len, arena);
+            if (body == NULL) goto failed;
+            for (i = 0; i < len; i++) {
+                stmt_ty val;
+                PyObject *tmp2 = Py_NewRef(PyList_GET_ITEM(tmp, i));
+                if (_Py_EnterRecursiveCall(" while traversing 'Block' node")) {
+                    goto failed;
+                }
+                res = obj2ast_stmt(state, tmp2, &val, arena);
+                _Py_LeaveRecursiveCall();
+                Py_DECREF(tmp2);
+                if (res != 0) goto failed;
+                if (len != PyList_GET_SIZE(tmp)) {
+                    PyErr_SetString(PyExc_RuntimeError, "Block field \"body\" changed size during iteration");
+                    goto failed;
+                }
+                asdl_seq_SET(body, i, val);
+            }
+            Py_CLEAR(tmp);
+        }
+        *out = _PyAST_Block(body, lineno, col_offset, end_lineno,
+                            end_col_offset, arena);
+        if (*out == NULL) goto failed;
+        return 0;
+    }
     tp = state->IfExp_type;
     isinstance = PyObject_IsInstance(obj, tp);
     if (isinstance == -1) {
@@ -18156,6 +18273,9 @@ astmodule_exec(PyObject *m)
         return -1;
     }
     if (PyModule_AddObjectRef(m, "Lambda", state->Lambda_type) < 0) {
+        return -1;
+    }
+    if (PyModule_AddObjectRef(m, "Block", state->Block_type) < 0) {
         return -1;
     }
     if (PyModule_AddObjectRef(m, "IfExp", state->IfExp_type) < 0) {

@@ -533,7 +533,15 @@ astfold_expr(expr_ty node_, PyArena *ctx_, _PyASTPreprocessState *state)
         break;
     case Lambda_kind:
         CALL(astfold_arguments, arguments_ty, node_->v.Lambda.args);
-        CALL(astfold_expr, expr_ty, node_->v.Lambda.body);
+        if (node_->v.Lambda.body->kind == Block_kind) {
+            CALL_SEQ(astfold_stmt, stmt, node_->v.Lambda.body->v.Block.body);
+        }
+        else {
+            CALL(astfold_expr, expr_ty, node_->v.Lambda.body);
+        }
+        break;
+    case Block_kind:
+        CALL_SEQ(astfold_stmt, stmt, node_->v.Block.body);
         break;
     case IfExp_kind:
         CALL(astfold_expr, expr_ty, node_->v.IfExp.test);

@@ -1055,6 +1055,15 @@ class Unparser(NodeVisitor):
         self.traverse(node.value)
 
     def visit_Lambda(self, node):
+        if isinstance(node.body, Block):
+            self.write("lambda")
+            with self.buffered() as buffer:
+                self.traverse(node.args)
+            if buffer:
+                self.write(" ", *buffer)
+            with self.block():
+                self.traverse(node.body.body)
+            return
         with self.require_parens(_Precedence.TEST, node):
             self.write("lambda")
             with self.buffered() as buffer:
@@ -1063,6 +1072,12 @@ class Unparser(NodeVisitor):
                 self.write(" ", *buffer)
             self.write(": ")
             self.set_precedence(_Precedence.TEST, node.body)
+            self.traverse(node.body)
+
+    def visit_Block(self, node):
+        # A bare Block should not be unparsed at the expression level;
+        # this only happens for invalid ASTs constructed manually.
+        with self.block():
             self.traverse(node.body)
 
     def visit_alias(self, node):
