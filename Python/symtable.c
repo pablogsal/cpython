@@ -2508,11 +2508,19 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
             return 0;
         }
         VISIT(st, arguments, e->v.Lambda.args);
-        VISIT(st, expr, e->v.Lambda.body);
+        if (e->v.Lambda.body->kind == Block_kind) {
+            VISIT_SEQ(st, stmt, e->v.Lambda.body->v.Block.body);
+        }
+        else {
+            VISIT(st, expr, e->v.Lambda.body);
+        }
         if (!symtable_exit_block(st))
             return 0;
         break;
     }
+    case Block_kind:
+        VISIT_SEQ(st, stmt, e->v.Block.body);
+        break;
     case IfExp_kind:
         VISIT(st, expr, e->v.IfExp.test);
         VISIT(st, expr, e->v.IfExp.body);

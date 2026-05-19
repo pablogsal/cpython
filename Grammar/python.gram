@@ -143,6 +143,16 @@ compound_stmt[stmt_ty]:
     | &'try' try_stmt
     | &'while' while_stmt
     | match_stmt
+    | multiline_lambda_stmt
+
+# Top-level statements that bind / use a multiline lambda. The multiline
+# lambda body is an indented suite, so the enclosing statement must be
+# a compound statement (no trailing NEWLINE required, unlike simple_stmts).
+multiline_lambda_stmt[stmt_ty]:
+    | a[asdl_expr_seq*]=(z=star_targets '=' { z })+ b=multiline_lambdef {
+        _PyAST_Assign(a, b, NULL, EXTRA) }
+    | 'return' b=multiline_lambdef { _PyAST_Return(b, EXTRA) }
+    | b=multiline_lambdef { _PyAST_Expr(b, EXTRA) }
 
 # SIMPLE STATEMENTS
 # =================
@@ -912,6 +922,16 @@ group[expr_ty]:
 lambdef[expr_ty]:
     | 'lambda' a=[lambda_params] ':' b=expression {
         _PyAST_Lambda((a) ? a : CHECK(arguments_ty, _PyPegen_empty_arguments(p)), b, EXTRA) }
+
+# Multiline lambda body: only reachable from compound_stmt forms.
+# The body is an indented suite of statements; the lambda is treated
+# like a function (explicit `return` for the value; otherwise returns None).
+multiline_lambdef[expr_ty]:
+    | 'lambda' a=[lambda_params] ':' NEWLINE INDENT b=statements DEDENT {
+        _PyAST_Lambda(
+            (a) ? a : CHECK(arguments_ty, _PyPegen_empty_arguments(p)),
+            CHECK(expr_ty, _PyAST_Block(b, EXTRA)),
+            EXTRA) }
 
 lambda_params[arguments_ty]:
     | invalid_lambda_parameters

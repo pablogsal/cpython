@@ -2075,14 +2075,32 @@ codegen_lambda(compiler *c, expr_ty e)
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
 
-    VISIT_IN_SCOPE(c, expr, e->v.Lambda.body);
-    if (SYMTABLE_ENTRY(c)->ste_generator) {
-        co = _PyCompile_OptimizeAndAssemble(c, 0);
+    expr_ty lambda_body = e->v.Lambda.body;
+    if (lambda_body->kind == Block_kind) {
+        asdl_stmt_seq *body = lambda_body->v.Block.body;
+        for (Py_ssize_t i = 0; i < asdl_seq_LEN(body); i++) {
+            VISIT_IN_SCOPE(c, stmt, (stmt_ty)asdl_seq_GET(body, i));
+        }
+        if (SYMTABLE_ENTRY(c)->ste_generator) {
+            co = _PyCompile_OptimizeAndAssemble(c, 0);
+        }
+        else {
+            location loc = LOC(lambda_body);
+            ADDOP_LOAD_CONST_IN_SCOPE(c, loc, Py_None);
+            ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
+            co = _PyCompile_OptimizeAndAssemble(c, 1);
+        }
     }
     else {
-        location loc = LOC(e->v.Lambda.body);
-        ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
-        co = _PyCompile_OptimizeAndAssemble(c, 1);
+        VISIT_IN_SCOPE(c, expr, lambda_body);
+        if (SYMTABLE_ENTRY(c)->ste_generator) {
+            co = _PyCompile_OptimizeAndAssemble(c, 0);
+        }
+        else {
+            location loc = LOC(lambda_body);
+            ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
+            co = _PyCompile_OptimizeAndAssemble(c, 1);
+        }
     }
     _PyCompile_ExitScope(c);
     if (co == NULL) {
@@ -5407,6 +5425,9 @@ codegen_visit_expr(compiler *c, expr_ty e)
         break;
     case Lambda_kind:
         return codegen_lambda(c, e);
+    case Block_kind:
+        return _PyCompile_Error(c, loc,
+            "Block expression cannot be used outside of a lambda body");
     case IfExp_kind:
         return codegen_ifexp(c, e);
     case Dict_kind:

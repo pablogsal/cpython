@@ -723,6 +723,83 @@ class GrammarTests(unittest.TestCase):
         l24 = lambda a, *, b, **kwds,: 0
 
 
+    def test_multiline_lambda(self):
+        # Basic multi-statement body with explicit return
+        f = lambda x:
+            y = x + 1
+            return y * 2
+        self.assertEqual(f(3), 8)
+        self.assertEqual(f(10), 22)
+
+        # Body without explicit return -> returns None
+        g = lambda x:
+            y = x + 1
+            z = y * 2
+        self.assertIsNone(g(5))
+
+        # Multiple parameters with defaults
+        h = lambda a, b, c=10:
+            total = a + b + c
+            return total
+        self.assertEqual(h(1, 2), 13)
+        self.assertEqual(h(1, 2, 3), 6)
+
+        # Conditional logic in the body
+        classify = lambda n:
+            if n < 0:
+                return "negative"
+            elif n == 0:
+                return "zero"
+            else:
+                return "positive"
+        self.assertEqual(classify(-5), "negative")
+        self.assertEqual(classify(0), "zero")
+        self.assertEqual(classify(5), "positive")
+
+        # Loops in the body
+        sum_list = lambda lst:
+            total = 0
+            for x in lst:
+                total += x
+            return total
+        self.assertEqual(sum_list([1, 2, 3, 4, 5]), 15)
+
+        # Multiline lambda as a closure with `nonlocal`
+        def make_counter():
+            count = 0
+            return lambda:
+                nonlocal count
+                count += 1
+                return count
+        counter = make_counter()
+        self.assertEqual(counter(), 1)
+        self.assertEqual(counter(), 2)
+        self.assertEqual(counter(), 3)
+
+        # No parameters at all
+        greet = lambda:
+            msg = "hello"
+            return msg + " world"
+        self.assertEqual(greet(), "hello world")
+
+        # Nested multiline lambdas
+        outer = lambda x:
+            inner = lambda y:
+                return x + y
+            return inner
+        add10 = outer(10)
+        self.assertEqual(add10(5), 15)
+
+        # try/except inside multiline lambda
+        safe_div = lambda a, b:
+            try:
+                return a / b
+            except ZeroDivisionError:
+                return None
+        self.assertEqual(safe_div(10, 2), 5.0)
+        self.assertIsNone(safe_div(10, 0))
+
+
     ### stmt: simple_stmt | compound_stmt
     # Tested below
 

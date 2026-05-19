@@ -26,6 +26,7 @@ static int validate_stmt(stmt_ty);
 static int validate_expr(expr_ty, expr_context_ty);
 static int validate_pattern(pattern_ty, int);
 static int validate_typeparam(type_param_ty);
+static int validate_body(asdl_stmt_seq *body, const char *owner);
 
 #define VALIDATE_POSITIONS(node) \
     if (node->lineno > node->end_lineno) { \
@@ -273,7 +274,12 @@ validate_expr(expr_ty exp, expr_context_ty ctx)
         break;
     case Lambda_kind:
         ret = validate_arguments(exp->v.Lambda.args) &&
-            validate_expr(exp->v.Lambda.body, Load);
+            (exp->v.Lambda.body->kind == Block_kind
+                ? validate_body(exp->v.Lambda.body->v.Block.body, "Lambda")
+                : validate_expr(exp->v.Lambda.body, Load));
+        break;
+    case Block_kind:
+        ret = validate_body(exp->v.Block.body, "Block");
         break;
     case IfExp_kind:
         ret = validate_expr(exp->v.IfExp.test, Load) &&

@@ -305,7 +305,12 @@ append_ast_lambda(PyUnicodeWriter *writer, expr_ty e, int level)
     APPEND_STR(n_positional ? "lambda " : "lambda");
     APPEND(args, e->v.Lambda.args);
     APPEND_STR(": ");
-    APPEND_EXPR(e->v.Lambda.body, PR_TEST);
+    if (e->v.Lambda.body->kind == Block_kind) {
+        APPEND_STR("...");
+    }
+    else {
+        APPEND_EXPR(e->v.Lambda.body, PR_TEST);
+    }
     APPEND_STR_IF(level > PR_TEST, ")");
     return 0;
 }
@@ -948,6 +953,8 @@ append_ast_expr(PyUnicodeWriter *writer, expr_ty e, int level)
         return append_ast_unaryop(writer, e, level);
     case Lambda_kind:
         return append_ast_lambda(writer, e, level);
+    case Block_kind:
+        APPEND_STR_FINISH("...");
     case IfExp_kind:
         return append_ast_ifexp(writer, e, level);
     case Dict_kind:
