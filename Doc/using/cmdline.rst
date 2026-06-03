@@ -888,6 +888,25 @@ conflict.
    .. versionadded:: 3.4
 
 
+.. envvar:: PYTHON_GC_ADAPTIVE
+
+   If this environment variable is set to a positive integer, Python enables
+   adaptive cyclic garbage collector threshold tuning at startup.  The
+   adaptive mode changes only the youngest-generation allocation threshold
+   according to recent collection cost and collection yield.  On Linux, it
+   also samples current RSS and page-fault activity as a soft brake on
+   threshold growth.  The middle- and oldest-generation thresholds keep their
+   configured values.
+
+
+.. envvar:: PYTHON_GC_ADAPTIVE_MAX_THRESHOLD0
+
+   If :envvar:`PYTHON_GC_ADAPTIVE` is enabled, this environment variable sets
+   the maximum adaptive value for the youngest-generation allocation
+   threshold.  The value must be a positive integer.  The default is
+   ``5000000``.
+
+
 .. envvar:: PYTHONPROFILEIMPORTTIME
 
    If this environment variable is set to a non-empty string, Python will

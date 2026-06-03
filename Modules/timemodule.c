@@ -1289,7 +1289,7 @@ PyDoc_STRVAR(perf_counter_ns_doc,
 \n\
 Performance counter for benchmarking as nanoseconds.");
 
-static int
+int
 _PyTime_GetProcessTimeWithInfo(_PyTime_t *tp, _Py_clock_info_t *info)
 {
 #if defined(MS_WINDOWS)

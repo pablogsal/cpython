@@ -397,6 +397,49 @@ class GCTests(unittest.TestCase):
         self.assertEqual((e, f), (0, 1))
         self.assertEqual((h, i), (0, 0))
 
+    def test_adaptive_threshold_env_var(self):
+        code = textwrap.dedent("""
+            import gc
+
+            start = gc.get_threshold()
+            keep = []
+            for _ in range(8):
+                keep.extend([] for _ in range(1000))
+                gc.collect(0)
+            end = gc.get_threshold()
+
+            assert start == (700, 10, 10), start
+            assert end[0] > start[0], end
+            assert end[1:] == start[1:], end
+        """)
+        assert_python_ok("-c", code, PYTHON_GC_ADAPTIVE="1")
+
+    def test_adaptive_threshold_env_var_ignored_by_E(self):
+        code = textwrap.dedent("""
+            import gc
+
+            keep = []
+            for _ in range(8):
+                keep.extend([] for _ in range(1000))
+                gc.collect(0)
+            assert gc.get_threshold() == (700, 10, 10)
+        """)
+        assert_python_ok("-E", "-c", code, PYTHON_GC_ADAPTIVE="1")
+
+    def test_adaptive_max_threshold_env_var(self):
+        code = textwrap.dedent("""
+            import gc
+
+            keep = []
+            for _ in range(8):
+                keep.extend([] for _ in range(1000))
+                gc.collect(0)
+            assert gc.get_threshold() == (900, 10, 10), gc.get_threshold()
+        """)
+        assert_python_ok("-c", code,
+                         PYTHON_GC_ADAPTIVE="1",
+                         PYTHON_GC_ADAPTIVE_MAX_THRESHOLD0="900")
+
     def test_trashcan(self):
         class Ouch:
             n = 0

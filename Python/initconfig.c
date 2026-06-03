@@ -137,6 +137,8 @@ static const char usage_envvars[] =
 "PYTHONBREAKPOINT: if this variable is set to 0, it disables the default\n"
 "                  debugger.  It can be set to the callable of your debugger of\n"
 "                  choice.\n"
+"PYTHON_GC_ADAPTIVE: enable adaptive cyclic GC threshold tuning.\n"
+"PYTHON_GC_ADAPTIVE_MAX_THRESHOLD0: set adaptive GC threshold0 ceiling.\n"
 "\n"
 "These variables have equivalent command-line options (see --help for details):\n"
 "PYTHONDEBUG     : enable parser debug mode (-d)\n"

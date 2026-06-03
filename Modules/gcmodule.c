@@ -30,7 +30,17 @@
 #include "pycore_object.h"
 #include "pycore_pyerrors.h"
 #include "pycore_pystate.h"     // _PyThreadState_GET()
+#include "pycore_time.h"        // _PyTime_GetProcessTimeWithInfo()
 #include "pydtrace.h"
+#ifdef HAVE_FCNTL_H
+#  include <fcntl.h>
+#endif
+#ifdef HAVE_SYS_RESOURCE_H
+#  include <sys/resource.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#  include <unistd.h>
+#endif
 
 typedef struct _gc_runtime_state GCState;
 
@@ -127,12 +137,318 @@ gc_decref(PyGC_Head *g)
 
 #define GEN_HEAD(gcstate, n) (&(gcstate)->generations[n].head)
 
+#define GC_ADAPTIVE_ENV "PYTHON_GC_ADAPTIVE"
+#define GC_ADAPTIVE_MAX_THRESHOLD0_ENV "PYTHON_GC_ADAPTIVE_MAX_THRESHOLD0"
+#define GC_ADAPTIVE_MAX_THRESHOLD0 5000000
+#define GC_ADAPTIVE_WINDOW_COLLECTIONS 8
+#define GC_ADAPTIVE_INCREASE_STEP 100000
+#define GC_ADAPTIVE_PRESSURE_INCREASE_STEP 25000
+#define GC_ADAPTIVE_DECREASE_DIVISOR 10
+#define GC_ADAPTIVE_LOW_NS_PER_SECOND 5000000       /* 0.5% */
+#define GC_ADAPTIVE_HIGH_NS_PER_SECOND 15000000     /* 1.5% */
+#define GC_ADAPTIVE_LOW_YIELD_PER_MILLE 1
+#define GC_ADAPTIVE_HIGH_YIELD_PER_MILLE 50
+#define GC_ADAPTIVE_HUGEPAGE_BYTES (2 * 1024 * 1024)
+#define GC_ADAPTIVE_RSS_GROWTH_DIVISOR 64
+
 
 static GCState *
 get_gc_state(void)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
     return &interp->gc;
+}
+
+static int
+gc_clamp_threshold0(int threshold0, int min_threshold0, int max_threshold0)
+{
+    if (threshold0 < min_threshold0) {
+        return min_threshold0;
+    }
+    if (threshold0 > max_threshold0) {
+        return max_threshold0;
+    }
+    return threshold0;
+}
+
+static _PyTime_t
+gc_process_time(void)
+{
+    _PyTime_t t;
+    if (_PyTime_GetProcessTimeWithInfo(&t, NULL) < 0) {
+        PyErr_Clear();
+        return 0;
+    }
+    return t;
+}
+
+static Py_ssize_t
+gc_hugepage_pages(void)
+{
+#if defined(HAVE_SYSCONF) && defined(_SC_PAGESIZE)
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size > 0) {
+        Py_ssize_t pages = (Py_ssize_t)(GC_ADAPTIVE_HUGEPAGE_BYTES / page_size);
+        return pages > 0 ? pages : 1;
+    }
+#endif
+    return 512;
+}
+
+static Py_ssize_t
+gc_current_rss_pages(void)
+{
+#if defined(__linux__) && defined(HAVE_UNISTD_H) && defined(HAVE_FCNTL_H)
+    char buf[128];
+#ifdef O_CLOEXEC
+    int fd = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+#else
+    int fd = open("/proc/self/statm", O_RDONLY);
+#endif
+    if (fd < 0) {
+        return -1;
+    }
+
+    ssize_t nread = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (nread <= 0) {
+        return -1;
+    }
+    buf[nread] = '\0';
+
+    char *endptr = NULL;
+    (void)strtoull(buf, &endptr, 10);
+    if (endptr == NULL || endptr == buf) {
+        return -1;
+    }
+
+    char *resident_start = endptr;
+    unsigned long long resident = strtoull(resident_start, &endptr, 10);
+    if (endptr == resident_start) {
+        return -1;
+    }
+    if (resident > (unsigned long long)PY_SSIZE_T_MAX) {
+        return PY_SSIZE_T_MAX;
+    }
+    return (Py_ssize_t)resident;
+#else
+    return -1;
+#endif
+}
+
+static int
+gc_page_faults(long *minor, long *major)
+{
+#if defined(HAVE_GETRUSAGE) && defined(HAVE_SYS_RESOURCE_H) && defined(RUSAGE_SELF)
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0) {
+        *minor = ru.ru_minflt;
+        *major = ru.ru_majflt;
+        return 1;
+    }
+#endif
+    *minor = -1;
+    *major = -1;
+    return 0;
+}
+
+static int
+gc_memory_pressure(struct gc_threshold_controller *ctl, int useful_yield)
+{
+    int pressure = 0;
+    int strong_pressure = 0;
+    Py_ssize_t hugepage_pages = gc_hugepage_pages();
+
+    Py_ssize_t rss_pages = gc_current_rss_pages();
+    if (rss_pages >= 0 && ctl->last_rss_pages >= 0) {
+        Py_ssize_t rss_growth = rss_pages - ctl->last_rss_pages;
+        Py_ssize_t growth_threshold = ctl->last_rss_pages / GC_ADAPTIVE_RSS_GROWTH_DIVISOR;
+        if (growth_threshold < hugepage_pages) {
+            growth_threshold = hugepage_pages;
+        }
+        if (rss_growth > growth_threshold) {
+            pressure = 1;
+        }
+    }
+    if (rss_pages >= 0) {
+        ctl->last_rss_pages = rss_pages;
+    }
+
+    long minor_faults = -1;
+    long major_faults = -1;
+    if (gc_page_faults(&minor_faults, &major_faults)
+        && ctl->last_minor_faults >= 0
+        && ctl->last_major_faults >= 0)
+    {
+        long minor_delta = minor_faults - ctl->last_minor_faults;
+        long major_delta = major_faults - ctl->last_major_faults;
+        if (major_delta > 0) {
+            pressure = 1;
+            strong_pressure = 1;
+        }
+        else if (minor_delta > hugepage_pages) {
+            pressure = 1;
+        }
+    }
+    if (minor_faults >= 0) {
+        ctl->last_minor_faults = minor_faults;
+    }
+    if (major_faults >= 0) {
+        ctl->last_major_faults = major_faults;
+    }
+
+    if (pressure && useful_yield) {
+        return 2;
+    }
+    return strong_pressure;
+}
+
+static void
+gc_maybe_init_threshold_controller(PyInterpreterState *interp)
+{
+    GCState *gcstate = &interp->gc;
+    const char *env = _Py_GetEnv(interp->config.use_environment,
+                                 GC_ADAPTIVE_ENV);
+    if (env == NULL) {
+        return;
+    }
+    int enabled = 0;
+    if (_Py_str_to_int(env, &enabled) < 0 || enabled <= 0) {
+        return;
+    }
+
+    struct gc_threshold_controller *ctl = &gcstate->threshold_controller;
+    ctl->enabled = 1;
+    ctl->min_threshold0 = gcstate->generations[0].threshold;
+    ctl->max_threshold0 = GC_ADAPTIVE_MAX_THRESHOLD0;
+    const char *max_env = _Py_GetEnv(interp->config.use_environment,
+                                     GC_ADAPTIVE_MAX_THRESHOLD0_ENV);
+    if (max_env != NULL) {
+        int max_threshold0 = 0;
+        if (_Py_str_to_int(max_env, &max_threshold0) == 0
+            && max_threshold0 > 0)
+        {
+            ctl->max_threshold0 = max_threshold0;
+        }
+    }
+    if (ctl->max_threshold0 < ctl->min_threshold0) {
+        ctl->max_threshold0 = ctl->min_threshold0;
+    }
+    ctl->window_start = gc_process_time();
+    ctl->last_rss_pages = gc_current_rss_pages();
+    ctl->last_minor_faults = -1;
+    ctl->last_major_faults = -1;
+    (void)gc_page_faults(&ctl->last_minor_faults, &ctl->last_major_faults);
+}
+
+static void
+gc_adapt_threshold0(GCState *gcstate, Py_ssize_t candidates,
+                    Py_ssize_t collected, _PyTime_t duration)
+{
+    struct gc_threshold_controller *ctl = &gcstate->threshold_controller;
+    if (!ctl->enabled || gcstate->generations[0].threshold == 0) {
+        return;
+    }
+
+    if (duration > 0) {
+        ctl->gc_time += duration;
+    }
+    if (candidates > 0) {
+        ctl->window_candidates += candidates;
+    }
+    if (collected > 0) {
+        ctl->window_collected += collected;
+    }
+    ctl->window_collections++;
+
+    if (ctl->window_collections < GC_ADAPTIVE_WINDOW_COLLECTIONS) {
+        return;
+    }
+
+    _PyTime_t now = gc_process_time();
+    _PyTime_t elapsed = now - ctl->window_start;
+    int threshold0 = gcstate->generations[0].threshold;
+    int new_threshold0 = threshold0;
+
+    int low_yield = 0;
+    int high_yield = 0;
+    int useful_yield = 0;
+    if (ctl->window_candidates > 0) {
+        double yield = ((double)ctl->window_collected
+                        / (double)ctl->window_candidates);
+        low_yield = (yield < (double)GC_ADAPTIVE_LOW_YIELD_PER_MILLE / 1000.0);
+        high_yield = (yield > (double)GC_ADAPTIVE_HIGH_YIELD_PER_MILLE / 1000.0);
+        useful_yield = high_yield;
+    }
+
+    int high_duty = 0;
+    int low_duty = 0;
+    if (elapsed > 0 && ctl->gc_time > 0) {
+        double duty = ((double)ctl->gc_time / (double)elapsed);
+        high_duty = (duty > (double)GC_ADAPTIVE_HIGH_NS_PER_SECOND / 1e9);
+        low_duty = (duty < (double)GC_ADAPTIVE_LOW_NS_PER_SECOND / 1e9);
+    }
+
+    int pressure = gc_memory_pressure(ctl, useful_yield);
+    if (pressure == 2 && threshold0 > ctl->min_threshold0) {
+        int step = threshold0 / GC_ADAPTIVE_DECREASE_DIVISOR;
+        if (step < 1) {
+            step = 1;
+        }
+        new_threshold0 = threshold0 - step;
+    }
+    else if (high_duty || low_yield) {
+        int step = pressure ? GC_ADAPTIVE_PRESSURE_INCREASE_STEP
+                            : GC_ADAPTIVE_INCREASE_STEP;
+        if (threshold0 > ctl->max_threshold0 - step) {
+            new_threshold0 = ctl->max_threshold0;
+        }
+        else {
+            new_threshold0 = threshold0 + step;
+        }
+    }
+    else if (low_duty && high_yield && threshold0 > ctl->min_threshold0) {
+        int step = threshold0 / GC_ADAPTIVE_DECREASE_DIVISOR;
+        if (step < 1) {
+            step = 1;
+        }
+        new_threshold0 = threshold0 - step;
+    }
+
+    gcstate->generations[0].threshold = gc_clamp_threshold0(
+        new_threshold0, ctl->min_threshold0, ctl->max_threshold0);
+
+    ctl->window_collections = 0;
+    ctl->window_candidates = 0;
+    ctl->window_collected = 0;
+    ctl->window_start = now;
+    ctl->gc_time = 0;
+}
+
+static void
+gc_reset_threshold_controller(GCState *gcstate)
+{
+    struct gc_threshold_controller *ctl = &gcstate->threshold_controller;
+    if (!ctl->enabled) {
+        return;
+    }
+
+    int threshold0 = gcstate->generations[0].threshold;
+    if (threshold0 > 0) {
+        ctl->min_threshold0 = threshold0;
+        if (ctl->max_threshold0 < ctl->min_threshold0) {
+            ctl->max_threshold0 = ctl->min_threshold0;
+        }
+    }
+    ctl->window_collections = 0;
+    ctl->window_candidates = 0;
+    ctl->window_collected = 0;
+    ctl->window_start = gc_process_time();
+    ctl->gc_time = 0;
+    ctl->last_rss_pages = gc_current_rss_pages();
+    ctl->last_minor_faults = -1;
+    ctl->last_major_faults = -1;
+    (void)gc_page_faults(&ctl->last_minor_faults, &ctl->last_major_faults);
 }
 
 
@@ -170,6 +486,8 @@ _PyGC_Init(PyInterpreterState *interp)
     if (gcstate->callbacks == NULL) {
         return _PyStatus_NO_MEMORY();
     }
+
+    gc_maybe_init_threshold_controller(interp);
 
     return _PyStatus_OK();
 }
@@ -1422,8 +1740,21 @@ gc_collect_with_callback(PyThreadState *tstate, int generation)
 {
     assert(!_PyErr_Occurred(tstate));
     Py_ssize_t result, collected, uncollectable;
+    GCState *gcstate = &tstate->interp->gc;
+    Py_ssize_t candidates = 0;
+    if (generation == 0) {
+        candidates = gcstate->generations[0].count;
+    }
     invoke_gc_callback(tstate, "start", generation, 0, 0);
+    _PyTime_t t0 = 0;
+    if (gcstate->threshold_controller.enabled && generation == 0) {
+        t0 = gc_process_time();
+    }
     result = gc_collect_main(tstate, generation, &collected, &uncollectable, 0);
+    if (gcstate->threshold_controller.enabled && generation == 0) {
+        _PyTime_t duration = gc_process_time() - t0;
+        gc_adapt_threshold0(gcstate, candidates, collected, duration);
+    }
     invoke_gc_callback(tstate, "stop", generation, collected, uncollectable);
     assert(!_PyErr_Occurred(tstate));
     return result;
@@ -1627,6 +1958,7 @@ gc_set_threshold(PyObject *self, PyObject *args)
         /* generations higher than 2 get the same threshold */
         gcstate->generations[i].threshold = gcstate->generations[2].threshold;
     }
+    gc_reset_threshold_controller(gcstate);
     Py_RETURN_NONE;
 }
 

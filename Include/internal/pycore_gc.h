@@ -154,6 +154,20 @@ struct gc_generation_stats {
     Py_ssize_t uncollectable;
 };
 
+struct gc_threshold_controller {
+    int enabled;
+    int min_threshold0;
+    int max_threshold0;
+    int window_collections;
+    Py_ssize_t window_candidates;
+    Py_ssize_t window_collected;
+    _PyTime_t window_start;
+    _PyTime_t gc_time;
+    Py_ssize_t last_rss_pages;
+    long last_minor_faults;
+    long last_major_faults;
+};
+
 struct _gc_runtime_state {
     /* List of objects that still need to be cleaned up, singly linked
      * via their gc headers' gc_prev pointers.  */
@@ -176,6 +190,7 @@ struct _gc_runtime_state {
     PyObject *garbage;
     /* a list of callbacks to be invoked when collection is performed */
     PyObject *callbacks;
+    struct gc_threshold_controller threshold_controller;
     /* This is the number of objects that survived the last full
        collection. It approximates the number of long lived objects
        tracked by the GC.

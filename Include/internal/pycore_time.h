@@ -18,6 +18,10 @@ struct _time_runtime_state {
 #endif
 };
 
+extern int _PyTime_GetProcessTimeWithInfo(
+    _PyTime_t *t,
+    _Py_clock_info_t *info);
+
 
 #ifdef __cplusplus
 }

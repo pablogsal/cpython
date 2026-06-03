@@ -115,6 +115,13 @@ The :mod:`gc` module provides the following functions:
    With the third generation, things are a bit more complicated,
    see `Collecting the oldest generation <https://devguide.python.org/garbage_collector/#collecting-the-oldest-generation>`_ for more information.
 
+   If :envvar:`PYTHON_GC_ADAPTIVE` is enabled, the interpreter may adjust
+   *threshold0* at runtime based on recent generation ``0`` collection cost
+   and collection yield.  On Linux, adaptive mode also samples current process
+   RSS and page-fault activity as a soft brake on threshold growth.  It does
+   not target RSS directly.  *threshold1* and *threshold2* are not adjusted by
+   adaptive mode.
+
 
 .. function:: get_count()
 
