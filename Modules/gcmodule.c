@@ -41,6 +41,7 @@
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
 #endif
+#include <limits.h>
 
 typedef struct _gc_runtime_state GCState;
 
@@ -141,12 +142,18 @@ gc_decref(PyGC_Head *g)
 #define GC_ADAPTIVE_MAX_THRESHOLD0_ENV "PYTHON_GC_ADAPTIVE_MAX_THRESHOLD0"
 #define GC_ADAPTIVE_MAX_THRESHOLD0 5000000
 #define GC_ADAPTIVE_WINDOW_COLLECTIONS 8
-#define GC_ADAPTIVE_INCREASE_STEP 100000
-#define GC_ADAPTIVE_PRESSURE_INCREASE_STEP 25000
-#define GC_ADAPTIVE_DECREASE_DIVISOR 10
+#define GC_ADAPTIVE_INCREASE_BASE_MULTIPLIER 2
+#define GC_ADAPTIVE_INCREASE_STREAK_LIMIT 8
+#define GC_ADAPTIVE_MAX_INCREASE_STEP 50000
+#define GC_ADAPTIVE_DECREASE_NUMERATOR 4
+#define GC_ADAPTIVE_DECREASE_DENOMINATOR 5
+#define GC_ADAPTIVE_SOFT_DECREASE_NUMERATOR 9
+#define GC_ADAPTIVE_SOFT_DECREASE_DENOMINATOR 10
+#define GC_ADAPTIVE_SOFT_FLOOR_MULTIPLIER 2
 #define GC_ADAPTIVE_LOW_NS_PER_SECOND 5000000       /* 0.5% */
 #define GC_ADAPTIVE_HIGH_NS_PER_SECOND 15000000     /* 1.5% */
 #define GC_ADAPTIVE_LOW_YIELD_PER_MILLE 1
+#define GC_ADAPTIVE_USEFUL_YIELD_PER_MILLE 10
 #define GC_ADAPTIVE_HIGH_YIELD_PER_MILLE 50
 #define GC_ADAPTIVE_HUGEPAGE_BYTES (2 * 1024 * 1024)
 #define GC_ADAPTIVE_RSS_GROWTH_DIVISOR 64
@@ -169,6 +176,23 @@ gc_clamp_threshold0(int threshold0, int min_threshold0, int max_threshold0)
         return max_threshold0;
     }
     return threshold0;
+}
+
+static int
+gc_scale_threshold0(int threshold0, int numerator, int denominator)
+{
+    int quotient = threshold0 / denominator;
+    int remainder = threshold0 % denominator;
+    return quotient * numerator + remainder * numerator / denominator;
+}
+
+static int
+gc_multiply_threshold0(int threshold0, int multiplier)
+{
+    if (threshold0 > INT_MAX / multiplier) {
+        return INT_MAX;
+    }
+    return threshold0 * multiplier;
 }
 
 static _PyTime_t
@@ -253,10 +277,9 @@ gc_page_faults(long *minor, long *major)
 }
 
 static int
-gc_memory_pressure(struct gc_threshold_controller *ctl, int useful_yield)
+gc_memory_pressure(struct gc_threshold_controller *ctl)
 {
     int pressure = 0;
-    int strong_pressure = 0;
     Py_ssize_t hugepage_pages = gc_hugepage_pages();
 
     Py_ssize_t rss_pages = gc_current_rss_pages();
@@ -283,11 +306,12 @@ gc_memory_pressure(struct gc_threshold_controller *ctl, int useful_yield)
         long minor_delta = minor_faults - ctl->last_minor_faults;
         long major_delta = major_faults - ctl->last_major_faults;
         if (major_delta > 0) {
-            pressure = 1;
-            strong_pressure = 1;
+            pressure = 2;
         }
         else if (minor_delta > hugepage_pages) {
-            pressure = 1;
+            if (pressure < 1) {
+                pressure = 1;
+            }
         }
     }
     if (minor_faults >= 0) {
@@ -297,10 +321,7 @@ gc_memory_pressure(struct gc_threshold_controller *ctl, int useful_yield)
         ctl->last_major_faults = major_faults;
     }
 
-    if (pressure && useful_yield) {
-        return 2;
-    }
-    return strong_pressure;
+    return pressure;
 }
 
 static void
@@ -338,6 +359,9 @@ gc_maybe_init_threshold_controller(PyInterpreterState *interp)
     ctl->last_rss_pages = gc_current_rss_pages();
     ctl->last_minor_faults = -1;
     ctl->last_major_faults = -1;
+    ctl->pressure_windows = 0;
+    ctl->useful_windows = 0;
+    ctl->waste_windows = 0;
     (void)gc_page_faults(&ctl->last_minor_faults, &ctl->last_major_faults);
 }
 
@@ -371,14 +395,14 @@ gc_adapt_threshold0(GCState *gcstate, Py_ssize_t candidates,
     int new_threshold0 = threshold0;
 
     int low_yield = 0;
-    int high_yield = 0;
     int useful_yield = 0;
+    int high_yield = 0;
     if (ctl->window_candidates > 0) {
         double yield = ((double)ctl->window_collected
                         / (double)ctl->window_candidates);
         low_yield = (yield < (double)GC_ADAPTIVE_LOW_YIELD_PER_MILLE / 1000.0);
+        useful_yield = (yield > (double)GC_ADAPTIVE_USEFUL_YIELD_PER_MILLE / 1000.0);
         high_yield = (yield > (double)GC_ADAPTIVE_HIGH_YIELD_PER_MILLE / 1000.0);
-        useful_yield = high_yield;
     }
 
     int high_duty = 0;
@@ -389,30 +413,93 @@ gc_adapt_threshold0(GCState *gcstate, Py_ssize_t candidates,
         low_duty = (duty < (double)GC_ADAPTIVE_LOW_NS_PER_SECOND / 1e9);
     }
 
-    int pressure = gc_memory_pressure(ctl, useful_yield);
-    if (pressure == 2 && threshold0 > ctl->min_threshold0) {
-        int step = threshold0 / GC_ADAPTIVE_DECREASE_DIVISOR;
+    int pressure = gc_memory_pressure(ctl);
+    if (pressure) {
+        ctl->pressure_windows++;
+    }
+    else {
+        ctl->pressure_windows = 0;
+    }
+    if (useful_yield) {
+        ctl->useful_windows++;
+        ctl->waste_windows = 0;
+    }
+    else if (low_yield && !pressure) {
+        ctl->waste_windows++;
+        ctl->useful_windows = 0;
+    }
+    else {
+        ctl->useful_windows = 0;
+        ctl->waste_windows = 0;
+    }
+
+    int hard_decrease = 0;
+    int soft_decrease = 0;
+    int increase = 0;
+    if (pressure == 2) {
+        hard_decrease = 1;
+    }
+    else if (pressure && useful_yield) {
+        soft_decrease = 1;
+    }
+    else if (ctl->pressure_windows >= 3) {
+        soft_decrease = 1;
+    }
+    else if (high_yield && ctl->useful_windows >= 2) {
+        soft_decrease = 1;
+    }
+    else if (low_duty && useful_yield) {
+        soft_decrease = 1;
+    }
+    else if (low_yield && !pressure) {
+        increase = 1;
+    }
+
+    if ((hard_decrease || soft_decrease) && threshold0 > ctl->min_threshold0) {
+        int numerator = hard_decrease ? GC_ADAPTIVE_DECREASE_NUMERATOR
+                                      : GC_ADAPTIVE_SOFT_DECREASE_NUMERATOR;
+        int denominator = hard_decrease ? GC_ADAPTIVE_DECREASE_DENOMINATOR
+                                        : GC_ADAPTIVE_SOFT_DECREASE_DENOMINATOR;
+        new_threshold0 = gc_scale_threshold0(threshold0, numerator, denominator);
+        if (new_threshold0 >= threshold0) {
+            new_threshold0 = threshold0 - 1;
+        }
+        if (soft_decrease) {
+            int soft_floor = gc_multiply_threshold0(
+                ctl->min_threshold0, GC_ADAPTIVE_SOFT_FLOOR_MULTIPLIER);
+            if (threshold0 <= soft_floor) {
+                new_threshold0 = threshold0;
+            }
+            else if (new_threshold0 < soft_floor) {
+                new_threshold0 = soft_floor;
+            }
+        }
+    }
+    else if (increase) {
+        int streak = ctl->waste_windows;
+        if (streak < 1) {
+            streak = 1;
+        }
+        else if (streak > GC_ADAPTIVE_INCREASE_STREAK_LIMIT) {
+            streak = GC_ADAPTIVE_INCREASE_STREAK_LIMIT;
+        }
+        int multiplier = GC_ADAPTIVE_INCREASE_BASE_MULTIPLIER * streak;
+        if (high_duty) {
+            multiplier *= 2;
+        }
+        int step = gc_multiply_threshold0(ctl->min_threshold0, multiplier);
         if (step < 1) {
             step = 1;
         }
-        new_threshold0 = threshold0 - step;
-    }
-    else if (high_duty || low_yield) {
-        int step = pressure ? GC_ADAPTIVE_PRESSURE_INCREASE_STEP
-                            : GC_ADAPTIVE_INCREASE_STEP;
+        else if (step > GC_ADAPTIVE_MAX_INCREASE_STEP) {
+            step = GC_ADAPTIVE_MAX_INCREASE_STEP;
+        }
         if (threshold0 > ctl->max_threshold0 - step) {
             new_threshold0 = ctl->max_threshold0;
         }
         else {
             new_threshold0 = threshold0 + step;
         }
-    }
-    else if (low_duty && high_yield && threshold0 > ctl->min_threshold0) {
-        int step = threshold0 / GC_ADAPTIVE_DECREASE_DIVISOR;
-        if (step < 1) {
-            step = 1;
-        }
-        new_threshold0 = threshold0 - step;
     }
 
     gcstate->generations[0].threshold = gc_clamp_threshold0(
@@ -448,6 +535,9 @@ gc_reset_threshold_controller(GCState *gcstate)
     ctl->last_rss_pages = gc_current_rss_pages();
     ctl->last_minor_faults = -1;
     ctl->last_major_faults = -1;
+    ctl->pressure_windows = 0;
+    ctl->useful_windows = 0;
+    ctl->waste_windows = 0;
     (void)gc_page_faults(&ctl->last_minor_faults, &ctl->last_major_faults);
 }
 

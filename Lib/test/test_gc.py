@@ -440,6 +440,26 @@ class GCTests(unittest.TestCase):
                          PYTHON_GC_ADAPTIVE="1",
                          PYTHON_GC_ADAPTIVE_MAX_THRESHOLD0="900")
 
+    def test_adaptive_threshold_does_not_raise_on_useful_young_collections(self):
+        code = textwrap.dedent("""
+            import gc
+
+            gc.disable()
+            start = gc.get_threshold()
+            collected = 0
+            for _ in range(8):
+                for _ in range(1000):
+                    cycle = []
+                    cycle.append(cycle)
+                collected += gc.collect(0)
+            end = gc.get_threshold()
+
+            assert collected > 0, collected
+            assert start == (700, 10, 10), start
+            assert end == start, end
+        """)
+        assert_python_ok("-c", code, PYTHON_GC_ADAPTIVE="1")
+
     def test_trashcan(self):
         class Ouch:
             n = 0

@@ -166,6 +166,9 @@ struct gc_threshold_controller {
     Py_ssize_t last_rss_pages;
     long last_minor_faults;
     long last_major_faults;
+    int pressure_windows;
+    int useful_windows;
+    int waste_windows;
 };
 
 struct _gc_runtime_state {
