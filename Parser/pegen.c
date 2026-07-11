@@ -192,6 +192,16 @@ _get_keyword_or_name_type(Parser *p, _PyTok_Token *new_token)
 }
 
 static int
+token_bytes_are_dead(int type)
+{
+    if (type == ENDMARKER || type == NEWLINE ||
+            type == INDENT || type == DEDENT) {
+        return 1;
+    }
+    return type >= LPAR && type <= EXCLAMATION && type != NOTEQUAL;
+}
+
+static int
 initialize_token(Parser *p, Token *parser_token, _PyTok_Token *new_token,
                  int token_type) {
     assert(parser_token != NULL);
@@ -200,14 +210,17 @@ initialize_token(Parser *p, Token *parser_token, _PyTok_Token *new_token,
     if (parser_token->type < 0) {
         return -1;
     }
-    parser_token->bytes = _PyTok_TokenBytes(p->tok, new_token);
-    if (parser_token->bytes == NULL) {
-        return -1;
-    }
-    if (_PyArena_AddPyObject(p->arena, parser_token->bytes) < 0) {
-        Py_DECREF(parser_token->bytes);
-        parser_token->bytes = NULL;
-        return -1;
+    parser_token->bytes = NULL;
+    if (!token_bytes_are_dead(new_token->type)) {
+        parser_token->bytes = _PyTok_TokenBytes(p->tok, new_token);
+        if (parser_token->bytes == NULL) {
+            return -1;
+        }
+        if (_PyArena_AddPyObject(p->arena, parser_token->bytes) < 0) {
+            Py_DECREF(parser_token->bytes);
+            parser_token->bytes = NULL;
+            return -1;
+        }
     }
 
     parser_token->metadata = NULL;
