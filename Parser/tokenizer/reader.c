@@ -398,6 +398,34 @@ next_file(struct _PyTokenizer *tok, _PyTok_Chunk *chunk)
     return _PYTOK_RD_EOF;
 }
 
+static int
+append_readline_chunk(_PyTok_Chunk *target, _PyTok_Chunk *chunk)
+{
+    if (target->data == NULL) {
+        *target = *chunk;
+        *chunk = (_PyTok_Chunk){0};
+        return 0;
+    }
+    if (chunk->len > PY_SSIZE_T_MAX - target->len - 1) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    Py_ssize_t len = target->len + chunk->len;
+    char *data = PyMem_Malloc((size_t)len + 1);
+    if (data == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    memcpy(data, target->data, (size_t)target->len);
+    memcpy(data + target->len, chunk->data, (size_t)chunk->len);
+    data[len] = '\0';
+    _PyTok_ChunkClear(target);
+    _PyTok_ChunkClear(chunk);
+    target->data = data;
+    target->len = len;
+    return 0;
+}
+
 static _PyTok_ReadResult
 finish_readline_chunk(_PyTok_Chunk *chunk)
 {
@@ -439,6 +467,7 @@ next_readline(struct _PyTokenizer *tok, _PyTok_Chunk *chunk)
     if (reader->decoder_finalized) {
         return _PYTOK_RD_EOF;
     }
+    _PyTok_Chunk prefix = {0};
     for (;;) {
         PyObject *raw = PyObject_CallNoArgs(reader->readline);
         if (raw == NULL) {
@@ -449,6 +478,7 @@ next_readline(struct _PyTokenizer *tok, _PyTok_Chunk *chunk)
                 }
             }
             else {
+                _PyTok_ChunkClear(&prefix);
                 return _PYTOK_RD_ERROR;
             }
         }
@@ -458,11 +488,13 @@ next_readline(struct _PyTokenizer *tok, _PyTok_Chunk *chunk)
                 PyErr_SetString(PyExc_TypeError,
                                 "readline() returned a non-bytes object");
                 Py_DECREF(raw);
+                _PyTok_ChunkClear(&prefix);
                 return _PYTOK_RD_ERROR;
             }
             if (reader->decoder == NULL && !reader->utf8_decoder &&
                     _PyTok_StartIncrementalDecoder(tok, "replace") < 0) {
                 Py_XDECREF(raw);
+                _PyTok_ChunkClear(&prefix);
                 return _PYTOK_RD_ERROR;
             }
             Py_ssize_t raw_len = eof ? 0 : PyBytes_GET_SIZE(raw);
@@ -473,6 +505,7 @@ next_readline(struct _PyTokenizer *tok, _PyTok_Chunk *chunk)
                 chunk->data = _PyTok_CopyBytes("", 0);
                 Py_XDECREF(raw);
                 if (chunk->data == NULL) {
+                    _PyTok_ChunkClear(&prefix);
                     return _PYTOK_RD_ERROR;
                 }
             }
@@ -483,6 +516,7 @@ next_readline(struct _PyTokenizer *tok, _PyTok_Chunk *chunk)
             chunk->len = raw_len;
             if (_PyTok_DecodeIncremental(tok, chunk, eof) < 0) {
                 _PyTok_ChunkClear(chunk);
+                _PyTok_ChunkClear(&prefix);
                 return _PYTOK_RD_ERROR;
             }
         }
@@ -494,21 +528,41 @@ next_readline(struct _PyTokenizer *tok, _PyTok_Chunk *chunk)
                 PyErr_SetString(PyExc_TypeError,
                                 "readline() returned a non-string object");
                 Py_DECREF(raw);
+                _PyTok_ChunkClear(&prefix);
                 return _PYTOK_RD_ERROR;
             }
             PyObject *utf8 = PyUnicode_AsUTF8String(raw);
             Py_DECREF(raw);
             if (utf8 == NULL) {
+                _PyTok_ChunkClear(&prefix);
                 return _PYTOK_RD_ERROR;
             }
             Py_ssize_t len = PyBytes_GET_SIZE(utf8);
             if (len == 0) {
                 Py_DECREF(utf8);
+                _PyTok_ChunkClear(&prefix);
                 return _PYTOK_RD_EOF;
             }
             chunk->owner = utf8;
             chunk->data = PyBytes_AS_STRING(utf8);
             chunk->len = len;
+        }
+        if (reader->utf8_decoder && reader->utf8_pending_len != 0) {
+            if (append_readline_chunk(&prefix, chunk) < 0) {
+                _PyTok_ChunkClear(chunk);
+                _PyTok_ChunkClear(&prefix);
+                return _PYTOK_RD_ERROR;
+            }
+            continue;
+        }
+        if (prefix.data != NULL) {
+            if (append_readline_chunk(&prefix, chunk) < 0) {
+                _PyTok_ChunkClear(chunk);
+                _PyTok_ChunkClear(&prefix);
+                return _PYTOK_RD_ERROR;
+            }
+            *chunk = prefix;
+            prefix = (_PyTok_Chunk){0};
         }
         if (eof) {
             reader->decoder_finalized = 1;

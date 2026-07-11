@@ -2348,6 +2348,41 @@ class CTokenizeTest(TestCase):
             ],
         )
 
+    def test_utf8_decoder_preserves_readline_chunk(self):
+        cases = [
+            (
+                [b"x\xc3", b"\xa9\n", b""],
+                [
+                    (token.NAME, "xé", (1, 0), (1, 2), "xé\n"),
+                    (token.NEWLINE, "\n", (1, 2), (1, 3), "xé\n"),
+                    (token.ENDMARKER, "", (2, 0), (2, 0), ""),
+                ],
+            ),
+            (
+                [b"x\xe9", b""],
+                [
+                    (token.NAME, "x�", (1, 0), (1, 2), "x�"),
+                    (token.NEWLINE, "", (1, 2), (1, 3), "x�"),
+                    (token.ENDMARKER, "", (2, 0), (2, 0), ""),
+                ],
+            ),
+        ]
+        for chunks, expected in cases:
+            with self.subTest(chunks=chunks):
+                lines = iter(chunks)
+                tokens = tokenize._generate_tokens_from_c_tokenizer(
+                    lines.__next__,
+                    extra_tokens=True,
+                    encoding="utf-8",
+                )
+                self.assertEqual(
+                    [
+                        (tok.type, tok.string, tok.start, tok.end, tok.line)
+                        for tok in tokens
+                    ],
+                    expected,
+                )
+
     def test_encoded_readline_replaces_invalid_bytes(self):
         lines = iter([b"\xff\n", b""])
         tokens = list(tokenize._generate_tokens_from_c_tokenizer(
