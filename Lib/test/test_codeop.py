@@ -2,6 +2,7 @@
    Test cases for codeop.py
    Nick Mathewson
 """
+import builtins
 import unittest
 import warnings
 from test.support import subTests, warnings_helper
@@ -9,14 +10,17 @@ from textwrap import dedent
 import functools
 
 from codeop import compile_command, CommandCompiler, Compile
-from codeop import PyCF_DONT_IMPLY_DEDENT, PyCF_ONLY_AST
+from codeop import (
+    PyCF_ALLOW_INCOMPLETE_INPUT,
+    PyCF_DONT_IMPLY_DEDENT,
+    PyCF_ONLY_AST,
+)
 import ast
 
 
 WRAPPING_COMPILERS = [compile_command, CommandCompiler()]
 RAW_COMPILERS = [Compile()]
 COMPILERS = WRAPPING_COMPILERS + RAW_COMPILERS
-
 
 class CodeopTests(unittest.TestCase):
     def assertValid(self, str, symbol='single', *, compiler):
@@ -247,6 +251,72 @@ class CodeopTests(unittest.TestCase):
 
         ai('a = f"""')
         ai('a = \\')
+
+    def test_tokenizer_incomplete_input_classification(self):
+        cases = [
+            (
+                "x = 'abc",
+                "single",
+                builtins._IncompleteInputError,
+                ("incomplete input", 1, 5, 1, -1),
+            ),
+            (
+                'f"""abc',
+                "single",
+                builtins._IncompleteInputError,
+                ("incomplete input", 1, 1, 1, -1),
+            ),
+            (
+                "x = \\\n",
+                "single",
+                builtins._IncompleteInputError,
+                ("incomplete input", 1, 6, 1, -1),
+            ),
+            (
+                "x = 'abc",
+                "exec",
+                SyntaxError,
+                (
+                    "unterminated string literal (detected at line 1)",
+                    1, 5, 1, 5,
+                ),
+            ),
+            (
+                'f"abc',
+                "single",
+                SyntaxError,
+                (
+                    "unterminated f-string literal (detected at line 1)",
+                    1, 1, 1, 1,
+                ),
+            ),
+            (
+                "x = \\",
+                "single",
+                SyntaxError,
+                (
+                    "unexpected character after line continuation character",
+                    1, 5, 1, 0,
+                ),
+            ),
+        ]
+
+        for source, mode, exception_type, expected in cases:
+            with self.subTest(source=source, mode=mode):
+                with self.assertRaises(exception_type) as caught:
+                    compile(
+                        source,
+                        "<test>",
+                        mode,
+                        PyCF_ALLOW_INCOMPLETE_INPUT,
+                    )
+                self.assertIs(type(caught.exception), exception_type)
+                error = caught.exception
+                self.assertEqual(
+                    (error.msg, error.lineno, error.offset,
+                     error.end_lineno, error.end_offset),
+                    expected,
+                )
 
     @subTests('compiler', COMPILERS)
     def test_invalid(self, compiler):

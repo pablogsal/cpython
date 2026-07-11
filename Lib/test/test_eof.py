@@ -126,7 +126,7 @@ class EOFTestCase(unittest.TestCase):
     @unittest.skipIf(not sys.executable, "sys.executable required")
     @force_not_colorized
     def test_line_continuation_EOF_from_file_bpo2180(self):
-        """Ensure tok_nextc() does not add too many ending newlines."""
+        """Ensure physical-file EOF does not add too many ending newlines."""
         with os_helper.temp_dir() as temp_dir:
             file_name = script_helper.make_script(temp_dir, 'foo', '\\')
             rc, out, err = script_helper.assert_python_failure('-X', 'utf8', file_name)

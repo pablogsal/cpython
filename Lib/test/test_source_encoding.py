@@ -82,6 +82,45 @@ class MiscSourceEncodingTest(unittest.TestCase):
             with self.subTest(seq=seq):
                 self.assertRaises(SyntaxError, compile, seq, '<test>', 'exec')
 
+    def test_invalid_utf8_offset_after_non_ascii(self):
+        with self.assertRaises(SyntaxError) as caught:
+            compile(b"x = \xc3\xa9\xff\n", "<test>", "exec")
+        error = caught.exception
+        self.assertEqual(
+            (error.lineno, error.offset, error.end_lineno, error.end_offset),
+            (1, 6, 1, 6),
+        )
+
+    def test_unbounded_bom_conflict_message(self):
+        encoding = "x" * 400
+        source = b"\xef\xbb\xbf# coding:" + encoding.encode() + b"\n"
+        with self.assertRaises(SyntaxError) as caught:
+            compile(source, "<test>", "exec")
+        self.assertEqual(
+            caught.exception.msg,
+            f"encoding problem: {encoding} with BOM",
+        )
+
+    @support.requires_subprocess()
+    def test_stateful_file_decoder_spans_lines(self):
+        encoded_name = "変数".encode("iso2022_jp")
+        payload = encoded_name[3:-3]
+        source = (
+            b"# coding: iso2022_jp\n"
+            b"# \x1b$B" + payload + b"\n"
+            + payload + b"\x1b(B = 1\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            filename = os.path.join(directory, "stateful.py")
+            with open(filename, "wb") as file:
+                file.write(source)
+            process = subprocess.run(
+                [sys.executable, filename],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
     @support.requires_subprocess()
     def test_20731(self):
         sub = subprocess.Popen([sys.executable,

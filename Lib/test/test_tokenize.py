@@ -7,6 +7,7 @@ import tempfile
 import token
 import tokenize
 import unittest
+import _tokenize
 from io import BytesIO, StringIO
 from textwrap import dedent
 from unittest import TestCase, mock
@@ -2273,6 +2274,31 @@ class CTokenizeTest(TestCase):
                 ))
                 self.assertEqual(tokens, expected)
 
+    def test_encoded_readline_replaces_invalid_bytes(self):
+        lines = iter([b"\xff\n", b""])
+        tokens = list(tokenize._generate_tokens_from_c_tokenizer(
+            lines.__next__,
+            extra_tokens=True,
+            encoding="utf-8",
+        ))
+        self.assertEqual(
+            [(tok.type, tok.string) for tok in tokens],
+            [
+                (token.NAME, "�"),
+                (token.NEWLINE, "\n"),
+                (token.ENDMARKER, ""),
+            ],
+        )
+
+    def test_encoded_readline_codec_lookup_is_lazy(self):
+        iterator = _tokenize.TokenizerIter(
+            lambda: b"",
+            extra_tokens=True,
+            encoding="missing-tokenizer-codec",
+        )
+        with self.assertRaises(LookupError):
+            next(iterator)
+
     def test_extra_tokens_relaxes_lexer_errors(self):
         cases = [
             (
@@ -2406,6 +2432,38 @@ class CTokenizeTest(TestCase):
                 (token.FSTRING_END, '"', (1, 5), (1, 6)),
             ],
         )
+
+    def test_unclosed_parenthesis_error_uses_buffer_relative_position(self):
+        for extra_tokens in (False, True):
+            with self.subTest(extra_tokens=extra_tokens):
+                with self.assertRaises(tokenize.TokenError) as caught:
+                    self._get_tokens("é = (\n", extra_tokens=extra_tokens)
+                self.assertEqual(
+                    caught.exception.args,
+                    ("unexpected EOF in multi-line statement", (1, 0)),
+                )
+
+    def test_line_continuation_error_uses_logical_line_position(self):
+        cases = [
+            ("é \\'f\n", (1, 6)),
+            ("x1\\\n==\\_", (2, 9)),
+        ]
+        for extra_tokens in (False, True):
+            for source, position in cases:
+                with self.subTest(
+                    source=source,
+                    extra_tokens=extra_tokens,
+                ):
+                    with self.assertRaises(tokenize.TokenError) as caught:
+                        self._get_tokens(source, extra_tokens=extra_tokens)
+                    self.assertEqual(
+                        caught.exception.args,
+                        (
+                            "unexpected character after line continuation "
+                            "character",
+                            position,
+                        ),
+                    )
 
     def test_tolerant_incompatible_prefix_position_after_non_ascii(self):
         with self.assertRaises(tokenize.TokenError) as caught:
