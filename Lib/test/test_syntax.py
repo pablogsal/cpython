@@ -3088,6 +3088,24 @@ class SyntaxErrorTestCase(unittest.TestCase):
     def test_curly_brace_after_primary_raises_immediately(self):
         self._check_error("f{}", "invalid syntax", mode="single")
 
+    def test_tokenizer_eof_error_offsets_after_non_ascii(self):
+        self._check_error(
+            "é + (",
+            re.escape("'(' was never closed"),
+            lineno=1,
+            offset=5,
+            end_lineno=1,
+            end_offset=0,
+        )
+        self._check_error(
+            "é + \\\n",
+            "unexpected EOF while parsing",
+            lineno=1,
+            offset=6,
+            end_lineno=1,
+            end_offset=-1,
+        )
+
     def test_assign_call(self):
         self._check_error("f() = 1", "assign")
 

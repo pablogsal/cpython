@@ -57,8 +57,8 @@
 #define MAX_FRAME_DEPTH 100
 #define DEFAULT_MAX_NTHREADS 100
 
-/* Function from Parser/tokenizer/file_tokenizer.c */
-extern char* _PyTokenizer_FindEncodingFilename(int, PyObject *);
+/* Function from Parser/tokenizer/reader.c */
+extern char* _PyTok_FindEncodingFilename(int, PyObject *);
 
 /*[clinic input]
 class traceback "PyTracebackObject *" "&PyTraceback_Type"
@@ -535,7 +535,7 @@ display_source_line(PyObject *f, PyObject *filename, int lineno, int indent,
         Py_DECREF(binary);
         return 0;
     }
-    found_encoding = _PyTokenizer_FindEncodingFilename(fd, filename);
+    found_encoding = _PyTok_FindEncodingFilename(fd, filename);
     if (found_encoding == NULL)
         PyErr_Clear();
     encoding = (found_encoding != NULL) ? found_encoding : "utf-8";

@@ -2050,8 +2050,8 @@ PyErr_ProgramText(const char *filename, int lineno)
     return res;
 }
 
-/* Function from Parser/tokenizer/file_tokenizer.c */
-extern char* _PyTokenizer_FindEncodingFilename(int, PyObject *);
+/* Function from Parser/tokenizer/reader.c */
+extern char* _PyTok_FindEncodingFilename(int, PyObject *);
 
 PyObject *
 _PyErr_ProgramDecodedTextObject(PyObject *filename, int lineno, const char* encoding)
@@ -2068,7 +2068,7 @@ _PyErr_ProgramDecodedTextObject(PyObject *filename, int lineno, const char* enco
     }
     if (encoding == NULL) {
         int fd = fileno(fp);
-        found_encoding = _PyTokenizer_FindEncodingFilename(fd, filename);
+        found_encoding = _PyTok_FindEncodingFilename(fd, filename);
         encoding = found_encoding;
         if (encoding == NULL) {
             PyErr_Clear();

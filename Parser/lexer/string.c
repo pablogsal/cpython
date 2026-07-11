@@ -1,549 +1,604 @@
 #include "Python.h"
 #include "pycore_token.h"
-#include "errcode.h"
+#include "pycore_unicodeobject.h"
 
 #include "lexer_internal.h"
+#include "../tokenizer/errors.h"
 #include "../tokenizer/helpers.h"
 
-#define MAKE_TOKEN(token_type) _PyLexer_token_setup(tok, token, token_type, p_start, p_end)
-
-int
-_PyLexer_set_ftstring_expr(struct tok_state* tok, struct token *token, char c) {
-    assert(token != NULL);
-    assert(c == '}' || c == ':' || c == '!');
-    tokenizer_mode *tok_mode = TOK_GET_MODE(tok);
-
-    if (!(tok_mode->in_debug || tok_mode->string_kind == TSTRING) || token->metadata) {
-        return 0;
-    }
-    PyObject *res = NULL;
-
-    // Look for a # character outside of string literals
-    int hash_detected = 0;
-    int in_string = 0;
-    char quote_char = 0;
-
-    for (Py_ssize_t i = 0; i < tok_mode->last_expr_size - tok_mode->last_expr_end; i++) {
-        char ch = tok_mode->last_expr_buffer[i];
-
-        // Skip escaped characters
-        if (ch == '\\') {
-            i++;
-            continue;
-        }
-
-        // Handle quotes
-        if (ch == '"' || ch == '\'') {
-            // The following if/else block works becase there is an off number
-            // of quotes in STRING tokens and the lexer only ever reaches this
-            // function with valid STRING tokens.
-            // For example: """hello"""
-            // First quote: in_string = 1
-            // Second quote: in_string = 0
-            // Third quote: in_string = 1
-            if (!in_string) {
-                in_string = 1;
-                quote_char = ch;
-            }
-            else if (ch == quote_char) {
-                in_string = 0;
-            }
-            continue;
-        }
-
-        // Check for # outside strings
-        if (ch == '#' && !in_string) {
-            hash_detected = 1;
-            break;
-        }
-    }
-    // If we found a # character in the expression, we need to handle comments
-    if (hash_detected) {
-        // Allocate buffer for processed result
-        char *result = (char *)PyMem_Malloc((tok_mode->last_expr_size - tok_mode->last_expr_end + 1) * sizeof(char));
-        if (!result) {
-            return -1;
-        }
-
-        Py_ssize_t i = 0;  // Input position
-        Py_ssize_t j = 0;  // Output position
-        in_string = 0;     // Whether we're in a string
-        quote_char = 0;    // Current string quote char
-
-        // Process each character
-        while (i < tok_mode->last_expr_size - tok_mode->last_expr_end) {
-            char ch = tok_mode->last_expr_buffer[i];
-
-            // Handle string quotes
-            if (ch == '"' || ch == '\'') {
-                // See comment above to understand this part
-                if (!in_string) {
-                    in_string = 1;
-                    quote_char = ch;
-                } else if (ch == quote_char) {
-                    in_string = 0;
-                }
-                result[j++] = ch;
-            }
-            // Skip comments
-            else if (ch == '#' && !in_string) {
-                while (i < tok_mode->last_expr_size - tok_mode->last_expr_end &&
-                       tok_mode->last_expr_buffer[i] != '\n') {
-                    i++;
-                }
-                if (i < tok_mode->last_expr_size - tok_mode->last_expr_end) {
-                    result[j++] = '\n';
-                }
-            }
-            // Copy other chars
-            else {
-                result[j++] = ch;
-            }
-            i++;
-        }
-
-        result[j] = '\0';  // Null-terminate the result string
-        res = PyUnicode_DecodeUTF8(result, j, NULL);
-        PyMem_Free(result);
-    } else {
-        res = PyUnicode_DecodeUTF8(
-            tok_mode->last_expr_buffer,
-            tok_mode->last_expr_size - tok_mode->last_expr_end,
-            NULL
-        );
-    }
-
-    if (!res) {
-        return -1;
-    }
-    token->metadata = res;
-    return 0;
+static inline int
+frame_middle_token(const _PyTok_Frame *frame)
+{
+    return frame->string_kind == _PYTOK_TSTRING
+        ? TSTRING_MIDDLE
+        : FSTRING_MIDDLE;
 }
 
-int
-_PyLexer_update_ftstring_expr(struct tok_state *tok, char cur)
+static inline int
+frame_end_token(const _PyTok_Frame *frame)
 {
-    assert(tok->cur != NULL);
+    return frame->string_kind == _PYTOK_TSTRING
+        ? TSTRING_END
+        : FSTRING_END;
+}
 
-    Py_ssize_t size = strlen(tok->cur);
-    tokenizer_mode *tok_mode = TOK_GET_MODE(tok);
+static inline char
+current_string_prefix(struct _PyTokenizer *tok)
+{
+    return _PyTok_CurrentFrame(tok)->string_kind == _PYTOK_TSTRING ? 't' : 'f';
+}
+
+static _PyTok_Loc
+source_location(struct _PyTokenizer *tok, _PyTok_Off offset)
+{
+    _PyTok_Loc loc;
+    int result = _PyTok_SourceLocation(&tok->source, offset, &loc);
+    assert(result == 0);
+    (void)result;
+    return loc;
+}
+
+static int
+frame_body_depth(struct _PyTokenizer *tok)
+{
+    int depth = 0;
+    for (int i = 1; i <= tok->frame_index; i++) {
+        depth += tok->frames[i].kind == _PYTOK_FRAME_FSTRING_BODY;
+    }
+    return depth;
+}
+
+static int
+frame_body_paren_depth(struct _PyTokenizer *tok)
+{
+    for (int i = tok->frame_index; i > 0; i--) {
+        _PyTok_Frame *frame = &tok->frames[i];
+        if (frame->kind == _PYTOK_FRAME_FSTRING_BODY) {
+            return frame->paren_depth_at_entry;
+        }
+    }
+    Py_UNREACHABLE();
+}
+
+static _PyTok_Frame *
+frame_push(struct _PyTokenizer *tok, _PyTok_FrameKind kind)
+{
+    if (tok->frame_index + 1 >= _PYTOK_MAX_FRAMES) {
+        _PyTok_SyntaxError(tok, "too many nested tokenizer frames");
+        return NULL;
+    }
+    _PyTok_Frame *parent = _PyTok_CurrentFrame(tok);
+    _PyTok_Frame *frame = &tok->frames[++tok->frame_index];
+    *frame = (_PyTok_Frame){
+        .kind = kind,
+        .paren_depth_at_entry = tok->level,
+        .quote = parent->quote,
+        .quote_size = parent->quote_size,
+        .raw = parent->raw,
+        .body_start = parent->body_start,
+        .debug_expr_start = -1,
+        .debug_expr_end = -1,
+        .string_kind = parent->string_kind,
+    };
+    return frame;
+}
+
+static _PyTok_Frame *
+frame_pop(struct _PyTokenizer *tok)
+{
+    assert(tok->frame_index > 0);
+    tok->frame_index--;
+    _PyTok_Frame *frame = _PyTok_CurrentFrame(tok);
+    if (frame->kind == _PYTOK_FRAME_FORMAT_SPEC) {
+        frame->spec_degraded = 1;
+    }
+    return frame;
+}
+
+static void
+frame_pop_fstring(struct _PyTokenizer *tok)
+{
+    while (tok->frame_index > 0 &&
+            _PyTok_CurrentFrame(tok)->kind != _PYTOK_FRAME_FSTRING_BODY) {
+        frame_pop(tok);
+    }
+    assert(tok->frame_index > 0);
+    frame_pop(tok);
+}
+
+static int
+frame_expr_depth(struct _PyTokenizer *tok)
+{
+    int depth = 0;
+    for (int i = tok->frame_index; i > 0; i--) {
+        _PyTok_Frame *frame = &tok->frames[i];
+        if (frame->kind == _PYTOK_FRAME_FSTRING_BODY) {
+            break;
+        }
+        depth += frame->kind == _PYTOK_FRAME_FSTRING_EXPR;
+    }
+    return depth;
+}
+
+static int
+materialize_frame_metadata(struct _PyTokenizer* tok, _PyTok_Token *token, char c) {
+    assert(token != NULL);
+    assert(c == '}' || c == ':' || c == '!');
+    _PyTok_Frame *frame = _PyTok_CurrentFrame(tok);
+
+    if (!(frame->in_debug || frame->string_kind == _PYTOK_TSTRING) || token->metadata) {
+        return 0;
+    }
+    if (frame->debug_expr_start < 0 ||
+            frame->debug_expr_end < frame->debug_expr_start ||
+            frame->debug_expr_end > tok->source.len) {
+        _PyTok_RecordCurrentError(
+            tok, _PYTOK_ERR_SYNTAX,
+            "invalid f-string expression span");
+        return -1;
+    }
+    _PyTok_Span span = _PyTok_SpanFromBounds(
+        frame->debug_expr_start, frame->debug_expr_end);
+    return tok->seam->intern_metadata(tok, span, &token->metadata);
+}
+
+static void
+update_debug_span(struct _PyTokenizer *tok, char cur)
+{
+    assert(tok->cursor.cache != NULL);
+    _PyTok_Frame *frame = _PyTok_CurrentFrame(tok);
 
     switch (cur) {
-       case 0:
-            if (!tok_mode->last_expr_buffer || tok_mode->last_expr_end >= 0) {
-                return 1;
-            }
-            char *new_buffer = PyMem_Realloc(
-                tok_mode->last_expr_buffer,
-                tok_mode->last_expr_size + size
-            );
-            if (new_buffer == NULL) {
-                PyMem_Free(tok_mode->last_expr_buffer);
-                goto error;
-            }
-            tok_mode->last_expr_buffer = new_buffer;
-            strncpy(tok_mode->last_expr_buffer + tok_mode->last_expr_size, tok->cur, size);
-            tok_mode->last_expr_size += size;
+        case 0:
             break;
         case '{':
-            if (tok_mode->last_expr_buffer != NULL) {
-                PyMem_Free(tok_mode->last_expr_buffer);
-            }
-            tok_mode->last_expr_buffer = PyMem_Malloc(size);
-            if (tok_mode->last_expr_buffer == NULL) {
-                goto error;
-            }
-            tok_mode->last_expr_size = size;
-            tok_mode->last_expr_end = -1;
-            strncpy(tok_mode->last_expr_buffer, tok->cur, size);
+            frame->debug_expr_start = tok->cursor.pos;
+            frame->debug_expr_end = -1;
             break;
         case '}':
         case '!':
-            tok_mode->last_expr_end = strlen(tok->start);
+            frame->debug_expr_end = tok->start;
             break;
         case ':':
-            if (tok_mode->last_expr_end == -1) {
-               tok_mode->last_expr_end = strlen(tok->start);
+            if (frame->debug_expr_end < 0) {
+                frame->debug_expr_end = tok->start;
             }
             break;
         default:
             Py_UNREACHABLE();
     }
-    return 1;
-error:
-    tok->done = E_NOMEM;
-    return 0;
+}
+
+static int
+incompatible_prefixes(struct _PyTokenizer *tok, const char *first,
+                      const char *second)
+{
+    (void)_PyTok_SyntaxErrorRange(
+        tok, (int)(tok->start + 1 - tok->cursor.line_start),
+        (int)(tok->cursor.pos - tok->cursor.line_start),
+        "'%s' and '%s' prefixes are incompatible", first, second);
+    tok->error.columns_are_chars = 1;
+    return -1;
 }
 
 int
-_PyLexer_check_string_prefixes(struct tok_state *tok,
+_PyTok_CheckStringPrefixes(struct _PyTokenizer *tok,
                                              int saw_b, int saw_r, int saw_u,
                                              int saw_f, int saw_t) {
-    // Supported: rb, rf, rt (in any order)
-    // Unsupported: ub, ur, uf, ut, bf, bt, ft (in any order)
-
-#define RETURN_SYNTAX_ERROR(PREFIX1, PREFIX2)                             \
-    do {                                                                  \
-        (void)_PyTokenizer_syntaxerror_known_range(                       \
-            tok, (int)(tok->start + 1 - tok->line_start),                 \
-            (int)(tok->cur - tok->line_start),                            \
-            "'" PREFIX1 "' and '" PREFIX2 "' prefixes are incompatible"); \
-        return -1;                                                        \
-    } while (0)
-
     if (saw_u && saw_b) {
-        RETURN_SYNTAX_ERROR("u", "b");
+        return incompatible_prefixes(tok, "u", "b");
     }
     if (saw_u && saw_r) {
-        RETURN_SYNTAX_ERROR("u", "r");
+        return incompatible_prefixes(tok, "u", "r");
     }
     if (saw_u && saw_f) {
-        RETURN_SYNTAX_ERROR("u", "f");
+        return incompatible_prefixes(tok, "u", "f");
     }
     if (saw_u && saw_t) {
-        RETURN_SYNTAX_ERROR("u", "t");
+        return incompatible_prefixes(tok, "u", "t");
     }
 
     if (saw_b && saw_f) {
-        RETURN_SYNTAX_ERROR("b", "f");
+        return incompatible_prefixes(tok, "b", "f");
     }
     if (saw_b && saw_t) {
-        RETURN_SYNTAX_ERROR("b", "t");
+        return incompatible_prefixes(tok, "b", "t");
     }
 
     if (saw_f && saw_t) {
-        RETURN_SYNTAX_ERROR("f", "t");
+        return incompatible_prefixes(tok, "f", "t");
     }
-
-#undef RETURN_SYNTAX_ERROR
 
     return 0;
 }
 
 int
-_PyLexer_scan_fstring_start(struct tok_state *tok, struct token *token, int c)
+_PyTok_LexFStringStart(struct _PyTokenizer *tok, _PyTok_Token *token, int quote)
 {
-    const char *p_start = NULL;
-    const char *p_end = NULL;
-
-    int quote = c;
-    int quote_size = 1;             /* 1 or 3 */
-
-    /* Nodes of type STRING, especially multi line strings
-       must be handled differently in order to get both
-       the starting line number and the column offset right.
-       (cf. issue 16806) */
-    tok->first_lineno = tok->lineno;
-    tok->multi_line_start = tok->line_start;
-
-    /* Find the quote size and start of string */
-    int after_quote = tok_nextc(tok);
-    if (after_quote == quote) {
-        int after_after_quote = tok_nextc(tok);
-        if (after_after_quote == quote) {
-            quote_size = 3;
-        }
-        else {
-            // TODO: Check this
-            tok_backup(tok, after_after_quote);
-            tok_backup(tok, after_quote);
-        }
-    }
-    if (after_quote != quote) {
-        tok_backup(tok, after_quote);
+    _PyTok_Off start = tok->start;
+    const char *token_start = tok->source.bytes + start;
+    int quote_size = 1;
+    if (_PyTok_CursorPeek(tok, 0) == quote &&
+            _PyTok_CursorPeek(tok, 1) == quote) {
+        (void)_PyTok_CursorAdvance(tok);
+        (void)_PyTok_CursorAdvance(tok);
+        quote_size = 3;
     }
 
-
-    p_start = tok->start;
-    p_end = tok->cur;
-    if (tok->tok_mode_stack_index + 1 >= MAXFSTRINGLEVEL) {
-        return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok, "too many nested f-strings or t-strings"));
+    _PyTok_Off end = tok->cursor.pos;
+    if (frame_body_depth(tok) >= MAXFSTRINGLEVEL) {
+        return _PyTok_EmitToken(
+            tok, token,
+            _PyTok_SyntaxError(
+                tok, "too many nested f-strings or t-strings"),
+            start, end);
     }
-    tokenizer_mode *the_current_tok = TOK_NEXT_MODE(tok);
-    the_current_tok->kind = TOK_FSTRING_MODE;
-    the_current_tok->quote = quote;
-    the_current_tok->quote_size = quote_size;
-    the_current_tok->start = tok->start;
-    the_current_tok->multi_line_start = tok->line_start;
-    the_current_tok->first_line = tok->lineno;
-    the_current_tok->start_offset = -1;
-    the_current_tok->multi_line_start_offset = -1;
-    the_current_tok->last_expr_buffer = NULL;
-    the_current_tok->last_expr_size = 0;
-    the_current_tok->last_expr_end = -1;
-    the_current_tok->in_format_spec = 0;
-    the_current_tok->in_debug = 0;
+    _PyTok_Frame *frame = frame_push(tok, _PYTOK_FRAME_FSTRING_BODY);
+    if (frame == NULL) {
+        return _PyTok_EmitToken(tok, token, ERRORTOKEN, start, end);
+    }
+    frame->quote = quote;
+    frame->quote_size = quote_size;
+    frame->body_start = start;
 
-    enum string_kind_t string_kind = FSTRING;
-    switch (*tok->start) {
+    _PyTok_StringKind string_kind = _PYTOK_FSTRING;
+    switch (*token_start) {
         case 'T':
         case 't':
-            the_current_tok->raw = Py_TOLOWER(*(tok->start + 1)) == 'r';
-            string_kind = TSTRING;
+            frame->raw = Py_TOLOWER(token_start[1]) == 'r';
+            string_kind = _PYTOK_TSTRING;
             break;
         case 'F':
         case 'f':
-            the_current_tok->raw = Py_TOLOWER(*(tok->start + 1)) == 'r';
+            frame->raw = Py_TOLOWER(token_start[1]) == 'r';
             break;
         case 'R':
         case 'r':
-            the_current_tok->raw = 1;
-            if (Py_TOLOWER(*(tok->start + 1)) == 't') {
-                string_kind = TSTRING;
+            frame->raw = 1;
+            if (Py_TOLOWER(token_start[1]) == 't') {
+                string_kind = _PYTOK_TSTRING;
             }
             break;
         default:
             Py_UNREACHABLE();
     }
-
-    the_current_tok->string_kind = string_kind;
-    the_current_tok->curly_bracket_depth = 0;
-    the_current_tok->curly_bracket_expr_start_depth = -1;
-    return string_kind == TSTRING ? MAKE_TOKEN(TSTRING_START) : MAKE_TOKEN(FSTRING_START);
+    frame->string_kind = string_kind;
+    int type = string_kind == _PYTOK_TSTRING ? TSTRING_START : FSTRING_START;
+    return _PyTok_EmitToken(tok, token, type, start, end);
 }
 
 int
-_PyLexer_scan_string(struct tok_state *tok, struct token *token, int c)
+_PyTok_LexString(struct _PyTokenizer *tok, _PyTok_Token *token, int quote)
 {
-    const char *p_start = NULL;
-    const char *p_end = NULL;
-
-    int quote = c;
-    int quote_size = 1;             /* 1 or 3 */
+    _PyTok_Off start = tok->start;
+    int quote_size = 1;
     int end_quote_size = 0;
     int has_escaped_quote = 0;
-
-    /* Nodes of type STRING, especially multi line strings
-       must be handled differently in order to get both
-       the starting line number and the column offset right.
-       (cf. issue 16806) */
-    tok->first_lineno = tok->lineno;
-    tok->multi_line_start = tok->line_start;
-
-    /* Find the quote size and start of string */
-    c = tok_nextc(tok);
-    if (c == quote) {
-        c = tok_nextc(tok);
-        if (c == quote) {
-            quote_size = 3;
-        }
-        else {
-            end_quote_size = 1;     /* empty string found */
-        }
-    }
-    if (c != quote) {
-        tok_backup(tok, c);
+    if (_PyTok_CursorPeek(tok, 0) == quote &&
+            _PyTok_CursorPeek(tok, 1) == quote) {
+        (void)_PyTok_CursorAdvance(tok);
+        (void)_PyTok_CursorAdvance(tok);
+        quote_size = 3;
     }
 
-    /* Get rest of string */
     while (end_quote_size != quote_size) {
-        c = tok_nextc(tok);
-        if (tok->done == E_ERROR) {
-            return MAKE_TOKEN(ERRORTOKEN);
-        }
-        if (tok->done == E_DECODE) {
-            break;
+        int c = _PyTok_CursorAdvance(tok);
+        if (_PyTok_HasError(tok)) {
+            return _PyTok_EmitToken(tok, token, ERRORTOKEN, -1, -1);
         }
         if (c == EOF || (quote_size == 1 && c == '\n')) {
-            assert(tok->multi_line_start != NULL);
-            // shift the tok_state's location into
-            // the start of string, and report the error
-            // from the initial quote character
-            tok->cur = (char *)tok->start;
-            tok->cur++;
-            tok->line_start = tok->multi_line_start;
-            int start = tok->lineno;
-            tok->lineno = tok->first_lineno;
-
+            int detected_line = tok->lineno;
+            _PyTok_Loc loc = source_location(tok, start + 1);
             if (INSIDE_FSTRING(tok)) {
-                /* When we are in an f-string, before raising the
-                 * unterminated string literal error, check whether
-                 * does the initial quote matches with f-strings quotes
-                 * and if it is, then this must be a missing '}' token
-                 * so raise the proper error */
-                tokenizer_mode *the_current_tok = TOK_GET_MODE(tok);
-                if (the_current_tok->quote == quote &&
-                    the_current_tok->quote_size == quote_size) {
-                    return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok,
-                        "%c-string: expecting '}'", TOK_GET_STRING_PREFIX(tok)));
+                _PyTok_Frame *frame = _PyTok_CurrentFrame(tok);
+                if (frame->quote == quote && frame->quote_size == quote_size) {
+                    int type = _PyTok_FormattedErrorAt(
+                        tok, _PYTOK_ERR_SYNTAX, loc, loc, loc.lineno,
+                        "%c-string: expecting '}'",
+                        current_string_prefix(tok));
+                    return _PyTok_EmitToken(tok, token, type, -1, -1);
                 }
             }
 
+            _PyTok_ErrKind kind = _PYTOK_ERR_SYNTAX;
+            if (c != '\n') {
+                kind = quote_size == 3
+                    ? _PYTOK_ERR_EOF_IN_STRING
+                    : _PYTOK_ERR_EOL_IN_STRING;
+            }
             if (quote_size == 3) {
-                _PyTokenizer_syntaxerror(tok, "unterminated triple-quoted string literal"
-                                 " (detected at line %d)", start);
-                if (c != '\n') {
-                    tok->done = E_EOFS;
-                }
-                return MAKE_TOKEN(ERRORTOKEN);
+                _PyTok_FormattedErrorAt(
+                    tok, kind, loc, loc, loc.lineno,
+                    "unterminated triple-quoted string literal"
+                    " (detected at line %d)", detected_line);
+            }
+            else if (has_escaped_quote) {
+                _PyTok_FormattedErrorAt(
+                    tok, kind, loc, loc, loc.lineno,
+                    "unterminated string literal (detected at line %d); "
+                    "perhaps you escaped the end quote?", detected_line);
             }
             else {
-                if (has_escaped_quote) {
-                    _PyTokenizer_syntaxerror(
-                        tok,
-                        "unterminated string literal (detected at line %d); "
-                        "perhaps you escaped the end quote?",
-                        start
-                    );
-                } else {
-                    _PyTokenizer_syntaxerror(
-                        tok, "unterminated string literal (detected at line %d)", start
-                    );
-                }
-                if (c != '\n') {
-                    tok->done = E_EOLS;
-                }
-                return MAKE_TOKEN(ERRORTOKEN);
+                _PyTok_FormattedErrorAt(
+                    tok, kind, loc, loc, loc.lineno,
+                    "unterminated string literal (detected at line %d)",
+                    detected_line);
             }
+            return _PyTok_EmitToken(tok, token, ERRORTOKEN, -1, -1);
         }
         if (c == quote) {
-            end_quote_size += 1;
+            end_quote_size++;
         }
         else {
             end_quote_size = 0;
             if (c == '\\') {
-                c = tok_nextc(tok);  /* skip escaped char */
-                if (c == quote) {  /* but record whether the escaped char was a quote */
+                c = _PyTok_CursorAdvance(tok);
+                if (c == quote) {
                     has_escaped_quote = 1;
                 }
                 if (c == '\r') {
-                    c = tok_nextc(tok);
+                    (void)_PyTok_CursorAdvance(tok);
                 }
             }
         }
     }
-
-    p_start = tok->start;
-    p_end = tok->cur;
-    return MAKE_TOKEN(STRING);
+    return _PyTok_EmitToken(tok, token, STRING, start, tok->cursor.pos);
 }
 
 int
-_PyLexer_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct token *token)
+_PyTok_LexOperator(struct _PyTokenizer *tok, _PyTok_Frame *frame,
+                   _PyTok_Token *token, int c)
 {
-    const char *p_start = NULL;
-    const char *p_end = NULL;
+    _PyTok_Off p_start = -1;
+    _PyTok_Off p_end = -1;
+    /* Punctuation character */
+    int is_punctuation = (c == ':' || c == '}' || c == '!' || c == '{');
+    int is_not_equal = c == '!' && _PyTok_CursorPeek(tok, 0) == '=';
+    if (is_punctuation && !is_not_equal && INSIDE_FSTRING(tok) &&
+            INSIDE_FSTRING_EXPR(frame)) {
+        int relative_depth =
+            tok->level - frame->paren_depth_at_entry - (c != '{');
+        int valid_depth = relative_depth == 0 ||
+            (relative_depth == 1 && frame->in_debug);
+        if (valid_depth) {
+            update_debug_span(tok, c);
+        }
+        if (valid_depth && c != '{' &&
+                materialize_frame_metadata(tok, token, c)) {
+            return _PyTok_EmitToken(tok, token, ERRORTOKEN, p_start, p_end);
+        }
+
+        if (c == ':' && relative_depth == 0) {
+            if (frame_push(tok, _PYTOK_FRAME_FORMAT_SPEC) == NULL) {
+                return _PyTok_EmitToken(tok, token, ERRORTOKEN, p_start, p_end);
+            }
+            p_start = tok->start;
+            p_end = tok->cursor.pos;
+            return _PyTok_EmitToken(tok, token, _PyToken_OneChar(c), p_start, p_end);
+        }
+    }
+
+    int c2 = _PyTok_CursorPeek(tok, 0);
+    int current_token = _PyToken_TwoChars(c, c2);
+    if (current_token != OP) {
+        (void)_PyTok_CursorAdvance(tok);
+        int c3 = _PyTok_CursorPeek(tok, 0);
+        int current_token3 = _PyToken_ThreeChars(c, c2, c3);
+        if (current_token3 != OP) {
+            (void)_PyTok_CursorAdvance(tok);
+            current_token = current_token3;
+        }
+        p_start = tok->start;
+        p_end = tok->cursor.pos;
+        return _PyTok_EmitToken(tok, token, current_token, p_start, p_end);
+    }
+
+    /* Keep track of parentheses nesting level */
+    switch (c) {
+    case '(':
+    case '[':
+    case '{':
+        if (tok->level >= MAXLEVEL) {
+            return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok, "too many nested parentheses"), p_start, p_end);
+        }
+        tok->parenstack[tok->level] = c;
+        tok->parenlinenostack[tok->level] = tok->lineno;
+        tok->parencolstack[tok->level] = (int)(
+            tok->start - tok->cursor.line_start);
+        tok->level++;
+        break;
+    case ')':
+    case ']':
+    case '}':
+        if (INSIDE_FSTRING_EXPR(frame) && c != '}' &&
+                tok->level == frame->paren_depth_at_entry) {
+            return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(
+                tok, "%c-string: unmatched '%c'",
+                current_string_prefix(tok), c), p_start, p_end);
+        }
+        if (INSIDE_FSTRING_EXPR(frame) && c == '}' &&
+                tok->level == frame_body_paren_depth(tok)) {
+            return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok,
+                "%c-string: single '}' is not allowed", current_string_prefix(tok)), p_start, p_end);
+        }
+        if (!tok->extra_tokens && !tok->level) {
+            return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok, "unmatched '%c'", c), p_start, p_end);
+        }
+        if (tok->level > 0) {
+            tok->level--;
+            int opening = tok->parenstack[tok->level];
+            if (!tok->extra_tokens && !((opening == '(' && c == ')') ||
+                                            (opening == '[' && c == ']') ||
+                                            (opening == '{' && c == '}'))) {
+                /* If the opening bracket belongs to an f-string's expression
+                part (e.g. f"{)}") and the closing bracket is an arbitrary
+                nested expression, then instead of matching a different
+                syntactical construct with it; we'll throw an unmatched
+                parentheses error. */
+                if (INSIDE_FSTRING_EXPR(frame) && opening == '{') {
+                    if (tok->level == frame->paren_depth_at_entry) {
+                        return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok,
+                            "%c-string: unmatched '%c'", current_string_prefix(tok), c), p_start, p_end);
+                    }
+                }
+                if (tok->parenlinenostack[tok->level] != tok->lineno) {
+                    return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok,
+                            "closing parenthesis '%c' does not match "
+                            "opening parenthesis '%c' on line %d",
+                            c, opening, tok->parenlinenostack[tok->level]), p_start, p_end);
+                }
+                else {
+                    return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok,
+                            "closing parenthesis '%c' does not match "
+                            "opening parenthesis '%c'",
+                            c, opening), p_start, p_end);
+                }
+            }
+        }
+
+        if (INSIDE_FSTRING_EXPR(frame) && c == '}' &&
+                tok->level == frame->paren_depth_at_entry) {
+            frame->in_debug = 0;
+            frame_pop(tok);
+        }
+        break;
+    default:
+        break;
+    }
+
+    if (!Py_UNICODE_ISPRINTABLE(c)) {
+        return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok, "invalid non-printable character U+%04X", c), p_start, p_end);
+    }
+
+    if (c == '=' && INSIDE_FSTRING_EXPR_AT_TOP(tok, frame)) {
+        frame->in_debug = 1;
+    }
+
+    /* Punctuation character */
+    p_start = tok->start;
+    p_end = tok->cursor.pos;
+    return _PyTok_EmitToken(tok, token, _PyToken_OneChar(c), p_start, p_end);
+}
+
+int
+_PyTok_LexFStringMiddle(struct _PyTokenizer *tok, _PyTok_Frame* frame,
+                        _PyTok_Token *token)
+{
+    _PyTok_Off p_start = -1;
+    _PyTok_Off p_end = -1;
     int end_quote_size = 0;
     int unicode_escape = 0;
+    int active_format_spec =
+        frame->kind == _PYTOK_FRAME_FORMAT_SPEC &&
+        !frame->spec_degraded;
 
-    tok->start = tok->cur;
-    tok->first_lineno = tok->lineno;
-    tok->starting_col_offset = tok->col_offset;
-
-    // If we start with a bracket, we defer to the normal mode as there is nothing for us to tokenize
-    // before it.
-    int start_char = tok_nextc(tok);
+    tok->start = tok->cursor.pos;
+    int start_char = _PyTok_CursorAdvance(tok);
     if (start_char == '{') {
-        int peek1 = tok_nextc(tok);
-        tok_backup(tok, peek1);
-        tok_backup(tok, start_char);
-        if (peek1 != '{') {
-            current_tok->curly_bracket_expr_start_depth++;
-            if (current_tok->curly_bracket_expr_start_depth >= MAX_EXPR_NESTING) {
-                return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok,
-                    "%c-string: expressions nested too deeply", TOK_GET_STRING_PREFIX(tok)));
+        if (_PyTok_CursorPeek(tok, 0) != '{') {
+            if (frame_expr_depth(tok) >= MAX_EXPR_NESTING) {
+                return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok,
+                    "%c-string: expressions nested too deeply", current_string_prefix(tok)), p_start, p_end);
             }
-            TOK_GET_MODE(tok)->kind = TOK_REGULAR_MODE;
-            return _PyLexer_get_normal_mode(tok, current_tok, token);
+            _PyTok_Frame *expr = frame_push(tok, _PYTOK_FRAME_FSTRING_EXPR);
+            if (expr == NULL) {
+                return _PyTok_EmitToken(tok, token, ERRORTOKEN, p_start, p_end);
+            }
+            update_debug_span(tok, start_char);
+            _PyTok_CursorReset(tok, tok->start);
+            return _PyTok_LexNormal(tok, expr, token);
         }
+        _PyTok_CursorReset(tok, tok->start);
+    }
+    else if (start_char == '}' &&
+             frame->kind == _PYTOK_FRAME_FSTRING_BODY) {
+        if (_PyTok_CursorPeek(tok, 0) != '}') {
+            if (!frame->pending_single_brace) {
+                frame->pending_single_brace = 1;
+                _PyTok_CursorReset(tok, tok->start);
+                p_start = tok->start;
+                p_end = tok->start;
+                return _PyTok_EmitToken(tok, token, frame_middle_token(frame), p_start, p_end);
+            }
+            return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok,
+                "%c-string: single '}' is not allowed", current_string_prefix(tok)), p_start, p_end);
+        }
+        _PyTok_CursorReset(tok, tok->start);
     }
     else {
-        tok_backup(tok, start_char);
-    }
-
-    // Check if we are at the end of the string
-    for (int i = 0; i < current_tok->quote_size; i++) {
-        int quote = tok_nextc(tok);
-        if (quote != current_tok->quote) {
-            tok_backup(tok, quote);
-            goto f_string_middle;
+        if (start_char != EOF) {
+            _PyTok_CursorReset(tok, tok->start);
         }
     }
 
-    if (current_tok->last_expr_buffer != NULL) {
-        PyMem_Free(current_tok->last_expr_buffer);
-        current_tok->last_expr_buffer = NULL;
-        current_tok->last_expr_size = 0;
-        current_tok->last_expr_end = -1;
+    int at_end = 1;
+    for (int i = 0; i < frame->quote_size; i++) {
+        if (_PyTok_CursorPeek(tok, i) != frame->quote) {
+            at_end = 0;
+            break;
+        }
+    }
+    if (at_end) {
+        for (int i = 0; i < frame->quote_size; i++) {
+            (void)_PyTok_CursorAdvance(tok);
+        }
+        p_start = tok->start;
+        p_end = tok->cursor.pos;
+        int end_token = frame_end_token(frame);
+        frame_pop_fstring(tok);
+        return _PyTok_EmitToken(tok, token, end_token, p_start, p_end);
     }
 
-    p_start = tok->start;
-    p_end = tok->cur;
-    tok->tok_mode_stack_index--;
-    return MAKE_TOKEN(FTSTRING_END(current_tok));
-
-f_string_middle:
-
-    // TODO: This is a bit of a hack, but it works for now. We need to find a better way to handle
-    // this.
-    tok->multi_line_start = tok->line_start;
-    while (end_quote_size != current_tok->quote_size) {
-        int c = tok_nextc(tok);
-        if (tok->done == E_ERROR || tok->done == E_DECODE) {
-            return MAKE_TOKEN(ERRORTOKEN);
+    while (end_quote_size != frame->quote_size) {
+        int c = _PyTok_CursorAdvance(tok);
+        if (_PyTok_HasError(tok)) {
+            return _PyTok_EmitToken(tok, token, ERRORTOKEN, p_start, p_end);
         }
-        int in_format_spec = (
-                current_tok->in_format_spec
-                &&
-                INSIDE_FSTRING_EXPR(current_tok)
-        );
 
-       if (c == EOF || (current_tok->quote_size == 1 && c == '\n')) {
-            if (tok->decoding_erred) {
-                return MAKE_TOKEN(ERRORTOKEN);
-            }
-
-            // If we are in a format spec and we found a newline,
-            // it means that the format spec ends here and we should
-            // return to the regular mode.
-            if (in_format_spec && c == '\n') {
-                if (current_tok->quote_size == 1) {
-                    return MAKE_TOKEN(
-                        _PyTokenizer_syntaxerror(
+       if (c == EOF || (frame->quote_size == 1 && c == '\n')) {
+            if (active_format_spec && c == '\n') {
+                if (frame->quote_size == 1) {
+                    return _PyTok_EmitToken(tok, token,
+                        _PyTok_SyntaxError(
                             tok,
                             "%c-string: newlines are not allowed in format specifiers for single quoted %c-strings",
-                            TOK_GET_STRING_PREFIX(tok), TOK_GET_STRING_PREFIX(tok)
+                            current_string_prefix(tok), current_string_prefix(tok)
                         )
-                    );
+                    , p_start, p_end);
                 }
-                tok_backup(tok, c);
-                TOK_GET_MODE(tok)->kind = TOK_REGULAR_MODE;
-                current_tok->in_format_spec = 0;
+                if (c != EOF) {
+                    _PyTok_CursorReset(tok, tok->cursor.pos - 1);
+                }
                 p_start = tok->start;
-                p_end = tok->cur;
-                return MAKE_TOKEN(FTSTRING_MIDDLE(current_tok));
+                p_end = tok->cursor.pos;
+                int middle_token = frame_middle_token(frame);
+                frame_pop(tok);
+                return _PyTok_EmitToken(tok, token, middle_token, p_start, p_end);
             }
 
-            assert(tok->multi_line_start != NULL);
-            // shift the tok_state's location into
-            // the start of string, and report the error
-            // from the initial quote character
-            tok->cur = (char *)current_tok->start;
-            tok->cur++;
-            tok->line_start = current_tok->multi_line_start;
-            int start = tok->lineno;
+            int detected_line = tok->lineno;
+            _PyTok_Loc loc = source_location(tok, frame->body_start + 1);
 
-            tokenizer_mode *the_current_tok = TOK_GET_MODE(tok);
-            tok->lineno = the_current_tok->first_line;
-
-            if (current_tok->quote_size == 3) {
-                _PyTokenizer_syntaxerror(tok,
-                                    "unterminated triple-quoted %c-string literal"
-                                    " (detected at line %d)",
-                                    TOK_GET_STRING_PREFIX(tok), start);
-                if (c != '\n') {
-                    tok->done = E_EOFS;
-                }
-                return MAKE_TOKEN(ERRORTOKEN);
+            if (frame->quote_size == 3) {
+                _PyTok_ErrKind kind = c != '\n'
+                    ? _PYTOK_ERR_EOF_IN_STRING
+                    : _PYTOK_ERR_SYNTAX;
+                _PyTok_FormattedErrorAt(
+                    tok, kind, loc, loc, loc.lineno,
+                    "unterminated triple-quoted %c-string literal"
+                    " (detected at line %d)",
+                    current_string_prefix(tok), detected_line);
+                return _PyTok_EmitToken(tok, token, ERRORTOKEN, p_start, p_end);
             }
             else {
-                return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok,
-                                    "unterminated %c-string literal (detected at"
-                                    " line %d)", TOK_GET_STRING_PREFIX(tok), start));
+                return _PyTok_EmitToken(tok, token, _PyTok_FormattedErrorAt(
+                    tok, _PYTOK_ERR_SYNTAX, loc, loc, loc.lineno,
+                    "unterminated %c-string literal (detected at line %d)",
+                    current_string_prefix(tok), detected_line), p_start, p_end);
             }
         }
 
-        if (c == current_tok->quote) {
+        if (c == frame->quote) {
             end_quote_size += 1;
             continue;
         } else {
@@ -551,92 +606,87 @@ f_string_middle:
         }
 
         if (c == '{') {
-            if (!_PyLexer_update_ftstring_expr(tok, c)) {
-                return MAKE_TOKEN(ENDMARKER);
-            }
-            int peek = tok_nextc(tok);
-            if (peek != '{' || in_format_spec) {
-                tok_backup(tok, peek);
-                tok_backup(tok, c);
-                current_tok->curly_bracket_expr_start_depth++;
-                if (current_tok->curly_bracket_expr_start_depth >= MAX_EXPR_NESTING) {
-                    return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok,
-                        "%c-string: expressions nested too deeply", TOK_GET_STRING_PREFIX(tok)));
+            int peek = _PyTok_CursorPeek(tok, 0);
+            if (peek != '{' || active_format_spec) {
+                if (frame_expr_depth(tok) >= MAX_EXPR_NESTING) {
+                    return _PyTok_EmitToken(tok, token, _PyTok_SyntaxError(tok,
+                        "%c-string: expressions nested too deeply", current_string_prefix(tok)), p_start, p_end);
                 }
-                TOK_GET_MODE(tok)->kind = TOK_REGULAR_MODE;
-                current_tok->in_format_spec = 0;
+                if (frame_push(tok, _PYTOK_FRAME_FSTRING_EXPR) == NULL) {
+                    return _PyTok_EmitToken(tok, token, ERRORTOKEN, p_start, p_end);
+                }
+                update_debug_span(tok, c);
+                if (c != EOF) {
+                    _PyTok_CursorReset(tok, tok->cursor.pos - 1);
+                }
                 p_start = tok->start;
-                p_end = tok->cur;
+                p_end = tok->cursor.pos;
             } else {
+                (void)_PyTok_CursorAdvance(tok);
                 p_start = tok->start;
-                p_end = tok->cur - 1;
+                p_end = tok->cursor.pos - 1;
             }
-            return MAKE_TOKEN(FTSTRING_MIDDLE(current_tok));
+            return _PyTok_EmitToken(tok, token, frame_middle_token(frame), p_start, p_end);
         } else if (c == '}') {
             if (unicode_escape) {
                 p_start = tok->start;
-                p_end = tok->cur;
-                return MAKE_TOKEN(FTSTRING_MIDDLE(current_tok));
+                p_end = tok->cursor.pos;
+                return _PyTok_EmitToken(tok, token, frame_middle_token(frame), p_start, p_end);
             }
-            int peek = tok_nextc(tok);
-
-            // The tokenizer can only be in the format spec if we have already completed the expression
-            // scanning (indicated by the end of the expression being set) and we are not at the top level
-            // of the bracket stack (-1 is the top level). Since format specifiers can't legally use double
-            // brackets, we can bypass it here.
-            int cursor = current_tok->curly_bracket_depth;
-            if (peek == '}' && !in_format_spec && cursor == 0) {
-                p_start = tok->start;
-                p_end = tok->cur - 1;
-            } else {
-                tok_backup(tok, peek);
-                tok_backup(tok, c);
-                TOK_GET_MODE(tok)->kind = TOK_REGULAR_MODE;
-                current_tok->in_format_spec = 0;
-                p_start = tok->start;
-                p_end = tok->cur;
-            }
-            return MAKE_TOKEN(FTSTRING_MIDDLE(current_tok));
-        } else if (c == '\\') {
-            int peek = tok_nextc(tok);
-            if (peek == '\r') {
-                peek = tok_nextc(tok);
-            }
-            // Special case when the backslash is right before a curly
-            // brace. We have to restore and return the control back
-            // to the loop for the next iteration.
-            if (peek == '{' || peek == '}') {
-                if (!current_tok->raw) {
-                    if (_PyTokenizer_warn_invalid_escape_sequence(tok, peek)) {
-                        return MAKE_TOKEN(ERRORTOKEN);
-                    }
+            if (frame->kind == _PYTOK_FRAME_FORMAT_SPEC) {
+                if (c != EOF) {
+                    _PyTok_CursorReset(tok, tok->cursor.pos - 1);
                 }
-                tok_backup(tok, peek);
+                p_start = tok->start;
+                p_end = tok->cursor.pos;
+                int middle_token = frame_middle_token(frame);
+                frame_pop(tok);
+                return _PyTok_EmitToken(tok, token, middle_token, p_start, p_end);
+            }
+            int peek = _PyTok_CursorPeek(tok, 0);
+            if (peek == '}') {
+                (void)_PyTok_CursorAdvance(tok);
+                p_start = tok->start;
+                p_end = tok->cursor.pos - 1;
+            }
+            else {
+                _PyTok_CursorReset(tok, tok->cursor.pos - 1);
+                frame->pending_single_brace = 1;
+                p_start = tok->start;
+                p_end = tok->cursor.pos;
+            }
+            return _PyTok_EmitToken(tok, token, frame_middle_token(frame), p_start, p_end);
+        } else if (c == '\\') {
+            int peek = _PyTok_CursorPeek(tok, 0);
+            if (peek == '{' || peek == '}') {
+                _PyTok_Loc loc = {
+                    tok->lineno,
+                    Py_SAFE_DOWNCAST(
+                        tok->cursor.pos + 1 - tok->cursor.line_start,
+                        _PyTok_Off, int),
+                };
+                if (!frame->raw && tok->seam->warn(
+                        tok, _PYTOK_WARN_INVALID_ESCAPE, NULL, peek, loc)) {
+                    return _PyTok_EmitToken(
+                        tok, token, ERRORTOKEN, p_start, p_end);
+                }
                 continue;
             }
 
-            if (!current_tok->raw) {
-                if (peek == 'N') {
-                    /* Handle named unicode escapes (\N{BULLET}) */
-                    peek = tok_nextc(tok);
-                    if (peek == '{') {
-                        unicode_escape = 1;
-                    } else {
-                        tok_backup(tok, peek);
-                    }
-                }
-            } /* else {
-                skip the escaped character
-            }*/
+            peek = _PyTok_CursorAdvance(tok);
+            if (peek == '\r') {
+                peek = _PyTok_CursorAdvance(tok);
+            }
+            if (!frame->raw && peek == 'N' &&
+                    _PyTok_CursorPeek(tok, 0) == '{') {
+                (void)_PyTok_CursorAdvance(tok);
+                unicode_escape = 1;
+            }
         }
     }
 
-    // Backup the f-string quotes to emit a final FSTRING_MIDDLE and
-    // add the quotes to the FSTRING_END in the next tokenizer iteration.
-    for (int i = 0; i < current_tok->quote_size; i++) {
-        tok_backup(tok, current_tok->quote);
-    }
+    _PyTok_CursorReset(tok, tok->cursor.pos - frame->quote_size);
     p_start = tok->start;
-    p_end = tok->cur;
-    return MAKE_TOKEN(FTSTRING_MIDDLE(current_tok));
+    p_end = tok->cursor.pos;
+    return _PyTok_EmitToken(tok, token, frame_middle_token(frame), p_start, p_end);
 }

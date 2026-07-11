@@ -1,57 +1,60 @@
 #ifndef _PY_LEXER_INTERNAL_H_
 #define _PY_LEXER_INTERNAL_H_
 
-#include "lexer.h"
+#include "state.h"
 
-#define is_potential_identifier_start(c) (\
-              (c >= 'a' && c <= 'z')\
-               || (c >= 'A' && c <= 'Z')\
-               || c == '_'\
-               || (c >= 128))
-
-#define is_potential_identifier_char(c) (\
-              (c >= 'a' && c <= 'z')\
-               || (c >= 'A' && c <= 'Z')\
-               || (c >= '0' && c <= '9')\
-               || c == '_'\
-               || (c >= 128))
-
-#ifdef Py_DEBUG
-static inline tokenizer_mode *
-TOK_GET_MODE(struct tok_state *tok)
+static inline _PyTok_Frame *
+_PyTok_CurrentFrame(struct _PyTokenizer *tok)
 {
-    assert(tok->tok_mode_stack_index >= 0);
-    assert(tok->tok_mode_stack_index < MAXFSTRINGLEVEL);
-    return &tok->tok_mode_stack[tok->tok_mode_stack_index];
+    assert(tok->frame_index >= 0);
+    assert(tok->frame_index < _PYTOK_MAX_FRAMES);
+    return &tok->frames[tok->frame_index];
 }
 
-static inline tokenizer_mode *
-TOK_NEXT_MODE(struct tok_state *tok)
+static inline int
+_PyTok_EmitToken(struct _PyTokenizer *tok, _PyTok_Token *token, int type,
+                 _PyTok_Off start, _PyTok_Off end)
 {
-    assert(tok->tok_mode_stack_index >= 0);
-    assert(tok->tok_mode_stack_index + 1 < MAXFSTRINGLEVEL);
-    return &tok->tok_mode_stack[++tok->tok_mode_stack_index];
+    assert((start < 0 && end < 0) || (start >= 0 && end >= start));
+    token->type = type;
+    token->level = tok->level;
+    token->span = start < 0
+        ? _PyTok_InvalidSpan()
+        : _PyTok_SpanFromBounds(start, end);
+    token->start = (_PyTok_Loc){tok->lineno, -1};
+    token->end = token->start;
+    if (start >= 0) {
+        if (tok->start >= tok->cursor.line_start) {
+            token->start.col = Py_SAFE_DOWNCAST(
+                tok->start - tok->cursor.line_start, _PyTok_Off, int);
+        }
+        else {
+            int result = _PyTok_SourceLocation(
+                &tok->source, tok->start, &token->start);
+            assert(result == 0);
+            (void)result;
+        }
+        token->end.col = Py_SAFE_DOWNCAST(
+            tok->cursor.pos - tok->cursor.line_start, _PyTok_Off, int);
+    }
+    token->flags = tok->implicit_newline ? _PYTOK_IMPLICIT_NL : 0;
+    if (!_PyTok_SpanIsValid(token->span) ||
+            ((type == DEDENT || type == ENDMARKER) && start == end)) {
+        token->flags |= _PYTOK_SYNTH;
+    }
+    return type;
 }
-#else
-#define TOK_GET_MODE(tok) (&(tok)->tok_mode_stack[(tok)->tok_mode_stack_index])
-#define TOK_NEXT_MODE(tok) (&(tok)->tok_mode_stack[++(tok)->tok_mode_stack_index])
-#endif
-
-#define FTSTRING_MIDDLE(tok_mode) ((tok_mode)->string_kind == TSTRING ? TSTRING_MIDDLE : FSTRING_MIDDLE)
-#define FTSTRING_END(tok_mode) ((tok_mode)->string_kind == TSTRING ? TSTRING_END : FSTRING_END)
-#define TOK_GET_STRING_PREFIX(tok) (TOK_GET_MODE(tok)->string_kind == TSTRING ? 't' : 'f')
-
-#define tok_nextc _PyLexer_nextc
-#define tok_backup _PyLexer_backup
-
-int _PyLexer_nextc(struct tok_state *);
-void _PyLexer_backup(struct tok_state *, int);
-int _PyLexer_set_ftstring_expr(struct tok_state *, struct token *, char);
-int _PyLexer_check_string_prefixes(struct tok_state *, int, int, int, int, int);
-int _PyLexer_scan_number(struct tok_state *, struct token *, int, int);
-int _PyLexer_scan_fstring_start(struct tok_state *, struct token *, int);
-int _PyLexer_scan_string(struct tok_state *, struct token *, int);
-int _PyLexer_get_normal_mode(struct tok_state *, tokenizer_mode *, struct token *);
-int _PyLexer_get_fstring_mode(struct tok_state *, tokenizer_mode *, struct token *);
+int _PyTok_LexNumber(struct _PyTokenizer *, _PyTok_Token *, int);
+int _PyTok_LexFraction(struct _PyTokenizer *, _PyTok_Token *,
+                       _PyTok_Off, int);
+int _PyTok_CheckStringPrefixes(struct _PyTokenizer *, int, int, int, int,
+                              int);
+int _PyTok_LexFStringStart(struct _PyTokenizer *, _PyTok_Token *, int);
+int _PyTok_LexString(struct _PyTokenizer *, _PyTok_Token *, int);
+int _PyTok_LexOperator(struct _PyTokenizer *, _PyTok_Frame *,
+                       _PyTok_Token *, int);
+int _PyTok_LexNormal(struct _PyTokenizer *, _PyTok_Frame *, _PyTok_Token *);
+int _PyTok_LexFStringMiddle(struct _PyTokenizer *, _PyTok_Frame *,
+                            _PyTok_Token *);
 
 #endif

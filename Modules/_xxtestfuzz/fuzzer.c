@@ -18,6 +18,12 @@
 #include <stdlib.h>
 #include <inttypes.h>
 
+#define Py_BUILD_CORE
+#include "../../Include/internal/pycore_token.h"
+#undef Py_BUILD_CORE
+#include "../../Parser/tokenizer/seam.h"
+#include "../../Parser/tokenizer/tokenizer.h"
+
 /*  Fuzz PyFloat_FromString as a proxy for float(str). */
 static int fuzz_builtin_float(const char* data, size_t size) {
     PyObject* s = PyBytes_FromStringAndSize(data, size);
@@ -578,6 +584,90 @@ static int fuzz_pycompile(const char* data, size_t size) {
     return 0;
 }
 
+#define MAX_TOKENIZER_TEST_SIZE 16384
+
+static int
+stub_tokenizer_warn(struct _PyTokenizer *tok, _PyTok_WarnKind kind,
+                    const char *text, int value, _PyTok_Loc loc)
+{
+    return 0;
+}
+
+static int
+stub_tokenizer_verify_identifier(struct _PyTokenizer *tok, _PyTok_Span span,
+                                 _PyTok_Off *invalid_end,
+                                 unsigned int *invalid_ch)
+{
+    return 1;
+}
+
+static int
+stub_tokenizer_intern_metadata(struct _PyTokenizer *tok, _PyTok_Span span,
+                               PyObject **metadata)
+{
+    *metadata = NULL;
+    return 0;
+}
+
+static int
+fuzz_tokenizer(const char *data, size_t size)
+{
+    if (size < 1 || size > MAX_TOKENIZER_TEST_SIZE) {
+        return 0;
+    }
+    char *source = PyMem_Malloc(size);
+    if (source == NULL) {
+        PyErr_Clear();
+        return 0;
+    }
+    memcpy(source, data + 1, size - 1);
+    source[size - 1] = '\0';
+
+    unsigned char options = (unsigned char)data[0];
+    _PyTok_Config config = {
+        .kind = options & 0x01
+            ? _PYTOK_SOURCE_UTF8
+            : _PYTOK_SOURCE_STRING,
+        .source.string = source,
+        .exec_input = (options & 0x02) != 0,
+        .preserve_crlf = (options & 0x04) != 0,
+        .extra_tokens = (options & 0x08) != 0,
+        .type_comments = (options & 0x10) != 0,
+    };
+    PyTokenizer *tok = _PyTok_New(&config);
+    PyMem_Free(source);
+    if (tok == NULL) {
+        PyErr_Clear();
+        return 0;
+    }
+    static const _PyTok_Seam seam = {
+        .warn = stub_tokenizer_warn,
+        .verify_identifier = stub_tokenizer_verify_identifier,
+        .intern_metadata = stub_tokenizer_intern_metadata,
+    };
+    _PyTok_SetSeam(tok, &seam);
+
+    size_t limit = size * 4 + 32;
+    int finished = 0;
+    for (size_t i = 0; i < limit; i++) {
+        _PyTok_Token token;
+        _PyTok_TokenInit(&token);
+        _PyTok_Status status = _PyTok_Get(tok, &token);
+        int type = token.type;
+        _PyTok_TokenClear(&token);
+        if (status == _PYTOK_ERROR || type == ENDMARKER) {
+            finished = 1;
+            break;
+        }
+    }
+    if (!finished) {
+        abort();
+    }
+    _PyTok_Free(tok);
+    PyErr_Clear();
+    return 0;
+}
+
 /* Run fuzzer and abort on failure. */
 static int _run_fuzz(const uint8_t *data, size_t size, int(*fuzzer)(const char* , size_t)) {
     int rv = fuzzer((const char*) data, size);
@@ -722,6 +812,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 #endif
 #if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_pycompile)
     rv |= _run_fuzz(data, size, fuzz_pycompile);
+#endif
+#if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_tokenizer)
+    rv |= _run_fuzz(data, size, fuzz_tokenizer);
 #endif
   return rv;
 }

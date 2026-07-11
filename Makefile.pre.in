@@ -394,17 +394,17 @@ PEGEN_OBJS=		\
 		Parser/peg_api.o
 
 TOKENIZER_OBJS=		\
-		Parser/lexer/buffer.o \
+		Parser/tokenizer/source.o \
+		Parser/tokenizer/api.o \
+		Parser/tokenizer/errors.o \
+		Parser/tokenizer/seam.o \
+		Parser/tokenizer/cursor.o \
 		Parser/lexer/lexer.o \
 		Parser/lexer/number.o \
-		Parser/lexer/state.o \
 		Parser/lexer/string.o \
-		Parser/tokenizer/cursor.o \
-		Parser/tokenizer/file_tokenizer.o \
-		Parser/tokenizer/readline_tokenizer.o \
-		Parser/tokenizer/source.o \
-		Parser/tokenizer/string_tokenizer.o \
-		Parser/tokenizer/utf8_tokenizer.o \
+		Parser/lexer/state.o \
+		Parser/tokenizer/decoder.o \
+		Parser/tokenizer/reader.o \
 		Parser/tokenizer/helpers.o
 
 PEGEN_HEADERS= \
@@ -413,13 +413,16 @@ PEGEN_HEADERS= \
 		$(srcdir)/Parser/string_parser.h
 
 TOKENIZER_HEADERS= \
-		Parser/lexer/buffer.h \
+		Parser/tokenizer/source.h \
+		Parser/tokenizer/tokenizer.h \
+		Parser/tokenizer/errors.h \
+		Parser/tokenizer/seam.h \
+		Parser/tokenizer/cursor.h \
+		Parser/tokenizer/reader.h \
 		Parser/lexer/lexer.h \
 		Parser/lexer/lexer_internal.h \
 		Parser/lexer/state.h \
-		Parser/tokenizer/cursor.h \
-		Parser/tokenizer/source.h \
-		Parser/tokenizer/tokenizer.h \
+		Parser/tokenizer/reader_internal.h \
 		Parser/tokenizer/helpers.h
 
 POBJS=		\
