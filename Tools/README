@@ -47,6 +47,8 @@ scripts         A number of useful single-file programs, e.g. run_tests.py
 ssl             Scripts to generate ssl_data.h from OpenSSL sources, and run
                 tests against multiple installations of OpenSSL and LibreSSL.
 
+tokenizer       Differential and performance tools for tokenizer changes.
+
 tsan            Utilities for building CPython with thread-sanitizer.
 
 unicode         Tools for generating unicodedata and codecs from unicode.org
