@@ -5,7 +5,7 @@
 #include <pycore_ast.h>
 #include <pycore_token.h>
 
-#include "lexer/state.h"
+#include "tokenizer/tokenizer.h"
 
 #if 0
 #define PyPARSE_YIELD_IS_KEYWORD        0x0001
@@ -25,9 +25,6 @@
 #define PyPARSE_ALLOW_INCOMPLETE_INPUT 0x0100
 
 #define CURRENT_POS (-5)
-
-#define TOK_GET_MODE(tok) (&(tok->tok_mode_stack[tok->tok_mode_stack_index]))
-#define TOK_GET_STRING_PREFIX(tok) (TOK_GET_MODE(tok)->string_kind == TSTRING ? 't' : 'f')
 
 typedef struct _memo {
     int type;
@@ -74,7 +71,7 @@ typedef struct {
 typedef struct _identifier_cache_entry IdentifierCacheEntry;
 
 typedef struct {
-    struct tok_state *tok;
+    PyTokenizer *tok;
     Token **tokens;
     int mark;
     int fill, size;
@@ -387,7 +384,7 @@ stmt_ty _PyPegen_register_stmt(Parser *p, stmt_ty s);
 
 // Parser API
 
-Parser *_PyPegen_Parser_New(struct tok_state *, int, int, int, int *, const char*, PyArena *);
+Parser *_PyPegen_Parser_New(PyTokenizer *, int, int, int, int *, const char*, PyArena *);
 void _PyPegen_Parser_Free(Parser *);
 mod_ty _PyPegen_run_parser_from_file_pointer(FILE *, int, PyObject *, const char *,
                                     const char *, const char *, PyCompilerFlags *, int *, PyObject **,

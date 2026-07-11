@@ -2,100 +2,62 @@
 #define _PY_LEXER_H_
 
 #include "object.h"
+#include "../tokenizer/cursor.h"
+#include "../tokenizer/reader.h"
+#include "../tokenizer/seam.h"
+#include "../tokenizer/source.h"
+#include "../tokenizer/tokenizer.h"
 
 #define MAXINDENT 100       /* Max indentation level */
 #define MAXLEVEL 200        /* Max parentheses level */
 #define MAXFSTRINGLEVEL 150 /* Max f-string nesting level */
+#define _PYTOK_MAX_FRAMES (MAXFSTRINGLEVEL * 3)
 
-#define INSIDE_FSTRING(tok) (tok->tok_mode_stack_index > 0)
-#define INSIDE_FSTRING_EXPR(tok) (tok->curly_bracket_expr_start_depth >= 0)
-#define INSIDE_FSTRING_EXPR_AT_TOP(tok) \
-    (tok->curly_bracket_depth - tok->curly_bracket_expr_start_depth == 1)
+#define INSIDE_FSTRING(tok) (tok->frame_index > 0)
+#define INSIDE_FSTRING_EXPR(mode) ((mode)->kind == _PYTOK_FRAME_FSTRING_EXPR)
+#define INSIDE_FSTRING_EXPR_AT_TOP(tok, mode) \
+    ((mode)->kind == _PYTOK_FRAME_FSTRING_EXPR && \
+     (tok)->level == (mode)->paren_depth_at_entry + 1)
 
-enum decoding_state {
-    STATE_INIT,
-    STATE_SEEK_CODING,
-    STATE_NORMAL
-};
-
-enum interactive_underflow_t {
-    /* Normal mode of operation: return a new token when asked in interactive mode */
-    IUNDERFLOW_NORMAL,
-    /* Forcefully return ENDMARKER when asked for a new token in interactive mode. This
-     * can be used to prevent the tokenizer to prompt the user for new tokens */
-    IUNDERFLOW_STOP,
-};
-
-struct token {
-    int level;
-    int lineno, col_offset, end_lineno, end_col_offset;
-    const char *start, *end;
-    PyObject *metadata;
-};
-
-enum tokenizer_mode_kind_t {
-    TOK_REGULAR_MODE,
-    TOK_FSTRING_MODE,
-};
-
-enum string_kind_t {
-    FSTRING,
-    TSTRING,
-};
+typedef enum {
+    _PYTOK_FRAME_TOPLEVEL,
+    _PYTOK_FRAME_FSTRING_BODY,
+    _PYTOK_FRAME_FSTRING_EXPR,
+    _PYTOK_FRAME_FORMAT_SPEC,
+} _PyTok_FrameKind;
 
 #define MAX_EXPR_NESTING 3
 
-typedef struct _tokenizer_mode {
-    enum tokenizer_mode_kind_t kind;
-
-    int curly_bracket_depth;
-    int curly_bracket_expr_start_depth;
+typedef struct {
+    _PyTok_FrameKind kind;
+    int paren_depth_at_entry;
 
     char quote;
     int quote_size;
     int raw;
-    const char* start;
-    const char* multi_line_start;
-    int first_line;
+    _PyTok_Off body_start;
 
-    Py_ssize_t start_offset;
-    Py_ssize_t multi_line_start_offset;
-
-    Py_ssize_t last_expr_size;
-    Py_ssize_t last_expr_end;
-    char* last_expr_buffer;
+    _PyTok_Off debug_expr_start;
+    _PyTok_Off debug_expr_end;
     int in_debug;
-    int in_format_spec;
+    int spec_degraded;
+    int pending_single_brace;
 
-    enum string_kind_t string_kind;
-} tokenizer_mode;
+    _PyTok_StringKind string_kind;
+} _PyTok_Frame;
 
 /* Tokenizer state */
-struct tok_state {
-    /* Input state; buf <= cur <= inp <= end */
-    /* NB an entire line is held in the buffer */
-    char *buf;          /* Input buffer, or NULL; malloc'ed if fp != NULL or readline != NULL */
-    char *cur;          /* Next character in buffer */
-    char *inp;          /* End of data in buffer */
-    int fp_interactive; /* If the file descriptor is interactive */
-    char *interactive_src_start; /* The start of the source parsed so far in interactive mode */
-    char *interactive_src_end; /* The end of the source parsed so far in interactive mode */
-    const char *end;    /* End of input buffer if buf != NULL */
-    const char *start;  /* Start of current token if not NULL */
-    int done;           /* E_OK normally, E_EOF at EOF, otherwise error code */
-    /* NB If done != E_OK, cur must be == inp!!! */
-    FILE *fp;           /* Rest of input; NULL if tokenizing a string */
+struct _PyTokenizer {
+    _PyTok_Off start;
+    _PyTok_Error error;
+    char *error_detail;
+    int busy;
     int tabsize;        /* Tab spacing */
     int indent;         /* Current indentation index */
     int indstack[MAXINDENT];            /* Stack of indents */
     int atbol;          /* Nonzero if at begin of new line */
     int pendin;         /* Pending indents (if > 0) or dedents (if < 0) */
-    const char *prompt, *nextprompt;          /* For interactive prompting */
     int lineno;         /* Current line number */
-    int first_lineno;   /* First line of a single line or multi line string
-                           expression (cf. issue 16806) */
-    int starting_col_offset; /* The column offset at the beginning of a token */
-    int col_offset;     /* Current col offset */
     int level;          /* () [] {} Parentheses nesting level */
             /* Used to allow free continuations inside them */
     char parenstack[MAXLEVEL];
@@ -105,48 +67,32 @@ struct tok_state {
     PyObject *module;
     /* Stuff for checking on different tab sizes */
     int altindstack[MAXINDENT];         /* Stack of alternate indents */
-    /* Stuff for PEP 0263 */
-    enum decoding_state decoding_state;
-    int decoding_erred;         /* whether erred in decoding  */
     char *encoding;         /* Source encoding. */
-    int cont_line;          /* whether we are in a continuation line. */
-    const char* line_start;     /* pointer to start of current line */
-    const char* multi_line_start; /* pointer to start of first line of
-                                     a single line or multi line string
-                                     expression (cf. issue 16806) */
-    PyObject *decoding_readline; /* open(...).readline */
-    PyObject *decoding_buffer;
-    PyObject *readline;     /* readline() function */
-    const char* enc;        /* Encoding for the current str. */
-    char* str;          /* Source string being tokenized (if tokenizing from a string)*/
-    char* input;       /* Tokenizer's newline translated copy of the string. */
+    _PyTok_SourceText source;
+    _PyTok_Cursor cursor;
+    _PyTok_Reader reader;
+    const _PyTok_Seam *seam;
 
     int type_comments;      /* Whether to look for type comments */
 
-    /* How to proceed when asked for a new token in interactive mode */
-    enum interactive_underflow_t interactive_underflow;
-    int (*underflow)(struct tok_state *); /* Function to call when buffer is empty and we need to refill it*/
-
-    int report_warnings;
-    // TODO: Factor this into its own thing
-    tokenizer_mode tok_mode_stack[MAXFSTRINGLEVEL];
-    int tok_mode_stack_index;
-    int tok_extra_tokens;
+    _PyTok_Frame frames[_PYTOK_MAX_FRAMES];
+    int frame_index;
+    int extra_tokens;
     int comment_newline;
     int implicit_newline;
+    _PyTok_SourceKind source_kind;
+    int is_interactive;
+    int is_prompting;
 #ifdef Py_DEBUG
     int debug;
 #endif
 };
 
-int _PyLexer_type_comment_token_setup(struct tok_state *tok, struct token *token, int type, int col_offset,
-                         int end_col_offset, const char *start, const char *end);
-int _PyLexer_token_setup(struct tok_state *tok, struct token *token, int type, const char *start, const char *end);
-
-struct tok_state *_PyTokenizer_tok_new(void);
-void _PyTokenizer_Free(struct tok_state *);
-void _PyToken_Free(struct token *);
-void _PyToken_Init(struct token *);
-
-
+struct _PyTokenizer *_PyTok_StateNew(void);
+struct _PyTokenizer *_PyTok_StateFromString(const char *, int, int);
+struct _PyTokenizer *_PyTok_StateFromUTF8(const char *, int, int);
+struct _PyTokenizer *_PyTok_StateFromReadline(PyObject *, const char *, int, int);
+struct _PyTokenizer *_PyTok_StateFromFile(FILE *, const char *, const char *,
+                                       const char *);
+void _PyTok_StateFree(struct _PyTokenizer *);
 #endif

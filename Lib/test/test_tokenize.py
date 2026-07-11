@@ -7,6 +7,8 @@ import tempfile
 import token
 import tokenize
 import unittest
+import warnings
+import weakref
 import _tokenize
 from io import BytesIO, StringIO
 from textwrap import dedent
@@ -2244,6 +2246,38 @@ class CTokenizeTest(TestCase):
             extra_tokens=extra_tokens,
         ))
 
+    def test_readline_reentry_is_rejected(self):
+        def make_cycle():
+            iterator = None
+
+            def readline():
+                next(iterator)
+
+            iterator = _tokenize.TokenizerIter(readline, extra_tokens=False)
+            with self.assertRaisesRegex(RuntimeError, "already executing"):
+                next(iterator)
+            return weakref.ref(readline)
+
+        readline_ref = make_cycle()
+        support.gc_collect()
+        self.assertIsNone(readline_ref())
+
+    def test_warning_reentry_is_rejected(self):
+        iterator = None
+
+        def showwarning(*args, **kwargs):
+            next(iterator)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            with mock.patch.object(warnings, "showwarning", showwarning):
+                iterator = _tokenize.TokenizerIter(
+                    StringIO("1if\n").readline,
+                    extra_tokens=False,
+                )
+                with self.assertRaisesRegex(RuntimeError, "already executing"):
+                    next(iterator)
+
     def check_tokenize(self, s, expected):
         # Format the tokens in s in a table format.
         # The ENDMARKER and final NEWLINE are omitted.
@@ -2273,6 +2307,46 @@ class CTokenizeTest(TestCase):
                     encoding=encoding,
                 ))
                 self.assertEqual(tokens, expected)
+
+    def test_stateful_encoding_across_readline_calls(self):
+        encoded_name = "変数".encode("iso2022_jp")
+        payload = encoded_name[3:-3]
+        lines = iter([
+            b"# \x1b$B" + payload + b"\n",
+            payload + b"\x1b(B\n",
+            b"",
+        ])
+        tokens = list(tokenize._generate_tokens_from_c_tokenizer(
+            lines.__next__,
+            extra_tokens=True,
+            encoding="iso2022_jp",
+        ))
+        self.assertEqual(
+            [(tok.type, tok.string) for tok in tokens],
+            [
+                (token.COMMENT, "# 変数"),
+                (token.NL, "\n"),
+                (token.NAME, "変数"),
+                (token.NEWLINE, "\n"),
+                (token.ENDMARKER, ""),
+            ],
+        )
+
+    def test_utf8_decoder_spans_readline_calls(self):
+        lines = iter([b"\xc3", b"\xa9\n", b""])
+        tokens = list(tokenize._generate_tokens_from_c_tokenizer(
+            lines.__next__,
+            extra_tokens=True,
+            encoding="utf-8",
+        ))
+        self.assertEqual(
+            [(tok.type, tok.string, tok.start, tok.end) for tok in tokens],
+            [
+                (token.NAME, "é", (1, 0), (1, 1)),
+                (token.NEWLINE, "\n", (1, 1), (1, 2)),
+                (token.ENDMARKER, "", (2, 0), (2, 0)),
+            ],
+        )
 
     def test_encoded_readline_replaces_invalid_bytes(self):
         lines = iter([b"\xff\n", b""])

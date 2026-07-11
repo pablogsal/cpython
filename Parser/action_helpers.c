@@ -1008,7 +1008,7 @@ _PyPegen_check_fstring_conversion(Parser *p, Token* conv_token, expr_ty conv)
         return RAISE_SYNTAX_ERROR_KNOWN_RANGE(
             conv_token, conv,
             "%c-string: conversion type must come right after the exclamation mark",
-            TOK_GET_STRING_PREFIX(p->tok)
+            _PyTok_StringPrefix(p->tok)
         );
     }
 
@@ -1017,7 +1017,7 @@ _PyPegen_check_fstring_conversion(Parser *p, Token* conv_token, expr_ty conv)
             !(first == 's' || first == 'r' || first == 'a')) {
         RAISE_SYNTAX_ERROR_KNOWN_LOCATION(conv,
                                             "%c-string: invalid conversion character %R: expected 's', 'r', or 'a'",
-                                            TOK_GET_STRING_PREFIX(p->tok),
+                                            _PyTok_StringPrefix(p->tok),
                                             conv->v.Name.id);
         return NULL;
     }
@@ -1344,7 +1344,8 @@ _PyPegen_decode_fstring_part(Parser* p, int is_raw, expr_ty constant, Token* tok
 }
 
 static asdl_expr_seq *
-_get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b, enum string_kind_t string_kind)
+_get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions,
+                   Token *b, _PyTok_StringKind string_kind)
 {
     Py_ssize_t n_items = asdl_seq_LEN(raw_expressions);
     Py_ssize_t total_items = n_items;
@@ -1378,7 +1379,7 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
             asdl_expr_seq *values = item->v.JoinedStr.values;
             if (asdl_seq_LEN(values) != 2) {
                 PyErr_Format(PyExc_SystemError,
-                             string_kind == TSTRING
+                             string_kind == _PYTOK_TSTRING
                              ? "unexpected TemplateStr node without debug data in t-string at line %d"
                              : "unexpected JoinedStr node without debug data in f-string at line %d",
                              item->lineno);
@@ -1390,7 +1391,7 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
             asdl_seq_SET(seq, index++, first);
 
             expr_ty second = asdl_seq_GET(values, 1);
-            assert((string_kind == TSTRING && second->kind == Interpolation_kind) || second->kind == FormattedValue_kind);
+            assert((string_kind == _PYTOK_TSTRING && second->kind == Interpolation_kind) || second->kind == FormattedValue_kind);
             asdl_seq_SET(seq, index++, second);
 
             continue;
@@ -1432,7 +1433,8 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
 expr_ty
 _PyPegen_template_str(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b) {
 
-    asdl_expr_seq *resized_exprs = _get_resized_exprs(p, a, raw_expressions, b, TSTRING);
+    asdl_expr_seq *resized_exprs = _get_resized_exprs(
+        p, a, raw_expressions, b, _PYTOK_TSTRING);
     if (resized_exprs == NULL) {
         return NULL;
     }
@@ -1444,7 +1446,8 @@ _PyPegen_template_str(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token
 expr_ty
 _PyPegen_joined_str(Parser *p, Token* a, asdl_expr_seq* raw_expressions, Token*b) {
 
-    asdl_expr_seq *resized_exprs = _get_resized_exprs(p, a, raw_expressions, b, FSTRING);
+    asdl_expr_seq *resized_exprs = _get_resized_exprs(
+        p, a, raw_expressions, b, _PYTOK_FSTRING);
     if (resized_exprs == NULL) {
         return NULL;
     }
@@ -1460,12 +1463,7 @@ expr_ty _PyPegen_decoded_constant_from_token(Parser* p, Token* tok) {
         return NULL;
     }
 
-    // Check if we're inside a raw f-string for format spec decoding
-    int is_raw = 0;
-    if (INSIDE_FSTRING(p->tok)) {
-        tokenizer_mode *mode = TOK_GET_MODE(p->tok);
-        is_raw = mode->raw;
-    }
+    int is_raw = _PyTok_FStringRaw(p->tok);
 
     PyObject* str = _PyPegen_decode_string(p, is_raw, bstr, bsize, tok);
     if (str == NULL) {
@@ -2048,12 +2046,12 @@ _warn_relative_import_of_lazy(Parser *p, asdl_seq *dots, expr_ty module)
     }
 
     int res = _PyErr_EmitSyntaxWarning(msg,
-                                       p->tok->filename,
+                                       _PyTok_Filename(p->tok),
                                        module->lineno,
                                        module->col_offset + 1,
                                        module->end_lineno,
                                        module->end_col_offset + 1,
-                                       p->tok->module);
+                                       _PyTok_Module(p->tok));
     Py_DECREF(msg);
     return res;
 }
