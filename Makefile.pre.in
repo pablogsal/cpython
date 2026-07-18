@@ -132,6 +132,8 @@ PY_CORE_EXE_LDFLAGS:= $(if $(CONFIGURE_EXE_LDFLAGS), $(CONFIGURE_EXE_LDFLAGS) $(
 CFLAGS_ALIASING=@CFLAGS_ALIASING@
 # Compilation flags only for ceval.c.
 CFLAGS_CEVAL=@CFLAGS_CEVAL@
+# Compilation flags only for ceval_tailcall.c.
+CFLAGS_CEVAL_TAILCALL=@CFLAGS_CEVAL@
 
 
 # Machine-dependent subdirectories
@@ -442,6 +444,7 @@ PYTHON_OBJS=	\
 		Python/bltinmodule.o \
 		Python/brc.o \
 		Python/ceval.o \
+		Python/ceval_tailcall.o \
 		Python/codecs.o \
 		Python/codegen.o \
 		Python/compile.o \
@@ -1310,6 +1313,7 @@ PYTHON_HEADERS= \
 		$(srcdir)/Include/internal/pycore_cell.h \
 		$(srcdir)/Include/internal/pycore_ceval.h \
 		$(srcdir)/Include/internal/pycore_ceval_state.h \
+		$(srcdir)/Include/internal/pycore_ceval_opcode_targets.h \
 		$(srcdir)/Include/internal/pycore_code.h \
 		$(srcdir)/Include/internal/pycore_codecs.h \
 		$(srcdir)/Include/internal/pycore_compile.h \
@@ -2205,6 +2209,11 @@ Python/ceval.o: \
 		$(srcdir)/Python/condvar.h \
 		$(srcdir)/Python/generated_cases.c.h \
 		$(srcdir)/Python/executor_cases.c.h \
+		$(srcdir)/Python/opcode_targets.h \
+		$(srcdir)/Python/record_functions.c.h
+
+Python/ceval_tailcall.o: \
+		$(srcdir)/Python/generated_cases.c.h \
 		$(srcdir)/Python/opcode_targets.h \
 		$(srcdir)/Python/record_functions.c.h
 
@@ -3220,6 +3229,9 @@ Python/dtoa.o: Python/dtoa.c
 
 Python/ceval.o: Python/ceval.c
 	$(CC) -c $(PY_CORE_CFLAGS) $(CFLAGS_CEVAL) -o $@ $<
+
+Python/ceval_tailcall.o: Python/ceval_tailcall.c
+	$(CC) -c $(PY_CORE_CFLAGS) $(CFLAGS_CEVAL_TAILCALL) -o $@ $<
 
 # Run reindent on the library
 .PHONY: reindent

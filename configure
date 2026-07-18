@@ -835,9 +835,10 @@ OPENSSL_LDFLAGS
 OPENSSL_LIBS
 OPENSSL_INCLUDES
 ENSUREPIP
-CFLAGS_CEVAL
 SRCDIRS
 THREADHEADERS
+CFLAGS_CEVAL_TAILCALL
+CFLAGS_CEVAL
 PANEL_LIBS
 PANEL_CFLAGS
 CURSES_LIBS
@@ -31896,6 +31897,48 @@ printf "%s\n" "#define _Py_TAIL_CALL_INTERP 1" >>confdefs.h
 
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 printf "%s\n" "yes" >&6; }
+  if test -n "$frame_pointer_cflags" && test "x$with_frame_pointers" != xno; then
+    { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking if we need to reserve the frame pointer in the opcode handlers" >&5
+printf %s "checking if we need to reserve the frame pointer in the opcode handlers... " >&6; }
+    if test "$cross_compiling" = yes
+then :
+  reserve_frame_pointer_for_opcodes=undefined
+else case e in #(
+  e) cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+    int main(void) {
+    // clang-21 and newer support this CLI flag.
+    #if defined(__clang__) && (__clang_major__ >= 21)
+        return 1;
+    #else
+        return 0;
+    #endif
+    }
+
+_ACEOF
+if ac_fn_c_try_run "$LINENO"
+then :
+  reserve_frame_pointer_for_opcodes=no
+else case e in #(
+  e) reserve_frame_pointer_for_opcodes=yes ;;
+esac
+fi
+rm -f core *.core core.conftest.* gmon.out bb.out conftest$ac_exeext \
+  conftest.$ac_objext conftest.beam conftest.$ac_ext ;;
+esac
+fi
+
+    { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $reserve_frame_pointer_for_opcodes" >&5
+printf "%s\n" "$reserve_frame_pointer_for_opcodes" >&6; }
+
+    if test "$reserve_frame_pointer_for_opcodes" = yes; then
+      CFLAGS_CEVAL_TAILCALL="-mreserve-frame-pointer-reg"
+    fi
+
+
+
+  fi
 fi
 if test "$withval" = no
 then

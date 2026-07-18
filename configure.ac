@@ -7445,6 +7445,30 @@ then
   AC_DEFINE([_Py_TAIL_CALL_INTERP], [1],
   [Define if you want to use tail-calling interpreters in CPython.])
   AC_MSG_RESULT([yes])
+  if test -n "$frame_pointer_cflags" && test "x$with_frame_pointers" != xno; then
+    AC_MSG_CHECKING([if we need to reserve the frame pointer in the opcode handlers])
+    AC_RUN_IFELSE([AC_LANG_SOURCE([[
+    int main(void) {
+    // clang-21 and newer support this CLI flag.
+    #if defined(__clang__) && (__clang_major__ >= 21)
+        return 1;
+    #else
+        return 0;
+    #endif
+    }
+    ]])],
+    [reserve_frame_pointer_for_opcodes=no],
+    [reserve_frame_pointer_for_opcodes=yes],
+    [reserve_frame_pointer_for_opcodes=undefined])
+    AC_MSG_RESULT([$reserve_frame_pointer_for_opcodes])
+
+    if test "$reserve_frame_pointer_for_opcodes" = yes; then
+      CFLAGS_CEVAL_TAILCALL="-mreserve-frame-pointer-reg"
+    fi
+    AC_SUBST([CFLAGS_CEVAL])
+
+    AC_SUBST([CFLAGS_CEVAL_TAILCALL])
+  fi
 fi
 if test "$withval" = no
 then

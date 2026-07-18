@@ -8,6 +8,7 @@
 #include "../../Python/ceval.h"
 
 #include "../../Python/ceval_macros.h"
+#include "pycore_ceval_opcode_targets.h"
 
 #undef IS_PEP523_HOOKED
 #define IS_PEP523_HOOKED(tstate) (tstate->interp->eval_frame != NULL && !tstate->interp->eval_frame_allow_specialization)
@@ -30,11 +31,6 @@ stop_tracing_and_jit(PyThreadState *tstate, _PyInterpreterFrame *frame)
 #endif
 
 _PyJitEntryFuncPtr _Py_jit_entry;
-
-#if _Py_TAIL_CALL_INTERP
-#include "test_targets.h"
-#include "test_cases.c.h"
-#endif
 
 PyObject* _Py_HOT_FUNCTION
 Test_EvalFrame(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)

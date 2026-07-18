@@ -44,13 +44,12 @@ def write_opcode_targets(analysis: Analysis, out: CWriter) -> None:
     out.emit("#else /* _Py_TAIL_CALL_INTERP */\n")
 
 def function_proto(name: str) -> str:
-    return f"static PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_{name}(TAIL_CALL_PARAMS)"
-
+    return f"extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_{name}(TAIL_CALL_PARAMS)"
 
 def write_tailcall_dispatch_table(analysis: Analysis, out: CWriter) -> None:
-    out.emit("static py_tail_call_funcptr instruction_funcptr_handler_table[256];\n")
+    out.emit("extern py_tail_call_funcptr instruction_funcptr_handler_table[256];\n")
     out.emit("\n")
-    out.emit("static py_tail_call_funcptr instruction_funcptr_tracing_table[256];\n")
+    out.emit("extern py_tail_call_funcptr instruction_funcptr_tracing_table[256];\n")
     out.emit("\n")
 
     # Emit function prototypes for labels.
@@ -72,7 +71,7 @@ def write_tailcall_dispatch_table(analysis: Analysis, out: CWriter) -> None:
     out.emit("\n")
 
     # Emit the dispatch table.
-    out.emit("static py_tail_call_funcptr instruction_funcptr_handler_table[256] = {\n")
+    out.emit("extern py_tail_call_funcptr instruction_funcptr_handler_table[256] = {\n")
     for name in sorted(analysis.instructions.keys()):
         out.emit(f"[{name}] = _TAIL_CALL_{name},\n")
     named_values = analysis.opmap.values()
@@ -82,7 +81,7 @@ def write_tailcall_dispatch_table(analysis: Analysis, out: CWriter) -> None:
     out.emit("};\n")
 
     # Emit the tracing dispatch table.
-    out.emit("static py_tail_call_funcptr instruction_funcptr_tracing_table[256] = {\n")
+    out.emit("extern py_tail_call_funcptr instruction_funcptr_tracing_table[256] = {\n")
     for name in sorted(analysis.instructions.keys()):
         out.emit(f"[{name}] = _TAIL_CALL_TRACE_RECORD,\n")
     named_values = analysis.opmap.values()
