@@ -133,7 +133,7 @@ CFLAGS_ALIASING=@CFLAGS_ALIASING@
 # Compilation flags only for ceval.c.
 CFLAGS_CEVAL=@CFLAGS_CEVAL@
 # Compilation flags only for ceval_tailcall.c.
-CFLAGS_CEVAL_TAILCALL=@CFLAGS_CEVAL@
+CFLAGS_CEVAL_TAILCALL=@CFLAGS_CEVAL_TAILCALL@
 
 
 # Machine-dependent subdirectories
@@ -2213,9 +2213,14 @@ Python/ceval.o: \
 		$(srcdir)/Python/record_functions.c.h
 
 Python/ceval_tailcall.o: \
+		$(srcdir)/Include/internal/pycore_ceval_opcode_targets.h \
+		$(srcdir)/Python/ceval.h \
+		$(srcdir)/Python/ceval_macros.h \
 		$(srcdir)/Python/generated_cases.c.h \
 		$(srcdir)/Python/opcode_targets.h \
 		$(srcdir)/Python/record_functions.c.h
+
+Modules/_testinternalcapi/interpreter.o: PY_STDMODULE_CFLAGS += $(CFLAGS_CEVAL_TAILCALL)
 
 Python/flowgraph.o: \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h
@@ -3491,7 +3496,7 @@ MODULE__SOCKET_DEPS=$(srcdir)/Modules/socketmodule.h $(srcdir)/Modules/addrinfo.
 MODULE__SSL_DEPS=$(srcdir)/Modules/_ssl.h $(srcdir)/Modules/_ssl/cert.c $(srcdir)/Modules/_ssl/debughelpers.c $(srcdir)/Modules/_ssl/misc.c $(srcdir)/Modules/_ssl_data_111.h $(srcdir)/Modules/_ssl_data_300.h $(srcdir)/Modules/socketmodule.h
 MODULE__TESTCAPI_DEPS=$(srcdir)/Modules/_testcapi/parts.h $(srcdir)/Modules/_testcapi/util.h
 MODULE__TESTLIMITEDCAPI_DEPS=$(srcdir)/Modules/_testlimitedcapi/testcapi_long.h $(srcdir)/Modules/_testlimitedcapi/parts.h $(srcdir)/Modules/_testlimitedcapi/util.h
-MODULE__TESTINTERNALCAPI_DEPS=$(srcdir)/Modules/_testinternalcapi/parts.h $(srcdir)/Python/ceval.h $(srcdir)/Modules/_testinternalcapi/test_targets.h $(srcdir)/Modules/_testinternalcapi/test_cases.c.h
+MODULE__TESTINTERNALCAPI_DEPS=$(srcdir)/Modules/_testinternalcapi/parts.h $(srcdir)/Include/internal/pycore_ceval_opcode_targets.h $(srcdir)/Python/ceval.h $(srcdir)/Modules/_testinternalcapi/test_targets.h $(srcdir)/Modules/_testinternalcapi/test_cases.c.h
 MODULE__SQLITE3_DEPS=$(srcdir)/Modules/_sqlite/connection.h $(srcdir)/Modules/_sqlite/cursor.h $(srcdir)/Modules/_sqlite/microprotocols.h $(srcdir)/Modules/_sqlite/module.h $(srcdir)/Modules/_sqlite/prepare_protocol.h $(srcdir)/Modules/_sqlite/row.h $(srcdir)/Modules/_sqlite/util.h
 MODULE__ZSTD_DEPS=$(srcdir)/Modules/_zstd/_zstdmodule.h $(srcdir)/Modules/_zstd/buffer.h $(srcdir)/Modules/_zstd/zstddict.h
 

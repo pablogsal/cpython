@@ -7431,6 +7431,9 @@ case "$ac_cv_computed_gotos" in yes*)
   [Define if the C compiler supports computed gotos.])
 esac
 
+CFLAGS_CEVAL_TAILCALL=""
+AC_SUBST([CFLAGS_CEVAL_TAILCALL])
+
 # Check for --with-tail-call-interp
 AC_MSG_CHECKING([for --with-tail-call-interp])
 AC_ARG_WITH(
@@ -7465,9 +7468,6 @@ then
     if test "$reserve_frame_pointer_for_opcodes" = yes; then
       CFLAGS_CEVAL_TAILCALL="-mreserve-frame-pointer-reg"
     fi
-    AC_SUBST([CFLAGS_CEVAL])
-
-    AC_SUBST([CFLAGS_CEVAL_TAILCALL])
   fi
 fi
 if test "$withval" = no

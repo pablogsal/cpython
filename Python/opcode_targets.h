@@ -522,13 +522,15 @@ extern py_tail_call_funcptr instruction_funcptr_handler_table[256];
 
 extern py_tail_call_funcptr instruction_funcptr_tracing_table[256];
 
+extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_error(TAIL_CALL_PARAMS);
+extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_start_frame(TAIL_CALL_PARAMS);
+
+#ifdef _Py_CEVAL_OPCODE_TARGETS_DEFINE
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_pop_2_error(TAIL_CALL_PARAMS);
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_pop_1_error(TAIL_CALL_PARAMS);
-extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_error(TAIL_CALL_PARAMS);
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_exception_unwind(TAIL_CALL_PARAMS);
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_exit_unwind(TAIL_CALL_PARAMS);
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_exit_unwind_notrace(TAIL_CALL_PARAMS);
-extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_start_frame(TAIL_CALL_PARAMS);
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_stop_tracing(TAIL_CALL_PARAMS);
 
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_BINARY_OP(TAIL_CALL_PARAMS);
@@ -763,7 +765,7 @@ extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_UNPACK_SEQUENCE_TWO_TUPLE(TAIL_C
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_WITH_EXCEPT_START(TAIL_CALL_PARAMS);
 extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_YIELD_VALUE(TAIL_CALL_PARAMS);
 
-extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_UNKNOWN_OPCODE(TAIL_CALL_PARAMS) {
+PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_UNKNOWN_OPCODE(TAIL_CALL_PARAMS) {
     int opcode = next_instr->op.code;
     _PyErr_Format(tstate, PyExc_SystemError,
               "%U:%d: unknown opcode %d",
@@ -773,7 +775,7 @@ extern PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_UNKNOWN_OPCODE(TAIL_CALL_PARAMS)
 JUMP_TO_LABEL(error);
 }
 
-extern py_tail_call_funcptr instruction_funcptr_handler_table[256] = {
+py_tail_call_funcptr instruction_funcptr_handler_table[256] = {
     [BINARY_OP] = _TAIL_CALL_BINARY_OP,
     [BINARY_OP_ADD_FLOAT] = _TAIL_CALL_BINARY_OP_ADD_FLOAT,
     [BINARY_OP_ADD_INT] = _TAIL_CALL_BINARY_OP_ADD_INT,
@@ -1031,7 +1033,7 @@ extern py_tail_call_funcptr instruction_funcptr_handler_table[256] = {
     [231] = _TAIL_CALL_UNKNOWN_OPCODE,
     [232] = _TAIL_CALL_UNKNOWN_OPCODE,
 };
-extern py_tail_call_funcptr instruction_funcptr_tracing_table[256] = {
+py_tail_call_funcptr instruction_funcptr_tracing_table[256] = {
     [BINARY_OP] = _TAIL_CALL_TRACE_RECORD,
     [BINARY_OP_ADD_FLOAT] = _TAIL_CALL_TRACE_RECORD,
     [BINARY_OP_ADD_INT] = _TAIL_CALL_TRACE_RECORD,
@@ -1289,4 +1291,5 @@ extern py_tail_call_funcptr instruction_funcptr_tracing_table[256] = {
     [231] = _TAIL_CALL_UNKNOWN_OPCODE,
     [232] = _TAIL_CALL_UNKNOWN_OPCODE,
 };
+#endif /* _Py_CEVAL_OPCODE_TARGETS_DEFINE */
 #endif /* _Py_TAIL_CALL_INTERP */

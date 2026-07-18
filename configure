@@ -835,10 +835,10 @@ OPENSSL_LDFLAGS
 OPENSSL_LIBS
 OPENSSL_INCLUDES
 ENSUREPIP
+CFLAGS_CEVAL
 SRCDIRS
 THREADHEADERS
 CFLAGS_CEVAL_TAILCALL
-CFLAGS_CEVAL
 PANEL_LIBS
 PANEL_CFLAGS
 CURSES_LIBS
@@ -31882,6 +31882,9 @@ printf "%s\n" "#define HAVE_COMPUTED_GOTOS 1" >>confdefs.h
 
 esac
 
+CFLAGS_CEVAL_TAILCALL=""
+
+
 # Check for --with-tail-call-interp
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for --with-tail-call-interp" >&5
 printf %s "checking for --with-tail-call-interp... " >&6; }
@@ -31935,9 +31938,6 @@ printf "%s\n" "$reserve_frame_pointer_for_opcodes" >&6; }
     if test "$reserve_frame_pointer_for_opcodes" = yes; then
       CFLAGS_CEVAL_TAILCALL="-mreserve-frame-pointer-reg"
     fi
-
-
-
   fi
 fi
 if test "$withval" = no
