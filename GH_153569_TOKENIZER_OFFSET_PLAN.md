@@ -25,14 +25,13 @@ updates below have passed the validation recorded in this document.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156482](https://github.com/python/cpython/pull/156482) | Return tokenizer tokens as source spans; protect relocation | `b5addc5d0490d07e86119b21596120008e75305a` |
-| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `056e86ee18b5060016601895f7f24804861953da` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Simplify source and formatted-string state; source-owned diagnostic line lookup | `afd9d72be5073db8db08e75471e43f7a1ce94945` |
+| [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | `bf25f7b0c49885efe2c3d65b06cac1d50bf12215` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `a6102b57e550416840ecf53ab0d725768a9058a5` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `f72cb2b2757fc6b1ac4209d0b222103279b72468` |
 
-The larger remaining offset/storage/error-state migration, opaque consumer
-API cutover, and validation tooling stay separate follow-ups. This update
-changes the existing three PRs and this plan; it does not start those later
-implementation PRs.
+At the user's request, storage ownership, remaining persistent offsets,
+explicit diagnostic state, and the opaque consumer API are folded into these
+three PRs. Validation tooling remains a separate follow-up.
 
 The August 27 branch inventory and prototype commits below are historical
 recovery material. The active stack above supersedes the old instruction to
@@ -54,7 +53,7 @@ can therefore land in one path without fixing the others.
 The architectural goals, adjusted for the current storage decision, are:
 
 1. One decoded-storage abstraction owns retained bytes and preserves bounded
-   streaming windows; this ownership unification remains follow-up work.
+   streaming windows.
 2. Positions are offsets into that source, never persistent interior pointers.
 3. Tokens and errors describe half-open source spans.
 4. Persistent scanner positions use offsets; temporary pointer caches stay
@@ -186,22 +185,21 @@ branch. Both are integration checkpoints, not review units.
 
 ## Current PR scopes and September 5 updates
 
-### #156482: token spans and relocation
+### #156482: token spans and unified source storage
 
-Keep token span conversion and the behavior coverage that protects it here.
-The reader no longer predicts whether source capacity will grow. It saves and
-restores persistent buffer positions around every source append that preserves
-the active window, leaving allocation policy with the source implementation.
+SourceText owns decoded bytes for every input kind. Its logical base advances
+when a streaming window is discarded; discard reuses the allocation and
+clears line metadata. File/readline staging buffers remain separate from the
+canonical decoded source. Prepared and interactive input retain their source.
 
-Debug streaming-buffer growth now allocates a replacement while the old
-buffer is live, copies the active bytes and terminator, poisons and frees the
-old allocation, and restores positions. This makes relocation deterministic
-in debug builds. Release builds retain the existing realloc path.
+The reader temporarily saves and restores persistent pointers around append
+in this prerequisite PR. The source allocator forces relocation and poisons
+old allocations in debug builds. The final PR removes pointer rebasing after
+all persistent scanner positions become offsets.
 
-The streaming relocation test now covers both f- and t-strings with
-`extra_tokens` enabled and disabled. A multiline interactive f-string test
-covers retained-source relocation in the REPL. These tests belong here and
-propagate through both dependent PRs.
+Tests protect relocation in f/t strings, both extra-token modes, interactive
+multiline input, discard/reuse, implicit-line metadata reset, and logical
+offset limits. The bitset byte count avoids addition overflow on 32-bit builds.
 
 ### #156484: remove unused primitives
 
@@ -215,61 +213,40 @@ Remove the unrelated junction-handling edit in `Lib/test/support/os_helper.py`
 from this PR's diff. No replacement filesystem cleanup change belongs in this
 stack.
 
-### #156654: source and formatted-string state
+### #156654: offsets, explicit diagnostics, and opaque consumers
 
-Keep the smaller formatted-string representation: one inline slot for the
-common case and a dynamically growing stack for nested strings. Each active
-f- or t-string has one frame containing its kind, quote, opening location,
-mode, replacement depth, expression span, and recorded comment spans. Bracket
-nesting comes from the existing delimiter stack.
+Keep one frame per active formatted string, an inline common-case slot, and a
+growable nesting stack. Frames contain kind, quote, opening location, mode,
+replacement depth, expression span, and comment spans.
 
-The reader owns buffer relocation and interactive state. The PR removes the
-old buffer layer, dummy regular mode, duplicated state and source aliases;
-its existing diagnostics use retained tokenizer source. Prefix/quote scanning
-and prepared-input normalization remain outside this cleanup's scope.
+All persistent scanner positions are offsets, including token starts and
+line starts. SourceText is the sole owner of decoded bytes; the reader no
+longer saves or restores interior pointers. Temporary byte views remain
+within their documented lifetimes. The small character-read loop is inline;
+refill, callbacks, and NUL validation stay in a separate function.
 
-Move the diagnostic line scan from `pegen_errors.c` into
-`_PyTok_SourceLineView()`. Keep parser-relative line-number adjustment and
-Unicode decoding in pegen. The accessor returns a transient byte view without
-the newline, clamps line numbers to the first/final line, and treats a trailing
-newline as an empty final line. Direct tests protect empty input, UTF-8 text,
-unterminated tails, and extreme line numbers. A linear scan is appropriate on
-this error path; do not restore the deleted sparse index for it.
+String, BOM, UTF-8, and invalid-identifier errors report explicit text and
+locations without changing the scanner's position. Source-backed string
+errors additionally retain a reporting location and text span for parser
+reinterpretation as incomplete input. This preserves multi-line exception
+text. Exceptions own the rendered text; no borrowed raw decoder line is
+stored in persistent state. Existing done codes retain their classifications.
+
+The single consumer header, tokenizer.h, exposes an opaque tok_state and
+value records for tokens, views, observations, and diagnostics. Pegen and
+_tokenize use configuration, input-control, token, source-view, and diagnostic
+operations. They no longer include lexer state or inspect its fields. Raw
+formatted-string context travels in the emitted and cached parser tokens.
+
+Token views preserve multiline TokenInfo.line and character-column behavior.
+SourceLineView owns the retained-source line scan, with 1-based clamping and
+borrowed non-NUL-terminated views. Windows core/freezer and standalone PEG
+extension builds include the new API implementation.
 
 ## Remaining implementation plan
 
-### 1. Remaining offsets, storage ownership, and error state
+### Validation tooling
 
-- Convert remaining persistent scanner positions to offsets and finish
-  unifying decoded-storage ownership. Streaming currently owns `tok->buf`
-  separately from retained prepared/interactive `SourceText`.
-- Preserve bounded retention for streaming sources. Use a logical base offset
-  for discarded windows rather than retaining all prior lines to simplify
-  offset arithmetic.
-- Replace string-diagnostic cursor rewinds and temporary BOM diagnostic state
-  changes with explicit diagnostic locations and text views.
-- Converge error reporting on explicit state without changing exception types,
-  messages, locations, or incomplete-input classification.
-- Keep the existing consumer compatibility surface until its dedicated
-  migration. Include regression tests with each implementation change.
-
-These are substantial migration steps, not additional cleanup requirements
-for the current three PRs. Review boundaries may be split further if needed.
-
-### 2. Opaque API consumer cutover
-
-- Move pegen and `_tokenize.TokenizerIter` away from `tok_state` field access
-  to explicit operations, spans, and source views.
-- Stop obtaining an already-produced token's raw-string context from the live
-  f-string frame. Carry required context through tokens or grammar actions.
-- Define token-text and multiline line-view lifetimes, including
-  `TokenInfo.line` values that span several physical lines.
-- Preserve the clinic signature, `extra_tokens` adjustments, encoding-finder
-  entry point, source-kind-specific metadata, and interactive/callback timing.
-- Delete compatibility entry points once their consumers have moved. End with
-  one tokenizer implementation.
-
-### 3. Validation tooling
 
 Reference material: historical commit `98fb37b1a8f`.
 
@@ -289,8 +266,8 @@ the implementation PRs they protect.
 
 The July 18 sequence listed six follow-ups after #153587, and the August 27
 handoff reduced that estimate to five. Those counts are superseded by the
-merged reader/decoder, the current three-PR stack, and the three remaining
-work areas above. Do not infer a fixed final PR count from the old estimates.
+merged reader/decoder, the current three-PR stack, and the remaining validation tooling above. Do not infer a fixed final PR
+count from the old estimates.
 
 The incremental `readline()` chunk-preservation prototype is commit
 `0af9c4d9afe`. The current reader handles multiple logical lines returned by
@@ -328,12 +305,12 @@ Each functional PR must protect at least the following:
 
 ## Architectural invariants to preserve
 
-Preserve these constraints during the remaining migration:
+Preserve these constraints in this stack and future tooling:
 
 1. Retained source bytes keep their logical offsets when storage relocates or
    an earlier streaming window is discarded. Offsets do not promise that
    discarded source remains accessible.
-2. Source storage is the sole owner of persistent interior pointers.
+2. Source storage is the sole owner of canonical decoded bytes.
 3. Consumers retain offsets or spans, not source pointers.
 4. Returned source views are bounded and transient.
 5. Temporary scanning pointers must be refreshed at every operation that can
@@ -343,19 +320,14 @@ Preserve these constraints during the remaining migration:
 7. Backward movement through already loaded source must not rewind or invoke
    the reader again.
 8. Allocation failure must not partially commit source bytes or metadata.
-9. Tokenizer errors should converge on one explicit, sticky error record and
-   one raising boundary instead of parallel done-code, return-token, `PyErr`,
-   and decoder flags.
+9. Diagnostic locations are independent of scanner position. Rendered
+   exceptions own their text; supplementary source-backed diagnostic spans
+   remain retained in terminal tokenizer state.
 10. Keep one frame per active formatted string with a mode and replacement
     depth, one inline slot, and a growable nesting stack. This intentionally
     differs from the original proposal of separate frames for each body,
     replacement-expression, and format-spec context. Changing to that older
     proposal is not a requirement for this stack.
-
-Some of these are final-state goals rather than properties of the current
-stack; persistent scanner pointers and consumer field access still remain.
-Introduce the remaining invariants incrementally without claiming that the
-whole architecture already exists.
 
 ## Source retention and memory
 
@@ -366,9 +338,8 @@ require a large retained window; bounded streaming does not mean a fixed
 constant-memory limit independent of the active construct.
 
 Prepared and interactive input retain decoded `SourceText`, supporting their
-source views and diagnostics. The remaining ownership unification must
-preserve these source-kind retention semantics rather than forcing streaming
-input into full-input retention.
+source views and diagnostics. Unified storage preserves these source-kind retention semantics. Streaming
+input is not retained in full.
 
 The original integration prototype instead kept all decoded source in one
 contiguous append-only buffer. Its reported 100 MiB workload peak of about
@@ -399,10 +370,87 @@ rebased integration branches as ready to merge. Rebasing changes commit IDs
 and upstream context. Each carved PR must be rebuilt and retested on its own
 tip.
 
-## September 5 validation status
+## Current validation: full migration folded into the stack
 
-The tested source tips are the hashes in the active-stack table above. Local
-builds use Linux x86-64, GCC 16.2.1, and separate build directories for each
+All three source worktrees are clean at the active-stack hashes. Linux
+x86-64 builds use GCC 16.2.1 and separate directories for each PR.
+
+| PR | Full debug validation | Other validation |
+|---|---|---|
+| #156482 | All-resource run: 52,462 tests; curses passed with a corrected TERM | Source discard/offset/metadata boundaries; patchcheck |
+| #156484 | Fresh clean-banner default run: 51,926 tests, no failures | All-resource run: 52,460 tests; patchcheck |
+| #156654 | Default run: 51,930 tests, no failures | PEG: 98 tests; reference-leak checks: 270 tests; debug ASan/UBSan: 495 tests; patchcheck |
+
+The first two all-resource runs encountered `curses.error: newterm() returned
+NULL` with TERM=dumb. The same failure occurred on the unchanged baseline.
+Both final tips passed all 183 curses tests with TERM=xterm-256color (three
+skips). P2's first build banner also reported `-dirty` despite its clean
+worktree; its index and build metadata were refreshed, then the fresh full
+suite passed with the clean a6102b57e55 banner. P3's full run required no retry.
+Default full suites executed 478 passing test modules, with 15 platform skips
+and 11 resource-denied modules.
+
+Final P3 comparisons against the previous PR tip afd9d72be50 match exactly:
+
+- 156 standard-library/test files: complete token streams and AST locations.
+- 557 syntax doctest compilation outcomes, including exception attributes.
+- 243 incomplete-input outcomes, including exception type, text, and positions.
+
+The expanded incomplete-input comparison caught 28 text differences while
+removing string rewinds. The explicit diagnostic span fixes them; regression
+coverage asserts the exact multiline exception arguments for ordinary, f-,
+and t-strings, with non-ASCII source and both single/exec input.
+
+ASan/UBSan used --with-pydebug, --without-pymalloc, and
+ASAN_OPTIONS=detect_leaks=0. Separate -R 3:3 runs checked tokenizer, f/t strings,
+source C tests, and codeop reference counts. The forced-relocation debug path
+was exercised. No native Windows or macOS runtime test was performed locally;
+core/freezer project XML, source entries, and standalone PEG build integration
+were checked.
+
+The new opaque API initially exposed a short-line throughput regression.
+The final implementation keeps the small character-read loop inline, puts
+input offsets and source storage together, and uses one borrowed token-view
+operation in _tokenize. Nine alternating release samples pinned to CPU 31,
+using the exact final P3 binary and previous PR tip, gave these medians:
+
+| Workload | Previous tip | Final tip | Change |
+|---|---:|---:|---:|
+| Compile four standard-library modules | 29.753 ms | 30.068 ms | +1.06% |
+| Compile 1,000 formatted-string assignments | 6.637 ms | 6.322 ms | -4.75% |
+| Tokenize 10,000 short assignments | 22.207 ms | 22.502 ms | +1.33% |
+
+These local samples do not establish a general speedup or no-regression
+statistical guarantee. Earlier samples of the same source gave -0.27%, -2.15%,
+and +0.75%, respectively. Three runs draining 100 MiB of 4 KiB source lines
+peaked at about 17 MiB RSS in both builds. Active multiline constructs can
+require larger retained windows.
+
+Three independent agents reviewed reuse, code quality, efficiency, ownership,
+and API contracts. Their findings drove the 32-bit bit-count fix, build-entry
+corrections, explicit incomplete-input context, token-view operation, and
+scanner inlining. The public header exposes neither SourceText nor lexer
+frame layout. All incremental/full PR diffs pass whitespace checks.
+
+Exact commands, versions, hashes, and logs are under /tmp/tokenizer-pr-review:
+
+- build-accessor/unified-comparisons-final.json
+- build-accessor/unified-full-final.log
+- debug-156482/unified-full.log
+- debug-156484/unified-full-clean-banner.log
+- asan-candidate/unified-final-tests.log
+- unified-final-performance.json
+- final-static-checks.json
+
+Before this update, the old P2 Windows free-threading job failed in untouched
+asyncio TaskGroup cancellation-message handling from #155439. Tokenizer tests
+passed in that job. This was not independently reproduced on Windows and is
+not classified as a proven baseline flake. Updated heads require fresh CI.
+
+## Earlier September 5 cleanup validation (superseded tips)
+
+The earlier tested tips were b5addc5d049, 056e86ee18b, and afd9d72be50. Local
+builds used Linux x86-64, GCC 16.2.1, and separate build directories for each
 PR. The source worktrees are clean. All three final full-suite runs passed.
 
 | PR | Full debug suite | Focused validation |
@@ -600,12 +648,10 @@ copies.
 
 ## Immediate next action
 
-Finish validation of #156482, #156484, and #156654 at the candidate tips listed
-above. Resolve any change-related failures, record environmental limitations,
-and update the existing PR branches and descriptions with the validated
-results. Keep their dependency order and the scope boundaries in this plan.
+Complete validation and update the existing PR branches and descriptions at
+the active-stack tips above. Check the newly triggered CI against those exact
+heads. Do not merge as part of this task.
 
-The reader/decoder is already merged. Once this stack is ready, the next
-implementation work is the remaining offset/storage/error-state migration,
-followed by the opaque consumer API cutover and validation tooling. Those
-follow-ups are recorded here for continuity and are not added to this update.
+The ownership/offset, explicit-diagnostic, and opaque-API migrations are now
+included in the active stack. Remaining work is validation tooling and any
+specific findings from review or CI.
