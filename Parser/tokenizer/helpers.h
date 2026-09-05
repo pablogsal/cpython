@@ -6,6 +6,9 @@
 #include "../lexer/state.h"
 
 int _PyTokenizer_syntaxerror(struct tok_state *tok, const char *format, ...);
+/* Positive range columns are 1-based byte columns. A start column of -1
+   derives the character column from the reporting cursor; an end column of
+   -1 uses the start column. */
 int _PyTokenizer_syntaxerror_known_range(struct tok_state *tok, int col_offset, int end_col_offset, const char *format, ...);
 int _PyTokenizer_syntaxerror_at(
     struct tok_state *tok, const char *line_start, Py_ssize_t cursor_offset,
