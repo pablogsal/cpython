@@ -25,9 +25,9 @@ updates below have passed the validation recorded in this document.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | `bf25f7b0c49885efe2c3d65b06cac1d50bf12215` |
-| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `a6102b57e550416840ecf53ab0d725768a9058a5` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `f72cb2b2757fc6b1ac4209d0b222103279b72468` |
+| [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | `6117ae337c2242a5a7767a34a81809f6ff6fb4c0` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `da9dfb7d5cebbd1bd72c77778297d66f66d4caf3` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `6a267edcb6ff9aae4c75eb6b80abdd99bb026796` |
 
 At the user's request, storage ownership, remaining persistent offsets,
 explicit diagnostic state, and the opaque consumer API are folded into these
@@ -370,9 +370,76 @@ rebased integration branches as ready to merge. Rebasing changes commit IDs
 and upstream context. Each carved PR must be rebuilt and retested on its own
 tip.
 
-## Current validation: full migration folded into the stack
+## Final review against current main
 
-All three source worktrees are clean at the active-stack hashes. Linux
+All three tips above include upstream main `7a918411a30`. Review covered each
+incremental PR and its full diff against main, with independent reuse,
+correctness/API, and efficiency passes. No implementation work remains for
+the three requested migrations.
+
+The previous #156654 CI merge failed to compile after upstream #156901 added
+pointer-based diagnostic calls. Rebasing the stack and passing the explicit
+reporting-line view fixes that integration. Review also found a byte/character
+column mismatch for invalid UTF-8 following non-ASCII text. The reporting
+cursor now derives the character column once. New byte-compilation and FILE
+input tests expect column 7; current main incorrectly reports column 6.
+Borrowed-view invalidation and source ownership contracts were corrected.
+Three unreachable pointer-era cursor checks were removed from the normal
+scanner after profiling; cursor offsets are always nonnegative.
+
+| PR | Full debug validation at the recorded tip |
+|---|---|
+| #156482 | 52,011 tests; only shared perf-profiler resource failures; all 14 profiler tests passed in the sequential rerun |
+| #156484 | 52,009 tests; only shared perf-profiler resource failures; all 14 profiler tests passed in the sequential rerun |
+| #156654 | 52,014 tests, successful without retry |
+
+P1/P2 simultaneous full runs exhausted shared perf mapping resources
+(`perf_event_mlock_kb`); their sequential profiler reruns passed. The original
+full runs are not classified as unconditional successes. Platform/resource
+skips remain. P3 also passed 98 PEG-generator tests, 369 tests under `-R 3:3`
+with no measured reference leaks, and 613 tests under debug ASan/UBSan with
+ASan leak detection disabled. Debug builds force source relocation.
+
+The exact final P3 binary matches current main on 156 complete token/AST
+files, 557 syntax outcomes, and 243 incomplete-input outcomes. The corpus is
+read from the current-main checkout, so both binaries consume identical
+files. The new UTF-8 regression tests separately verify the intended fix.
+
+Every incremental/full diff passes whitespace and patch checks. Windows
+core/freezer project XML and source/filter entries agree; the standalone PEG
+build includes the new API source. Worktrees are clean. Native Windows and
+macOS validation is delegated to GitHub CI.
+
+Nine alternating release measurements pinned to CPU 31 compared the exact
+final tip with current main, using the same GCC and configure settings:
+
+| Workload | Current main | Final stack | Change |
+|---|---:|---:|---:|
+| Compile four standard-library modules | 27.290 ms | 26.569 ms | -2.64% |
+| Compile 1,000 formatted-string assignments | 8.076 ms | 5.918 ms | -26.72% |
+| Tokenize 10,000 short assignments | 22.127 ms | 23.030 ms | +4.08% |
+
+The cursor-check cleanup reduced the tokenization gap from +6.26% in the
+preceding quiet run. A residual short-line overhead remains; these results
+are not a no-regression claim or a general performance guarantee. Three
+100 MiB streaming runs per binary gave median peak RSS of 17,868 KiB on main
+and 17,828 KiB on the final stack. No additional API complexity is proposed
+on the current evidence.
+
+Evidence under `/tmp/tokenizer-pr-review`:
+
+- `rebased-final-static-checks.json`
+- `debug-156482/rebased-full.log` and `rebased-perf-sequential.log`
+- `debug-156484/rebased-full.log` and `rebased-perf-sequential.log`
+- `build-accessor/unified-cursor-validation-final.json`
+- `asan-candidate/review-cursor-tests.log`
+- `build-accessor/unified-cursor-comparisons-final.json`
+- `fresh-review-final-performance.json`
+
+## Earlier full-migration validation (superseded tips)
+
+This section records superseded tips bf25f7b0c498, a6102b57e550, and
+f72cb2b2757f. All three source worktrees were clean. Linux
 x86-64 builds use GCC 16.2.1 and separate directories for each PR.
 
 | PR | Full debug validation | Other validation |
@@ -648,12 +715,9 @@ copies.
 
 ## Immediate next action
 
-The active-stack tips are published, PR titles/descriptions are updated, and
-the dependency chain is preserved. All three PRs are mergeable. Fresh GitHub
-CI is running with no failures observed at the post-push check; it is not yet
-fully green. Check those runs against the exact heads above. Do not merge as
-part of this task.
+Publish the validated stack and check fresh GitHub CI against the exact heads
+above. The previous P3 compile failures are fixed locally; their old runs do
+not validate these rebased heads. Do not merge as part of this task.
 
-The ownership/offset, explicit-diagnostic, and opaque-API migrations are now
-included in the active stack. Remaining work is validation tooling and any
-specific findings from review or CI.
+The ownership/offset, explicit-diagnostic, and opaque-API migrations are
+included in the active stack. Validation tooling remains a separate follow-up.
