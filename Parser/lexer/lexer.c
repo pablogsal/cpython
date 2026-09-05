@@ -269,7 +269,7 @@ _PyLexer_get_normal(struct tok_state *tok, ftstring_state *current, struct token
 
     tok->start = tok->cur;
     tok->start_loc = (_PyTok_Loc){
-        tok->lineno, tok->cur >= 0 ? _PyLexer_ByteColumn(tok) : -1};
+        tok->lineno, _PyLexer_ByteColumn(tok)};
 
     /* Return pending indents/dedents */
     if (tok->pendin != 0) {
@@ -303,9 +303,9 @@ _PyLexer_get_normal(struct tok_state *tok, ftstring_state *current, struct token
     } while (c == ' ' || c == '\t' || c == '\014');
 
     /* Set start of current token */
-    tok->start = tok->cur < 0 ? -1 : tok->cur - 1;
+    tok->start = tok->cur - 1;
     tok->start_loc = (_PyTok_Loc){
-        tok->lineno, tok->cur >= 0 ? _PyLexer_ByteColumn(tok) - 1 : -1};
+        tok->lineno, _PyLexer_ByteColumn(tok) - 1};
 
     /* Skip comment, unless it's a type comment */
     if (c == '#') {
