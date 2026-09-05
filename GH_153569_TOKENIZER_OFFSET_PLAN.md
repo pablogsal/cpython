@@ -648,9 +648,11 @@ copies.
 
 ## Immediate next action
 
-Complete validation and update the existing PR branches and descriptions at
-the active-stack tips above. Check the newly triggered CI against those exact
-heads. Do not merge as part of this task.
+The active-stack tips are published, PR titles/descriptions are updated, and
+the dependency chain is preserved. All three PRs are mergeable. Fresh GitHub
+CI is running with no failures observed at the post-push check; it is not yet
+fully green. Check those runs against the exact heads above. Do not merge as
+part of this task.
 
 The ownership/offset, explicit-diagnostic, and opaque-API migrations are now
 included in the active stack. Remaining work is validation tooling and any
