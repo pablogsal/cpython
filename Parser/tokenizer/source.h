@@ -3,20 +3,7 @@
 
 #include "Python.h"
 
-typedef Py_ssize_t _PyTok_Off;
-
-/* Spans use half-open logical byte offsets into decoded input. Their backing
-   storage may retain only the current input window. */
-typedef struct {
-    _PyTok_Off start;
-    _PyTok_Off end;
-} _PyTok_Span;
-
-/* Lines are 1-based and byte columns are 0-based. */
-typedef struct {
-    int lineno;
-    int byte_col;
-} _PyTok_Loc;
+#include "types.h"
 
 typedef struct {
     char *bytes;
@@ -47,20 +34,14 @@ PyAPI_FUNC(void) _PyTok_SourceDiscard(_PyTok_SourceText *);
 PyAPI_FUNC(_PyTok_Off) _PyTok_SourceAppendLine(
     _PyTok_SourceText *source, const char *bytes, Py_ssize_t len,
     int implicit_newline);
+/* Return borrowed bytes excluding '\n', writing the byte length to *len.
+   Line numbers are 1-based and clamp to the first or final line; a trailing
+   '\n' adds an empty final line. The view need not be NUL-terminated.
+   This does not set an exception. Append and clear invalidate the view. */
+PyAPI_FUNC(const char *) _PyTok_SourceLineView(
+    const _PyTok_SourceText *source, Py_ssize_t lineno, Py_ssize_t *len);
 /* Return false for invalid line numbers and the virtual EOF line. */
 PyAPI_FUNC(int) _PyTok_SourceLineIsImplicit(
     const _PyTok_SourceText *, int);
-
-static inline _PyTok_Span
-_PyTok_SpanFromBounds(_PyTok_Off start, _PyTok_Off end)
-{
-    return (_PyTok_Span){start, end};
-}
-
-static inline int
-_PyTok_SpanIsValid(_PyTok_Span span)
-{
-    return span.start >= 0 && span.end >= span.start;
-}
 
 #endif

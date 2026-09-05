@@ -23,12 +23,27 @@ check_system_error(int failed, const char *message)
     return 0;
 }
 
+static int
+check_line_view(const _PyTok_SourceText *source, Py_ssize_t lineno,
+                const char *expected)
+{
+    Py_ssize_t len;
+    const char *line = _PyTok_SourceLineView(source, lineno, &len);
+    return check(len == (Py_ssize_t)strlen(expected) &&
+                 memcmp(line, expected, len) == 0,
+                 "wrong source line view");
+}
+
 static PyObject *
 test_tokenizer_source(PyObject *Py_UNUSED(module),
                       PyObject *Py_UNUSED(args))
 {
     _PyTok_SourceText source;
     _PyTok_SourceInit(&source);
+
+    if (check_line_view(&source, 1, "") < 0) {
+        goto error;
+    }
 
     if (check_system_error(
             _PyTok_SourceAppendLine(&source, "", 0, 0) < 0,
@@ -51,6 +66,14 @@ test_tokenizer_source(PyObject *Py_UNUSED(module),
         goto error;
     }
 
+    if (check_line_view(&source, PY_SSIZE_T_MIN, "alpha") < 0 ||
+            check_line_view(&source, 1, "alpha") < 0 ||
+            check_line_view(&source, 2, "\xce\xb2") < 0 ||
+            check_line_view(&source, 3, "") < 0 ||
+            check_line_view(&source, PY_SSIZE_T_MAX, "") < 0) {
+        goto error;
+    }
+
     if (check(source.len == 9 &&
                   memcmp(source.bytes, "alpha\n\xce\xb2\n", 10) == 0,
               "wrong source contents") < 0) {
@@ -62,6 +85,10 @@ test_tokenizer_source(PyObject *Py_UNUSED(module),
             check_system_error(
                 _PyTok_SourceAppendLine(&source, "x\n", 2, 0) < 0,
                 "appended after unterminated source line") < 0) {
+        goto error;
+    }
+    if (check_line_view(&source, 1, "tail") < 0 ||
+            check_line_view(&source, PY_SSIZE_T_MAX, "tail") < 0) {
         goto error;
     }
 

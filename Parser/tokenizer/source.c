@@ -151,6 +151,26 @@ _PyTok_SourceAppendLine(_PyTok_SourceText *source, const char *bytes,
     return source->base_offset + start;
 }
 
+const char *
+_PyTok_SourceLineView(const _PyTok_SourceText *source, Py_ssize_t lineno,
+                      Py_ssize_t *len)
+{
+    assert(len != NULL);
+    const char *line = _PyTok_SourceData(source);
+    const char *end = line + source->len;
+    while (lineno > 1) {
+        const char *newline = memchr(line, '\n', end - line);
+        if (newline == NULL) {
+            break;
+        }
+        line = newline + 1;
+        lineno--;
+    }
+    const char *newline = memchr(line, '\n', end - line);
+    *len = (newline != NULL ? newline : end) - line;
+    return line;
+}
+
 int
 _PyTok_SourceLineIsImplicit(const _PyTok_SourceText *source, int lineno)
 {
