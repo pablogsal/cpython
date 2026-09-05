@@ -715,9 +715,11 @@ copies.
 
 ## Immediate next action
 
-Publish the validated stack and check fresh GitHub CI against the exact heads
-above. The previous P3 compile failures are fixed locally; their old runs do
-not validate these rebased heads. Do not merge as part of this task.
+The validated stack and updated PR descriptions are published. All three
+PRs are mergeable. Fresh CI is running against the exact heads above, with no
+failures at the first post-push check; it is not yet fully green. The previous
+P3 compile failures are fixed locally. Check the new runs before merging; no
+merge is part of this task.
 
 The ownership/offset, explicit-diagnostic, and opaque-API migrations are
 included in the active stack. Validation tooling remains a separate follow-up.
