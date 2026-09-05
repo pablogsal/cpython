@@ -151,19 +151,6 @@ _PyTok_SourceAppendLine(_PyTok_SourceText *source, const char *bytes,
     return source->base_offset + start;
 }
 
-const char *
-_PyTok_SourceSpanView(const _PyTok_SourceText *source, _PyTok_Span span,
-                      Py_ssize_t *len)
-{
-    if (!_PyTok_SpanIsValid(span) || span.start < source->base_offset ||
-            span.end - source->base_offset > source->len || len == NULL) {
-        PyErr_SetString(PyExc_SystemError, "invalid tokenizer source span");
-        return NULL;
-    }
-    *len = span.end - span.start;
-    return _PyTok_SourceData(source) + (span.start - source->base_offset);
-}
-
 int
 _PyTok_SourceLineIsImplicit(const _PyTok_SourceText *source, int lineno)
 {

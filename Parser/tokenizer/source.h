@@ -47,9 +47,6 @@ PyAPI_FUNC(void) _PyTok_SourceDiscard(_PyTok_SourceText *);
 PyAPI_FUNC(_PyTok_Off) _PyTok_SourceAppendLine(
     _PyTok_SourceText *source, const char *bytes, Py_ssize_t len,
     int implicit_newline);
-/* The returned view is invalidated by SourceAppendLine and SourceClear. */
-PyAPI_FUNC(const char *) _PyTok_SourceSpanView(
-    const _PyTok_SourceText *, _PyTok_Span, Py_ssize_t *);
 /* Return false for invalid line numbers and the virtual EOF line. */
 PyAPI_FUNC(int) _PyTok_SourceLineIsImplicit(
     const _PyTok_SourceText *, int);

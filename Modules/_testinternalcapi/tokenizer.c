@@ -51,17 +51,9 @@ test_tokenizer_source(PyObject *Py_UNUSED(module),
         goto error;
     }
 
-    Py_ssize_t view_len;
-    const char *view = _PyTok_SourceSpanView(
-        &source, _PyTok_SpanFromBounds(6, 8), &view_len);
-    if (check(view != NULL && view_len == 2 &&
-                  memcmp(view, "\xce\xb2", 2) == 0,
-              "wrong source span view") < 0 ||
-            check_system_error(
-                _PyTok_SourceSpanView(
-                    &source, _PyTok_SpanFromBounds(0, source.len + 1),
-                    &view_len) == NULL,
-                "accepted invalid source span") < 0) {
+    if (check(source.len == 9 &&
+                  memcmp(source.bytes, "alpha\n\xce\xb2\n", 10) == 0,
+              "wrong source contents") < 0) {
         goto error;
     }
 
