@@ -322,24 +322,22 @@ _PyTokenizer_ensure_utf8(const char *line, struct tok_state *tok, int lineno)
     const char *badchar = NULL;
     const char *c;
     int length;
-    int col_offset = 0;
     const char *line_start = line;
     for (c = line; *c; c += length) {
         if (!(length = valid_utf8((const unsigned char *)c))) {
             badchar = c;
             break;
         }
-        col_offset++;
         if (*c == '\n') {
             lineno++;
-            col_offset = 0;
             line_start = c + 1;
         }
     }
     if (badchar) {
+        int col_offset = (int)(badchar - line_start) + 1;
         _PyTokenizer_syntaxerror_at(
                 tok, line_start, badchar - line_start, lineno,
-                col_offset + 1, col_offset + 1,
+                col_offset, col_offset,
                 "Non-UTF-8 code starting with '\\x%.2x'"
                 "%s%V on line %i, "
                 "but no encoding declared; "

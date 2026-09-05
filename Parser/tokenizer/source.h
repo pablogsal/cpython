@@ -37,7 +37,7 @@ PyAPI_FUNC(_PyTok_Off) _PyTok_SourceAppendLine(
 /* Return borrowed bytes excluding '\n', writing the byte length to *len.
    Line numbers are 1-based and clamp to the first or final line; a trailing
    '\n' adds an empty final line. The view need not be NUL-terminated.
-   This does not set an exception. Append and clear invalidate the view. */
+   This does not set an exception. Append, discard, and clear invalidate the view. */
 PyAPI_FUNC(const char *) _PyTok_SourceLineView(
     const _PyTok_SourceText *source, Py_ssize_t lineno, Py_ssize_t *len);
 /* Return false for invalid line numbers and the virtual EOF line. */
