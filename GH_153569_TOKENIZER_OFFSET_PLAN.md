@@ -1,6 +1,6 @@
 # gh-153569 tokenizer offset migration: status, plan, and handoff
 
-Last checked: 2026-08-27
+Last checked: 2026-09-05
 
 Tracking issue: https://github.com/python/cpython/issues/153569
 
@@ -12,23 +12,31 @@ is submitted.
 
 ## Executive status
 
-The issue is open. Its first two foundation PRs are merged into CPython's
-`main` branch:
+The issue remains open. Three foundation PRs are merged:
 
-| PR | Scope | State | Merge commit | Final GitHub diff |
-|---|---|---|---|---|
-| [#153585](https://github.com/python/cpython/pull/153585) | Split the tokenizer lexer into focused files | Merged 2026-07-11 | `a2d3787105d1` | 12 files, +1,224/-957 |
-| [#153587](https://github.com/python/cpython/pull/153587) | Add decoded source, spans, locations, and offset-only cursor primitives | Merged 2026-08-26 | `f54fd2ab6e1f` | 14 files, +923/-2 |
+| PR | Scope | State |
+|---|---|---|
+| [#153585](https://github.com/python/cpython/pull/153585) | Split the tokenizer lexer into focused files | Merged; merge commit `a2d3787105d1` |
+| [#153587](https://github.com/python/cpython/pull/153587) | Add decoded source, spans, locations, and offset-only cursor primitives | Merged; merge commit `f54fd2ab6e1f` |
+| [#156472](https://github.com/python/cpython/pull/156472) | Common tokenizer reader and decoder | Merged |
 
-The next implementation PR should be the reader/decoder slice. No clean
-reader/decoder review branch exists yet. The implementation exists only as
-part of a much larger integration commit and must be carved out rather than
-submitted as-is.
+The active review stack is #156482 → #156484 → #156654. The September 5
+updates below have passed the validation recorded in this document.
 
-All preserved fork branches listed below were rebased onto the current
-`upstream/main` tip and pushed to `pablogsal/cpython` before this document was
-written. They are source material and recovery points. Most are not valid PR
-boundaries.
+| PR | Scope | Validated tip |
+|---|---|---|
+| [#156482](https://github.com/python/cpython/pull/156482) | Return tokenizer tokens as source spans; protect relocation | `b5addc5d0490d07e86119b21596120008e75305a` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `056e86ee18b5060016601895f7f24804861953da` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Simplify source and formatted-string state; source-owned diagnostic line lookup | `afd9d72be5073db8db08e75471e43f7a1ce94945` |
+
+The larger remaining offset/storage/error-state migration, opaque consumer
+API cutover, and validation tooling stay separate follow-ups. This update
+changes the existing three PRs and this plan; it does not start those later
+implementation PRs.
+
+The August 27 branch inventory and prototype commits below are historical
+recovery material. The active stack above supersedes the old instruction to
+carve out a reader/decoder PR.
 
 ## Why this work exists
 
@@ -43,12 +51,15 @@ strings, files, `readline()` callables, and interactive input. Those paths
 duplicate underflow, newline, encoding, and buffer-ownership behavior. Fixes
 can therefore land in one path without fixing the others.
 
-The intended architecture replaces those root causes:
+The architectural goals, adjusted for the current storage decision, are:
 
-1. One decoded source object owns the source bytes.
+1. One decoded-storage abstraction owns retained bytes and preserves bounded
+   streaming windows; this ownership unification remains follow-up work.
 2. Positions are offsets into that source, never persistent interior pointers.
 3. Tokens and errors describe half-open source spans.
-4. A cursor stores its offset and cached line bounds.
+4. Persistent scanner positions use offsets; temporary pointer caches stay
+   within the scanning/storage boundary. The unused cursor prototype is removed
+   in #156484 rather than retained as a second state representation.
 5. A common reader/decoder pipeline handles every source kind.
 6. Lexer and f-string state move from pointers to offsets and spans.
 7. Pegen and `_tokenize` consume an opaque tokenizer API rather than internal
@@ -70,7 +81,7 @@ document:
 - Do not leave a second legacy tokenizer behind after the cutover.
 - Do not add a runtime switch between two implementations.
 - Do not submit the integration rewrite as one large PR.
-- Use one independently testable commit per intended PR.
+- Keep each intended PR independently buildable and testable.
 - Every review branch must build and pass its relevant tests at its exact tip.
 - Behavior coverage belongs in the PR that needs it; there is no standalone
   coverage PR.
@@ -78,8 +89,9 @@ document:
   compatibility entry points.
 - Avoid changes whose rename/deletion churn makes the implementation hard to
   review or revert.
-- Keep the source integration stack untouched as reference and carve each
-  review branch from the latest merged upstream state.
+- Keep the historical integration stack as reference. Maintain the active
+  review stack by updating the earliest affected PR and propagating through
+  its dependents; remove merged dependencies when rebasing onto upstream.
 
 The original attempt at the second PR accidentally combined `SourceText`, the
 cursor, the reader/decoder, errors, lexer state, pegen, `_tokenize`, and legacy
@@ -88,7 +100,7 @@ deletions. That was rejected as unreviewable. PR #153587 was force-rewritten
 to contain only the source/cursor foundation. This failure is why the branch
 boundaries in this document are strict.
 
-## What the merged foundation provides
+## Foundation history
 
 ### Lexer split: PR #153585
 
@@ -99,7 +111,8 @@ makes the later offset conversion easier to review.
 
 ### Source and cursor primitives: PR #153587
 
-The merged source foundation provides:
+As merged, the source foundation provided the following primitives. Some were
+never adopted by the production lexer and are removed by #156484:
 
 - `_PyTok_SourceText`, which owns decoded source bytes.
 - `_PyTok_Span`, a half-open byte range into the source.
@@ -122,11 +135,11 @@ intermediate state and worse allocation-failure semantics. If bulk insertion
 is ever needed, the preferred extension is a transactional multi-line append,
 not exposing partially registered source data.
 
-## Current fork branch inventory
+## Historical fork branch inventory (August 27)
 
 The counts below are relative to `upstream/main` as checked on 2026-08-27.
 
-| Fork branch | Ahead | Current purpose | Diff or top-commit size | Submit directly? |
+| Fork branch | Ahead | Purpose at that date | Diff or top-commit size | Submit directly? |
 |---|---:|---|---|---|
 | `gh-153569-tokenizer-lexer-split` | 0 | Historical PR #153585 branch, now pointing at upstream after merge | No remaining diff | No work remains |
 | `gh-153569-tokenizer-offset-api` | 0 | Historical PR #153587 branch, now pointing at upstream after merge | No remaining diff | No work remains |
@@ -139,14 +152,15 @@ The counts below are relative to `upstream/main` as checked on 2026-08-27.
 
 The branch names can be misleading. `readline-chunks` and
 `validation-tools` contain their entire dependency stack. They are not small
-standalone diffs against upstream. A future PR must be recreated from the
-appropriate merged prerequisite and contain only its own logical change.
+standalone diffs against upstream. These historical branches must not replace
+the current review stack. Reuse their implementation ideas only within the
+appropriate current review boundary.
 
-## Rebased source commits
+## Historical rebased source commits
 
-The current integration stack is:
+The integration stack recorded on August 27 was:
 
-| Commit | Change | Individual size | Intended treatment |
+| Commit | Change | Individual size | Intended treatment in August |
 |---|---|---|---|
 | `2d43b0f5158` | Expand tokenizer behavior coverage | 5 files, +188/-3 | Distribute tests into the PRs they protect |
 | `7fd9ad7e10e` | Base the tokenizer API on source offsets | 54 files, +4,847/-3,929 | Reference only; split into reader/decoder, offset state, and API cutover |
@@ -159,7 +173,7 @@ integration snapshot`.
 
 Before the rebase, the same source material had these hashes:
 
-| Original commit | Current equivalent |
+| Original commit | August 27 equivalent |
 |---|---|
 | `c044cdf75ad` | `2d43b0f5158` |
 | `485acfcba70` | `7fd9ad7e10e` |
@@ -170,179 +184,126 @@ Before the rebase, the same source material had these hashes:
 Never cherry-pick either `485acfcba70` or `7fd9ad7e10e` into a review
 branch. Both are integration checkpoints, not review units.
 
+## Current PR scopes and September 5 updates
+
+### #156482: token spans and relocation
+
+Keep token span conversion and the behavior coverage that protects it here.
+The reader no longer predicts whether source capacity will grow. It saves and
+restores persistent buffer positions around every source append that preserves
+the active window, leaving allocation policy with the source implementation.
+
+Debug streaming-buffer growth now allocates a replacement while the old
+buffer is live, copies the active bytes and terminator, poisons and frees the
+old allocation, and restores positions. This makes relocation deterministic
+in debug builds. Release builds retain the existing realloc path.
+
+The streaming relocation test now covers both f- and t-strings with
+`extra_tokens` enabled and disabled. A multiline interactive f-string test
+covers retained-source relocation in the REPL. These tests belong here and
+propagate through both dependent PRs.
+
+### #156484: remove unused primitives
+
+Remove the unused cursor and sparse line index. Also remove
+`_PyTok_SourceSpanView()`, which has no production consumers. Keep the useful
+span types and helpers. Direct source tests continue to verify line append
+rules, offsets, implicit-newline flags, complete stored bytes, UTF-8 bytes,
+and the terminating NUL.
+
+Remove the unrelated junction-handling edit in `Lib/test/support/os_helper.py`
+from this PR's diff. No replacement filesystem cleanup change belongs in this
+stack.
+
+### #156654: source and formatted-string state
+
+Keep the smaller formatted-string representation: one inline slot for the
+common case and a dynamically growing stack for nested strings. Each active
+f- or t-string has one frame containing its kind, quote, opening location,
+mode, replacement depth, expression span, and recorded comment spans. Bracket
+nesting comes from the existing delimiter stack.
+
+The reader owns buffer relocation and interactive state. The PR removes the
+old buffer layer, dummy regular mode, duplicated state and source aliases;
+its existing diagnostics use retained tokenizer source. Prefix/quote scanning
+and prepared-input normalization remain outside this cleanup's scope.
+
+Move the diagnostic line scan from `pegen_errors.c` into
+`_PyTok_SourceLineView()`. Keep parser-relative line-number adjustment and
+Unicode decoding in pegen. The accessor returns a transient byte view without
+the newline, clamps line numbers to the first/final line, and treats a trailing
+newline as an empty final line. Direct tests protect empty input, UTF-8 text,
+unterminated tails, and extreme line numbers. A linear scan is appropriate on
+this error path; do not restore the deleted sparse index for it.
+
 ## Remaining implementation plan
 
-### 1. Common reader and decoder
+### 1. Remaining offsets, storage ownership, and error state
 
-Suggested branch: `gh-153569-tokenizer-reader-decoder`
+- Convert remaining persistent scanner positions to offsets and finish
+  unifying decoded-storage ownership. Streaming currently owns `tok->buf`
+  separately from retained prepared/interactive `SourceText`.
+- Preserve bounded retention for streaming sources. Use a logical base offset
+  for discarded windows rather than retaining all prior lines to simplify
+  offset arithmetic.
+- Replace string-diagnostic cursor rewinds and temporary BOM diagnostic state
+  changes with explicit diagnostic locations and text views.
+- Converge error reporting on explicit state without changing exception types,
+  messages, locations, or incomplete-input classification.
+- Keep the existing consumer compatibility surface until its dedicated
+  migration. Include regression tests with each implementation change.
 
-This is the immediate next PR.
+These are substantial migration steps, not additional cleanup requirements
+for the current three PRs. Review boundaries may be split further if needed.
 
-Scope:
+### 2. Opaque API consumer cutover
 
-- Add a common reader around the merged source store.
-- Add the decoder stage needed to handle BOMs, PEP 263 cookies, codec lookup,
-  decoding, newline normalization, and decoded-line insertion.
-- Support the existing source kinds: prepared strings, UTF-8 strings, files,
-  `readline()` callables, and interactive input.
-- Preserve existing tokenizer-facing constructors and entry points during this
-  PR so consumers do not move yet.
-- Preserve prompt timing and `readline()` callback timing. Lexer lookahead
-  must not unexpectedly pull a later line.
-- Preserve source-kind-specific implicit-newline behavior.
-- Fold in reader, encoding, cookie, BOM, newline, file, string, and basic
-  incremental-input tests needed to protect this slice.
+- Move pegen and `_tokenize.TokenizerIter` away from `tok_state` field access
+  to explicit operations, spans, and source views.
+- Stop obtaining an already-produced token's raw-string context from the live
+  f-string frame. Carry required context through tokens or grammar actions.
+- Define token-text and multiline line-view lifetimes, including
+  `TokenInfo.line` values that span several physical lines.
+- Preserve the clinic signature, `extra_tokens` adjustments, encoding-finder
+  entry point, source-kind-specific metadata, and interactive/callback timing.
+- Delete compatibility entry points once their consumers have moved. End with
+  one tokenizer implementation.
 
-Explicitly out of scope:
+### 3. Validation tooling
 
-- Migrating lexer token markers to spans.
-- Migrating f-string state or error state to spans.
-- Changing pegen or `_tokenize`.
-- Deleting compatibility constructors or old tokenizer implementations.
-- The complete-chunk preservation fix from `0af9c4d9afe`; keep that as a
-  focused follow-up unless carving the reader proves it is inseparable.
-- Validation/fuzz/benchmark tooling.
+Reference material: historical commit `98fb37b1a8f`.
 
-Implementation method:
+- Add repeatable differential token-stream and error-location checks over
+  normal source corpora, including the standard library, tests, and focused
+  encoding/newline/f-string inputs.
+- Add repeatable throughput and peak-memory measurements, including large
+  streaming input and long active multiline constructs.
+- Place new fuzz coverage in `python/library-fuzzers`, following review
+  feedback, rather than introducing it into these implementation PRs.
 
-- Start from current `upstream/main`, which already contains both merged PRs.
-- Create a fresh worktree and one review commit.
-- Use `7fd9ad7e10e` only to understand the intended implementation.
-- Transplant the smallest coherent set of reader/decoder changes manually.
-- Keep the old public-facing behavior and compatibility boundary intact.
-- Add only the subset of `2d43b0f5158` tests that protects this PR.
+Tools may be used locally before a tooling PR is ready. There is no standalone
+behavior-coverage PR: regression tests and forced-relocation checks stay in
+the implementation PRs they protect.
 
-The historical size estimate was 16-22 files, approximately 1,400-1,700
-additions and 800-1,200 deletions. That estimate predates the final merge of
-#153587 and should not be treated as a target. Conceptual isolation matters
-more than matching those numbers.
+### Historical slices that are not new PR instructions
 
-### 2. Offset-based lexer, f-string, and error state
+The July 18 sequence listed six follow-ups after #153587, and the August 27
+handoff reduced that estimate to five. Those counts are superseded by the
+merged reader/decoder, the current three-PR stack, and the three remaining
+work areas above. Do not infer a fixed final PR count from the old estimates.
 
-Suggested branch: `gh-153569-tokenizer-offset-state`
+The incremental `readline()` chunk-preservation prototype is commit
+`0af9c4d9afe`. The current reader handles multiple logical lines returned by
+one callback and has tests for chunk tails and callback timing. Preserve and
+validate that behavior; do not recreate the obsolete dedicated chunk-fix PR
+instruction without identifying a remaining gap.
 
-Scope:
-
-- Replace lexer token start/end pointers with `_PyTok_Span` values.
-- Replace f-string pointer state and copied debug-expression buffers with
-  offsets/spans into retained source.
-- Replace pointer-derived error positions with explicit offset/span locations.
-- Keep pegen and `_tokenize` on a compatibility surface for this PR.
-- Preserve token streams, error messages, error positions, tolerant mode, and
-  incomplete-input classification.
-- Fold the relevant f-string, syntax-location, tolerant-mode, and token-stream
-  coverage into the PR.
-
-This is expected to be the hardest review because lexer and f-string
-invariants are subtle. The historical estimate was 12-17 files,
-approximately 1,500-2,000 additions and 1,300-1,700 deletions.
-
-Important invariants:
-
-- Source offsets remain stable when storage relocates.
-- No raw source pointer survives a source append.
-- Spans are half-open.
-- Indentation widths remain computed state; they are not source positions.
-- Interactive prompt and callback timing remain unchanged.
-- F-string/T-string token splitting and column behavior remain exact.
-- Error type, message, and location remain exact.
-- Incomplete input remains distinguishable from a hard syntax error.
-
-### 3. Opaque API cutover and legacy removal
-
-Suggested branch: `gh-153569-tokenizer-api-cutover`
-
-Scope:
-
-- Move pegen to the opaque tokenizer API.
-- Move `_tokenize.TokenizerIter` to source views, spans, and accessors.
-- Replace tokenizer field reads and writes with explicit operations.
-- Preserve `_tokenize.TokenizerIter`'s clinic signature and `extra_tokens`
-  adjustments.
-- Preserve pegen error-line and metadata behavior for strings, files, and
-  interactive input.
-- Keep the standalone encoding-finder entry point working behind the same
-  symbol.
-- Delete the compatibility surface and obsolete reader implementations only
-  after all consumers have moved.
-- End with one tokenizer implementation, not `tokenizer2` plus a legacy copy.
-
-The historical estimate was 15-22 files, approximately 1,200-1,600
-additions and 900-1,300 deletions. File count may remain broad because the
-consumer adaptation is mechanical, but semantic changes should stay out.
-
-### 4. Unused pegen token text
-
-This was part of the original gh-153569 sequence because stable offsets make
-token text materialization optional. It is no longer cleanly part of this
-issue's remaining branch stack.
-
-PR [#153576](https://github.com/python/cpython/pull/153576), titled
-`gh-153568: Don't materialize parser token text that is never read`, is open
-under gh-153568. It implements the same optimization independently. The
-rebased `b62ebe81b96` commit should therefore not be submitted from a
-gh-153569 branch.
-
-If this optimization is revisited, materialization must remain the default
-and omission must use an audited proven-dead token list. Several token types
-that look structural still have their bytes read by parser actions, including
-f/t-string starts, `!=` under Barry-as-FLUFL handling, and some retyped
-keyword tokens in error paths.
-
-### 5. Incremental `readline()` chunk preservation
-
-Suggested branch: `gh-153569-tokenizer-incremental-decoder`
-
-Reference commit: `0af9c4d9afe`
-
-Scope:
-
-- Preserve all complete decoded lines returned by one `readline()` call.
-- Do not discard the remainder when one callback result contains multiple
-  logical lines.
-- Preserve chunk-scoped implicit-newline behavior and callback timing.
-- Add focused multi-line-chunk and incremental-decoder tests.
-
-The reference change is 2 files and +89 lines. It depends on the common
-reader/decoder and should be rebuilt on the merged reader implementation,
-not submitted from the stacked fork branch.
-
-### 6. Differential testing, fuzzing, benchmarks, and memory validation
-
-Suggested branch: `gh-153569-tokenizer-validation`
-
-Reference commit: `98fb37b1a8f`
-
-Scope:
-
-- Add a differential tokenizer runner covering the standard library, tests,
-  encoding/newline/f-string corpora, and random mutations.
-- Compare complete token streams, not only token types.
-- For failures, compare exception type, message, and location.
-- Add tokenizer fuzz coverage.
-- Add repeatable throughput benchmarks.
-- Measure peak memory on pathological large input, including a 100 MiB
-  `tokenize(readline)` workload.
-
-The reference change adds 486 lines across five files. It should land after
-the implementation behavior is stable. The tools can be used locally before
-then without making them part of earlier review diffs.
-
-## Current adjusted count of remaining PRs
-
-The July 18 handoff counted six PRs after #153587:
-
-1. Reader/decoder.
-2. Offset lexer/f-string/error state.
-3. Opaque API cutover.
-4. Pegen token spans.
-5. Incremental decoder fix.
-6. Validation tools.
-
-Today the pegen token-text optimization is already represented by the
-separate gh-153568 PR #153576. Under the current issue split, gh-153569 has
-five likely implementation PRs remaining: reader/decoder, offset state, API
-cutover, incremental decoder, and validation.
+The unused parser-token-text optimization was tracked separately by gh-153568
+and [#153576](https://github.com/python/cpython/pull/153576). The historical
+`b62ebe81b96` commit overlaps that work and must stay out of this stack. Its
+current issue/PR status is not tracked by this handoff. Any future omission
+of token text needs an audited proven-dead token list: f/t-string starts,
+Barry-as-FLUFL handling, and retyped keyword tokens can still need token bytes.
 
 ## Public behavior that must not change
 
@@ -367,15 +328,16 @@ Each functional PR must protect at least the following:
 
 ## Architectural invariants to preserve
 
-The prototype and original design were organized around these constraints:
+Preserve these constraints during the remaining migration:
 
-1. Appended source bytes keep the same logical offset for the tokenizer's
-   lifetime.
+1. Retained source bytes keep their logical offsets when storage relocates or
+   an earlier streaming window is discarded. Offsets do not promise that
+   discarded source remains accessible.
 2. Source storage is the sole owner of persistent interior pointers.
 3. Consumers retain offsets or spans, not source pointers.
 4. Returned source views are bounded and transient.
-5. The cursor may cache current-line bounds, but that cache must be refreshed
-   at the only operations that can relocate source storage.
+5. Temporary scanning pointers must be refreshed at every operation that can
+   relocate their source storage; callers must not predict allocator growth.
 6. Lexer lookahead must not pull a later logical line because doing so changes
    interactive prompts and callback timing.
 7. Backward movement through already loaded source must not rewind or invoke
@@ -384,31 +346,37 @@ The prototype and original design were organized around these constraints:
 9. Tokenizer errors should converge on one explicit, sticky error record and
    one raising boundary instead of parallel done-code, return-token, `PyErr`,
    and decoder flags.
-10. The final lexer state should use real value-semantic frames for f-string
-    body, replacement expression, and format-spec contexts.
+10. Keep one frame per active formatted string with a mode and replacement
+    depth, one inline slot, and a growable nesting stack. This intentionally
+    differs from the original proposal of separate frames for each body,
+    replacement-expression, and format-spec context. Changing to that older
+    proposal is not a requirement for this stack.
 
-Some of these are final-state goals rather than properties of the two merged
-foundation PRs. They must be introduced incrementally without pretending the
+Some of these are final-state goals rather than properties of the current
+stack; persistent scanner pointers and consumer field access still remain.
+Introduce the remaining invariants incrementally without claiming that the
 whole architecture already exists.
 
 ## Source retention and memory
 
-The integration prototype retains decoded source in one contiguous,
-append-only buffer. This makes offsets simple and allows error lines,
-interactive source, f-string debug text, and consumer views to refer to the
-same store. It can increase memory for streaming `tokenize(readline)` use:
-the old implementation often retained only the longest active construct,
-while the first offset implementation retains the whole decoded input.
+The current decision preserves bounded streaming storage for file and
+`readline()` input. Consumed windows can be released/reset while logical
+`buf_offset` advances. A long active token or formatted string can still
+require a large retained window; bounded streaming does not mean a fixed
+constant-memory limit independent of the active construct.
 
-The original plan deliberately accepts full retention for the first cutover
-and requires measurement rather than speculation. The prototype's 100 MiB
-pathological-input run peaked at about 119.1 MiB rather than the previously
-feared 360 MiB. That number was measured on the pre-rebase prototype and must
-be reproduced on final code before it is treated as current evidence.
+Prepared and interactive input retain decoded `SourceText`, supporting their
+source views and diagnostics. The remaining ownership unification must
+preserve these source-kind retention semantics rather than forcing streaming
+input into full-input retention.
 
-If retention becomes a real problem, the proposed follow-up is a low-watermark
-scheme that releases physical pages below the earliest live span while
-preserving logical offsets. It is not part of the current PR sequence.
+The original integration prototype instead kept all decoded source in one
+contiguous append-only buffer. Its reported 100 MiB workload peak of about
+119.1 MiB is historical evidence for that prototype, not a measurement of the
+current implementation. The former plan to accept full streaming retention
+and consider a low-watermark scheme later is superseded by the current
+bounded-streaming decision. Measure current throughput and peak memory on
+both ordinary input and long active constructs before drawing conclusions.
 
 ## Validation history
 
@@ -431,7 +399,96 @@ rebased integration branches as ready to merge. Rebasing changes commit IDs
 and upstream context. Each carved PR must be rebuilt and retested on its own
 tip.
 
-## Validation required for each future PR
+## September 5 validation status
+
+The tested source tips are the hashes in the active-stack table above. Local
+builds use Linux x86-64, GCC 16.2.1, and separate build directories for each
+PR. The source worktrees are clean. All three final full-suite runs passed.
+
+| PR | Full debug suite | Focused validation |
+|---|---|---|
+| #156482 | Passed; 51,926 tests run | PEG generator: 98 tests; tokenizer/f-/t-string/C source reference-leak checks passed |
+| #156484 | Full retry passed; 51,924 tests run | All 14 profiler tests passed in isolation; PEG generator: 98 tests; reference-leak checks passed |
+| #156654 | Passed at final `afd9d72be50`; 51,927 tests run | PEG generator: 98 tests; reference-leak checks passed; ASan/UBSan debug run: 480 tests passed |
+
+The complete suites used default resource settings; each ran 493 of 504 test
+modules, with platform/resource skips. The PEG generator was run separately
+with its CPU resource enabled. No native Windows or macOS execution was done
+locally. Windows project XML parsed successfully for every tip.
+
+The first #156484 run failed
+`test_perf_profiler.test_pre_fork_compile` because its child returned empty
+stdout. The cause is unconfirmed; the isolated rerun passed all 14 profiler
+tests, and the fresh full-suite retry passed. The initial build banner also included `-dirty`; the worktree was
+verified clean and build-version metadata was refreshed before the full retry.
+Do not silently classify the first run as a pass.
+
+Commands, from each separate debug build directory:
+
+```sh
+../pr-N/configure --with-pydebug --without-ensurepip
+make -j8
+./python -m test -j8 --timeout=180
+./python -m test -u cpu test_peg_generator
+./python -m test -R 3:3 test_tokenize test_fstring test_tstring test_capi.test_tokenizer
+make patchcheck
+```
+
+`N` is the PR number; the #156654 build directory is named `build-accessor`.
+`make patchcheck` completed, and its checks were also run against each actual
+PR predecessor to avoid comparing unrelated upstream changes. Configure
+regeneration was not needed. Incremental diffs pass `git diff --check`.
+
+The final #156654 sanitizer build uses:
+
+```sh
+../pr-156654/configure --with-pydebug --without-ensurepip --with-address-sanitizer --with-undefined-behavior-sanitizer --without-pymalloc
+make -j12
+ASAN_OPTIONS=detect_leaks=0 ./python -m test -j4 test_tokenize test_fstring test_tstring test_syntax test_source_encoding test_repl test_capi.test_tokenizer
+```
+
+Leak detection in ASan was disabled; the separate debug reference-leak runs
+cover reference-count stability. The debug sanitizer configuration exercises
+the forced-relocation branch. A release sanitizer run also passed the same
+seven modules before the final assertion/documentation refinement.
+
+Release comparisons use the original #156654 head `9ce1fd9d9c5a` as baseline,
+matching configure/compiler settings, and alternating samples pinned to one
+CPU. Complete token streams and ASTs including locations matched for 156
+standard-library/test files. All 557 syntax doctest compilation results
+matched, including 533 exception type/message/text/location tuples.
+
+Nine-sample medians before the final debug-only assertion/header refinement:
+
+| Workload | Original | Updated | Change |
+|---|---:|---:|---:|
+| Compile four standard-library modules | 26.732 ms | 26.886 ms | +0.57% |
+| Compile 1,000 formatted-string assignments | 6.165 ms | 6.106 ms | -0.95% |
+| Tokenize 10,000 short assignments, draining tokens | 21.794 ms | 21.527 ms | -1.22% |
+
+The rebuilt final release head was also compared on 10,000 continued lines
+inside an interactive formatted string: 43.307 ms original versus 43.041 ms
+updated (-0.61%). These are local samples showing small timing differences,
+not evidence of a general speedup or a statistical no-regression guarantee.
+
+Draining a 100 MiB byte-token stream with 4 KiB lines peaked at roughly
+17.3 MiB RSS in both builds (three runs each). This measures bounded streaming
+input; it is not a worst-case bound for an arbitrarily long active construct.
+Debug relocation deliberately adds copying and temporary peak allocation.
+
+Three independent final review passes checked reuse, code quality, and
+efficiency. An additional API-contract pass checked naming, borrowed lifetime,
+byte-length semantics, clamping, exception preservation, and consistency with
+nearby tokenizer views. The accepted refinement was a required-output-pointer
+assertion and explicit header contract; no generic view wrapper was added.
+
+Local commands/scripts/results are under `/tmp/tokenizer-pr-review`, including
+`compare_tokenizer.py`, `compare_diagnostics.py`, `release-comparison.json`,
+`interactive-comparison.json`, and the per-build `tests-*.log` files. These
+artifacts describe this validation run and are not additions to the CPython
+implementation PRs.
+
+## Validation required for each PR
 
 At minimum:
 
@@ -452,25 +509,24 @@ No PR should rely solely on the validation of the combined prototype.
 
 ## Review and branch workflow
 
-For every remaining PR:
+For the active stack:
 
-1. Wait until its prerequisite PR is merged.
-2. Fetch `upstream/main`.
-3. Create a fresh branch and worktree from that exact upstream tip.
-4. Use the integration branches only as a readable implementation reference.
-5. Recreate the smallest coherent change rather than cherry-picking the
-   combined conversion commit.
-6. Fold in only the coverage needed by that PR.
-7. Keep one review commit unless a reviewer requests otherwise.
-8. Build and test the exact tip.
-9. Review the actual `upstream/main...HEAD` diff for accidental dependency
-   leakage.
-10. Push to the fork only when the branch contains the intended slice.
+1. Make a correction in the earliest PR introducing its relevant code.
+2. Propagate that correction through dependent branches, adapting it to their
+   final representation rather than blindly applying conflicting hunks.
+3. Inspect each PR's incremental diff against its predecessor as well as the
+   complete diff against its GitHub base. Keep unrelated edits out.
+4. Build and test each resulting tip independently, including the complete
+   debug suite and the focused tests protecting that PR's changes.
+5. Update the existing PR branches and descriptions after validation. Record
+   failures and limitations accurately. No merge is part of this task.
+6. When a prerequisite merges, rebase its dependents onto the merged upstream
+   state and verify that the remaining diffs contain only their intended work.
 
-Before publishing, explicitly verify that the diff does not accidentally
-contain later work such as pegen adaptation, `_tokenize` conversion, legacy
-deletion, the token-text optimization, incremental chunk handling, or
-validation tools.
+For later implementation PRs, use the historical integration commits only as
+reference. Recreate the smallest coherent change from its prerequisite and
+include only the coverage it needs. The combined conversion commit and the
+historical coverage branch remain unsuitable review units.
 
 ## Known traps
 
@@ -480,7 +536,7 @@ validation tools.
 - `readline-chunks` and `validation-tools` include their entire dependency
   stack despite their narrow names.
 - The squashed redesign branch is a recovery snapshot, not a review branch.
-- The unused-token-text commit overlaps a different issue and open PR.
+- The unused-token-text commit overlaps separately tracked gh-153568 work.
 - Source views are transient; spans and offsets are the durable values.
 - Internal offsets are decoded-byte offsets, while Python-facing columns are
   character offsets in several consumers.
@@ -525,7 +581,7 @@ but are not separate planning conversations.
 
 ## Local recovery worktrees
 
-At the time of this handoff, useful local recovery locations included:
+At the August 27 handoff, useful local recovery locations included:
 
 - `/home/pablogsal/github/python/worktrees/tokenizer-offsets`: rebased full
   integration stack, branch `tokenizer-offsets`, tip `98fb37b1a8f`.
@@ -544,15 +600,12 @@ copies.
 
 ## Immediate next action
 
-Create `gh-153569-tokenizer-reader-decoder` from current `upstream/main` in a
-fresh worktree. Read `7fd9ad7e10e` as the implementation prototype, extract
-only the common reader/decoder layer and the tests that protect it, preserve
-all existing tokenizer-facing entry points, and verify that the diff contains
-no lexer-state conversion, pegen or `_tokenize` migration, legacy deletion,
-unused-token-text optimization, incremental-chunk follow-up, or validation
-tooling.
+Finish validation of #156482, #156484, and #156654 at the candidate tips listed
+above. Resolve any change-related failures, record environmental limitations,
+and update the existing PR branches and descriptions with the validated
+results. Keep their dependency order and the scope boundaries in this plan.
 
-That PR is the critical path. The offset-state and API-cutover work depends on
-it; the incremental-decoder fix depends on its reader implementation; and the
-final validation tooling is meaningful only once the migration behavior is
-stable.
+The reader/decoder is already merged. Once this stack is ready, the next
+implementation work is the remaining offset/storage/error-state migration,
+followed by the opaque consumer API cutover and validation tooling. Those
+follow-ups are recorded here for continuity and are not added to this update.
