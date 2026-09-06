@@ -147,8 +147,8 @@ int
 _PyLexer_IndentationToken(struct tok_state *tok, struct token *token)
 {
     assert(tok->layout.pending != 0);
-    const char *p_start = NULL;
-    const char *p_end = NULL;
+    _PyTok_Off p_start = -1;
+    _PyTok_Off p_end = -1;
     if (tok->layout.pending < 0) {
         if (tok->tok_extra_tokens) {
             p_start = tok->cur;
@@ -159,7 +159,7 @@ _PyLexer_IndentationToken(struct tok_state *tok, struct token *token)
     }
     else {
         if (tok->tok_extra_tokens) {
-            p_start = tok->buf;
+            p_start = tok->buf_offset;
             p_end = tok->cur;
         }
         tok->layout.pending--;

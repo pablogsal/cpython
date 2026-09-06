@@ -21,7 +21,6 @@
     (_PyLexer_IsTString((state)->kind) ? TSTRING_MIDDLE : FSTRING_MIDDLE)
 #define FTSTRING_END(state) \
     (_PyLexer_IsTString((state)->kind) ? TSTRING_END : FSTRING_END)
-#define tok_nextc _PyLexer_nextc
 #define tok_backup _PyLexer_backup
 
 static inline int
@@ -37,10 +36,30 @@ int _PyLexer_ContinueLine(struct tok_state *);
 int _PyLexer_IndentationToken(struct tok_state *, struct token *);
 /* Return zero when the newline is suppressed, otherwise its token type. */
 int _PyLexer_Newline(struct tok_state *, struct token *, int);
-int _PyLexer_nextc(struct tok_state *);
+int _PyLexer_refill(struct tok_state *);
+
+static inline int
+tok_nextc(struct tok_state *tok)
+{
+    while (tok->cur == tok->inp) {
+        if (!_PyLexer_refill(tok)) {
+            return EOF;
+        }
+    }
+    assert(tok->cur >= tok->line_start);
+    assert(tok->cur >= tok->source.base_offset);
+    assert(tok->cur - tok->source.base_offset < tok->source.len);
+    if (tok->cur - tok->line_start >= INT_MAX) {
+        tok->done = E_COLUMNOVERFLOW;
+        return EOF;
+    }
+    return Py_CHARMASK(
+        tok->source.bytes[tok->cur++ - tok->source.base_offset]);
+}
+
 void _PyLexer_backup(struct tok_state *, int);
 int _PyLexer_record_ftstring_comment(
-    struct tok_state *, ftstring_state *, const char *, const char *);
+    struct tok_state *, ftstring_state *, _PyTok_Off, _PyTok_Off);
 int _PyLexer_ftstring_punctuation(
     struct tok_state *, ftstring_state *, struct token *, int);
 int _PyLexer_close_ftstring_expr(
