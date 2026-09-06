@@ -1,6 +1,6 @@
 # gh-153569 tokenizer offset migration: status, plan, and handoff
 
-Last checked: 2026-09-06
+Last checked: 2026-09-07
 
 Tracking issue: https://github.com/python/cpython/issues/153569
 
@@ -27,8 +27,8 @@ consolidation followed by the opaque API cutover. Validation is recorded below.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer state around source spans | `324737d6de8e2531a3131bcf8eee599c73577875` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `a497ca0a5b575056118d660aa4911e3619cdc40c` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer source, formatted-string, and layout state | `0c5a5214d28f0ff99fc17ab10a9a9af1ddfbbad1` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and the opaque token API | `0eb2ce01076272a4ef588a57c672f530ee0b15a6` |
 
 At the user's request, storage ownership, remaining persistent offsets,
 explicit diagnostic state, and the opaque consumer API are folded into these
@@ -420,11 +420,90 @@ Those endpoint checks used `state-foundation` for #156484 and `pr-156654`
 for #156654, under `/tmp/tokenizer-pr-review`. The current review worktrees
 are listed below.
 
+## September 7 layout state and complete token results
+
+#156484 adds `0c5a5214d28`, its seventh focused commit. `layout.c` owns
+indentation checks, logical-line starts, continuations, pending indentation
+tokens, and newline classification. One embedded layout state pairs normal
+and alternate columns in each indentation level. The reader's implicit-newline
+provenance and the scanner's bracket depth remain in their existing state.
+The change adds 241 lines and removes 178 across 12 files; most of the new
+file is code moved out of the normal scanner.
+
+#156654 has five additional commits: `355914a795a`, `ca42d71ed0a`,
+`e3991f5c668`, `5c4b417dcf8`, and `0eb2ce01076`. The final commit puts
+kind in the existing token result alongside span, locations, raw context,
+and metadata. `Get` replaces that result and returns void; `GetView` no
+longer accepts a separate kind. Parser keyword classification and its
+synthetic newline remain explicit parser operations. Borrowed views retain
+their existing lifetime: adding a kind does not make a line view independent
+of later source mutation.
+
+Token initialization covers every field. Reusing a token releases its old
+metadata, and failed parser arena transfers leave that reference with the
+source token for cleanup. Cleanup is an inline `Py_CLEAR`, avoiding an
+out-of-line call for the usual token without metadata. This adds 36 lines
+and removes 28 across seven files. On this LP64 build the transient token
+is 56 bytes instead of 48; cached parser tokens do not grow. `tok_state`
+remains 2,896 bytes. Neither change adds an allocation.
+
+GitHub displays twelve cumulative commits for #156654 until #156484 lands.
+The layout conversion to offsets stays in the persistent-offset commit;
+the opaque API commit routes implied dedents through the layout operation.
+Independent reviews checked ownership, layout behavior, efficiency, build
+registration, and the replayed commit boundaries without outstanding findings.
+PR descriptions discuss the implementation and dependencies only.
+
+The first endpoint passed 52,027 full debug tests, 497 focused tests, and
+270 reference-leak checks. The final second endpoint passed 52,027 full debug
+tests, 270 reference-leak checks, 98 PEG tests, and the standalone C contract
+harness. A preceding full run also passed before cleanup was inlined; the
+full run was repeated after that change. Release assembly confirms there is
+no longer an out-of-line cleanup call in Get or its consumers.
+Both endpoints match the previous `a497ca0a5b5` implementation on 156 token/AST
+files, 557 syntax diagnostics, 243 incomplete-input outcomes, and 663 layout
+cases. Each layout case checks normal and extra-token streams, AST or error
+results in exec and single modes, and incomplete-input classification.
+
+Artifacts are under `/tmp/tokenizer-pr-review`: `layout-token-comparisons.json`,
+`layout-token-static.json`, `compare_layout.py`, and `token-result-check.c`.
+The static checks cover both endpoint diffs, patchcheck, and Unix/Windows/PEG
+source registrations. The standalone C harness checks token kinds, raw
+context, metadata reuse, line views, fatal-status overrides, and error tokens
+without Python exceptions, without adding exported test-only APIs.
+Logs are `build-state-review/layout-{build,focused,full,refleak}.log` and
+`build-opaque-review/layout-token-final-{build,full,refleak,peg,contract}.log`.
+The complete source snapshot, `formatted-string-state-machine.md`, now
+contains seven complete files including layout and the tokenizer header.
+
+Twelve paired, alternating release samples on CPU 2 compared the previous
+`a497ca0a5b5` binary with the final implementation, after local builds and
+full tests finished. Median paired process-CPU changes were:
+
+| Workload | Change |
+|---|---:|
+| Ordinary compile | +1.01% |
+| Ordinary tokenize | +0.59% |
+| Extra-token tokenize | +1.32% |
+| Formatted compile | +2.65% |
+| Formatted tokenize | +0.37% |
+| Nested-layout compile | +0.53% |
+| Nested-layout tokenize | +0.64% |
+
+The tokenization measurements suggest a small cost, about 0.4–1.3%, for the
+clearer layout operations and complete token-result contract. Compilation
+measurements remain noisy; this is not evidence of performance neutrality
+or a speedup. These are exploratory microbenchmarks, not a full pyperformance
+run. Results and binary provenance are in
+`layout-token-performance-{raw,summary,provenance}.json`. The noisier first
+run, before cleanup inlining and while tests were running, is preserved as
+`initial-layout-token-performance-*` and was not used for the final numbers.
+
 ## September 6 explicit formatted-string transitions
 
-#156484 now has six focused commits. Its new final commit, `324737d6de8`,
+At this stage #156484 had six focused commits. Its new final commit, `324737d6de8`,
 centralizes formatted-string transitions in `Parser/lexer/string.c`.
-#156654 retains four additional commits, rebased onto that cleanup:
+#156654 retained four additional commits, rebased onto that cleanup:
 `7a33bf0a52a`, `ffc4f9814db`, `3fbf7591630`, and `a497ca0a5b5`.
 GitHub shows ten cumulative commits for #156654 while both PRs target main.
 
@@ -905,7 +984,7 @@ copies.
 
 ## Immediate next action
 
-The six-commit and four-commit sequences are published with this handoff
+The seven-commit and five-commit sequences are published with this handoff
 update. Check fresh CI against the recorded heads. PR titles and
 descriptions retain the agreed architectural scopes. Keep #156484 → #156654
 as the merge order. #156482 is already merged; no further merge is part of this
