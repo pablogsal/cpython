@@ -740,9 +740,10 @@ copies.
 
 ## Immediate next action
 
-The remaining review stack is #156484 → #156654. Publish the validated rebases
-and check CI against the new heads above. #156482 is merged; no further merge
-is part of this rebase task.
+The remaining review stack is #156484 → #156654. Both validated rebases are
+published and mergeable. Fresh CI is queued/running with no failures at the
+post-push check. Check those runs against the new heads above. #156482 is
+merged; no further merge is part of this rebase task.
 
 All three requested migrations remain implemented. Validation tooling remains
 a separate follow-up.
