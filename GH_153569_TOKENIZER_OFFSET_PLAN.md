@@ -1,6 +1,6 @@
 # gh-153569 tokenizer offset migration: status, plan, and handoff
 
-Last checked: 2026-09-05
+Last checked: 2026-09-06
 
 Tracking issue: https://github.com/python/cpython/issues/153569
 
@@ -12,22 +12,22 @@ is submitted.
 
 ## Executive status
 
-The issue remains open. Three foundation PRs are merged:
+The issue remains open. Four prerequisite PRs are merged:
 
 | PR | Scope | State |
 |---|---|---|
 | [#153585](https://github.com/python/cpython/pull/153585) | Split the tokenizer lexer into focused files | Merged; merge commit `a2d3787105d1` |
 | [#153587](https://github.com/python/cpython/pull/153587) | Add decoded source, spans, locations, and offset-only cursor primitives | Merged; merge commit `f54fd2ab6e1f` |
 | [#156472](https://github.com/python/cpython/pull/156472) | Common tokenizer reader and decoder | Merged |
+| [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | Merged; merge commit `09117bc3173b` |
 
-The active review stack is #156482 → #156484 → #156654. The September 5
-updates below have passed the validation recorded in this document.
+The active review stack is #156484 → #156654, rebased onto the September 6
+squash merge of #156482. Validation is recorded below.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | `6117ae337c2242a5a7767a34a81809f6ff6fb4c0` |
-| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `da9dfb7d5cebbd1bd72c77778297d66f66d4caf3` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `6a267edcb6ff9aae4c75eb6b80abdd99bb026796` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `1a1a3c76261368515e09e9d96eae31d443f47a5f` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `7e5d82cb08a40c769b58f3effe170156d66c94cc` |
 
 At the user's request, storage ownership, remaining persistent offsets,
 explicit diagnostic state, and the opaque consumer API are folded into these
@@ -370,9 +370,34 @@ rebased integration branches as ready to merge. Rebasing changes commit IDs
 and upstream context. Each carved PR must be rebuilt and retested on its own
 tip.
 
-## Final review against current main
+## September 6 rebase after #156482 landed
 
-All three tips above include upstream main `7a918411a30`. Review covered each
+#156482 landed as `09117bc3173b6854f3d614fb0efe79bca4b4cc63`. Both
+remaining PRs are rebased onto that commit. #156484 contains only the two
+cleanup commits; #156654 retains its four commits on top of #156484.
+`git range-diff` reports every replayed commit unchanged. No conflicts or
+implementation edits were needed, and the merged prerequisite is absent from
+the remaining review diffs.
+
+Both debug builds, PEG tests, reference-leak checks, incremental/full diff
+checks, patchcheck, and Windows project/source checks passed. Full debug
+suites ran sequentially to avoid the earlier shared perf mapping failures.
+#156484 passed 52,022 tests; #156654 passed 52,027. Each passed 98 PEG tests;
+reference-leak checks passed 364 and 369 tests respectively.
+
+Both initial build banners contained a stale dirty suffix after rebasing.
+The source worktrees and commit diffs were verified clean. Build-version
+metadata was refreshed and focused tokenizer/source tests passed again; the
+full-suite logs retain their original banners.
+
+Validation logs are in `debug-156484/landed-rebase-*.log` and
+`build-accessor/landed-rebase-*.log` under `/tmp/tokenizer-pr-review`.
+Static results are in `landed-rebase-static-checks.json`.
+
+## September 5 review before #156482 landed
+
+The then-current tips 6117ae337c2, da9dfb7d5ce, and 6a267edcb6f
+included upstream main `7a918411a30`. Review covered each
 incremental PR and its full diff against main, with independent reuse,
 correctness/API, and efficiency passes. No implementation work remains for
 the three requested migrations.
@@ -715,11 +740,9 @@ copies.
 
 ## Immediate next action
 
-The validated stack and updated PR descriptions are published. All three
-PRs are mergeable. Fresh CI is running against the exact heads above, with no
-failures at the first post-push check; it is not yet fully green. The previous
-P3 compile failures are fixed locally. Check the new runs before merging; no
-merge is part of this task.
+The remaining review stack is #156484 → #156654. Publish the validated rebases
+and check CI against the new heads above. #156482 is merged; no further merge
+is part of this rebase task.
 
-The ownership/offset, explicit-diagnostic, and opaque-API migrations are
-included in the active stack. Validation tooling remains a separate follow-up.
+All three requested migrations remain implemented. Validation tooling remains
+a separate follow-up.
