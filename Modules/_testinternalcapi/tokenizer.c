@@ -1,6 +1,6 @@
 #include "parts.h"
 
-#include "../../Parser/tokenizer/cursor.h"
+#include "../../Parser/tokenizer/source.h"
 
 static int
 check(int condition, const char *message)
@@ -32,16 +32,6 @@ check_line_view(const _PyTok_SourceText *source, Py_ssize_t lineno,
     return check(len == (Py_ssize_t)strlen(expected) &&
                  memcmp(line, expected, len) == 0,
                  "wrong source line view");
-}
-
-static int
-same_cursor(const _PyTok_Cursor *left, const _PyTok_Cursor *right)
-{
-    return left->source == right->source &&
-        left->pos == right->pos &&
-        left->line_start == right->line_start &&
-        left->line_end == right->line_end &&
-        left->lineno == right->lineno;
 }
 
 static PyObject *
@@ -256,126 +246,6 @@ error:
 }
 
 static PyObject *
-test_tokenizer_cursor(PyObject *Py_UNUSED(module),
-                      PyObject *Py_UNUSED(args))
-{
-    _PyTok_SourceText source;
-    _PyTok_SourceInit(&source);
-    if (_PyTok_SourceAppendLine(&source, "ab\n", 3, 0) < 0 ||
-            _PyTok_SourceAppendLine(&source, "cd\n", 3, 0) < 0) {
-        goto error;
-    }
-
-    _PyTok_Cursor cursor;
-    _PyTok_CursorInit(&cursor, &source);
-    if (_PyTok_CursorSetOffset(&cursor, source.len) < 0 ||
-            check(cursor.lineno == 3 && cursor.pos == source.len,
-                  "wrong cursor at virtual EOF") < 0 ||
-            _PyTok_CursorSetLine(&cursor, 1) < 0) {
-        goto error;
-    }
-
-    char large[BUFSIZ + 1];
-    memset(large, 'z', sizeof(large));
-    large[sizeof(large) - 1] = '\n';
-    if (_PyTok_SourceAppendLine(&source, large, sizeof(large), 0) < 0) {
-        goto error;
-    }
-
-    if (check(_PyTok_CursorPeek(&cursor, 0) == 'a',
-              "wrong cursor peek after relocation") < 0 ||
-            check(_PyTok_CursorPeek(&cursor, 1) == 'b',
-                  "wrong distant cursor peek") < 0 ||
-            check(_PyTok_CursorAdvance(&cursor) == 'a',
-                  "wrong first cursor byte") < 0 ||
-            check(_PyTok_CursorAdvance(&cursor) == 'b',
-                  "wrong second cursor byte") < 0 ||
-            check(_PyTok_CursorAdvance(&cursor) == '\n',
-                  "wrong final cursor byte") < 0 ||
-            check(_PyTok_CursorAdvance(&cursor) == EOF,
-                  "cursor advanced past line") < 0 ||
-            check(_PyTok_CursorSetOffset(&cursor, 2) == 0,
-                  "cannot seek cursor offset") < 0 ||
-            check(_PyTok_CursorAdvance(&cursor) == '\n',
-                  "wrong cursor byte after seek") < 0 ||
-            check(_PyTok_CursorSetOffset(&cursor, 3) == 0,
-                  "cannot seek line boundary") < 0 ||
-            check(cursor.lineno == 2 && cursor.line_start == 3 &&
-                      _PyTok_CursorAdvance(&cursor) == 'c',
-                  "wrong cursor at line boundary") < 0 ||
-            check(_PyTok_CursorSetLine(&cursor, 3) == 0,
-                  "cannot advance cursor to final line") < 0 ||
-            check(cursor.line_start == 6 &&
-                      _PyTok_CursorAdvance(&cursor) == 'z',
-                  "wrong cursor byte on final line") < 0) {
-        goto error;
-    }
-
-    _PyTok_Cursor saved = cursor;
-    if (check_system_error(
-            _PyTok_CursorSetOffset(&cursor, source.len + 1) < 0,
-            "accepted invalid cursor offset") < 0 ||
-            check(same_cursor(&cursor, &saved),
-                  "invalid offset changed cursor") < 0 ||
-            check_system_error(
-                _PyTok_CursorSetLine(&cursor, source.nlines + 2) < 0,
-                "accepted invalid cursor line") < 0 ||
-            check(same_cursor(&cursor, &saved),
-                  "invalid line changed cursor") < 0 ||
-            check(_PyTok_CursorSetOffset(&cursor, source.len) == 0,
-                  "cannot set cursor to EOF") < 0 ||
-            check(cursor.lineno == 4 && cursor.pos == source.len,
-                  "wrong cursor at EOF") < 0) {
-        goto error;
-    }
-
-#if SIZEOF_VOID_P > 4
-    char byte = 0;
-    _PyTok_SourceText huge_source = {
-        .bytes = &byte,
-        .len = (_PyTok_Off)INT_MAX + 1,
-    };
-    _PyTok_Cursor huge_cursor = {
-        .source = &huge_source,
-        .pos = INT_MAX,
-        .line_end = (_PyTok_Off)INT_MAX + 1,
-        .lineno = 1,
-    };
-    if (check(_PyTok_CursorAdvance(&huge_cursor) == EOF &&
-                  huge_cursor.pos == INT_MAX,
-              "cursor advanced past maximum column") < 0) {
-        goto error;
-    }
-#endif
-
-    _PyTok_Off base = source.len;
-    _PyTok_SourceDiscard(&source);
-    if (_PyTok_SourceAppendLine(&source, "ab\n", 3, 0) < 0 ||
-            _PyTok_SourceAppendLine(&source, "cd", 2, 0) < 0) {
-        goto error;
-    }
-    _PyTok_CursorInit(&cursor, &source);
-    if (_PyTok_CursorSetLine(&cursor, 1) < 0 ||
-            check(cursor.pos == base && _PyTok_CursorPeek(&cursor, 1) == 'b',
-                  "wrong retained cursor line") < 0 ||
-            _PyTok_CursorSetLine(&cursor, 2) < 0 ||
-            check(_PyTok_CursorAdvance(&cursor) == 'c',
-                  "wrong retained cursor byte") < 0 ||
-            _PyTok_CursorSetOffset(&cursor, base + 5) < 0 ||
-            check(cursor.lineno == 2 && _PyTok_CursorAdvance(&cursor) == EOF,
-                  "wrong retained cursor EOF") < 0) {
-        goto error;
-    }
-
-    _PyTok_SourceClear(&source);
-    Py_RETURN_NONE;
-
-error:
-    _PyTok_SourceClear(&source);
-    return NULL;
-}
-
-static PyObject *
 test_tokenizer_source_discard(PyObject *Py_UNUSED(module),
                              PyObject *Py_UNUSED(args))
 {
@@ -440,7 +310,6 @@ error:
 
 static PyMethodDef test_methods[] = {
     {"test_tokenizer_source", test_tokenizer_source, METH_NOARGS},
-    {"test_tokenizer_cursor", test_tokenizer_cursor, METH_NOARGS},
     {"test_tokenizer_source_discard", test_tokenizer_source_discard, METH_NOARGS},
     {NULL},
 };

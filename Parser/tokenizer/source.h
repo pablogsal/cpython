@@ -50,9 +50,9 @@ _PyTok_SourceData(const _PyTok_SourceText *source)
 }
 
 PyAPI_FUNC(void) _PyTok_SourceInit(_PyTok_SourceText *);
-/* Clear invalidates all cursors, spans, and views for the source. */
+/* Clear invalidates all spans and views for the source. */
 PyAPI_FUNC(void) _PyTok_SourceClear(_PyTok_SourceText *);
-/* Discard the retained window and invalidate its cursors, spans, and views.
+/* Discard the retained window and invalidate its spans and views.
    Keep its allocation and advance the logical base to the end of the window. */
 PyAPI_FUNC(void) _PyTok_SourceDiscard(_PyTok_SourceText *);
 /* Append one nonempty logical line and return its start offset. The input may
