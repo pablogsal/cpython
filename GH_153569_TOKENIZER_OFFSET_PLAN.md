@@ -27,8 +27,8 @@ consolidation followed by the opaque API cutover. Validation is recorded below.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer state around source spans | `177eca581b4e16e7b5a7c0e5f2e5629514342fad` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `fefec399906a509293fd4b08e23b8fcb5d5663c6` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer state around source spans | `324737d6de8e2531a3131bcf8eee599c73577875` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `a497ca0a5b575056118d660aa4911e3619cdc40c` |
 
 At the user's request, storage ownership, remaining persistent offsets,
 explicit diagnostic state, and the opaque consumer API are folded into these
@@ -420,11 +420,67 @@ Those endpoint checks used `state-foundation` for #156484 and `pr-156654`
 for #156654, under `/tmp/tokenizer-pr-review`. The current review worktrees
 are listed below.
 
-## September 6 reviewable commit sequences
+## September 6 explicit formatted-string transitions
 
-#156484 now has five commits. #156654 adds four commits on top of it. Both PRs
-still target main, so GitHub shows nine cumulative commits for #156654 until
-#156484 lands. Each commit forms a complete, buildable change.
+#156484 now has six focused commits. Its new final commit, `324737d6de8`,
+centralizes formatted-string transitions in `Parser/lexer/string.c`.
+#156654 retains four additional commits, rebased onto that cleanup:
+`7a33bf0a52a`, `ffc4f9814db`, `3fbf7591630`, and `a497ca0a5b5`.
+GitHub shows ten cumulative commits for #156654 while both PRs target main.
+
+The machine uses the existing three enum modes and one frame per active
+formatted string. Dispatch explicitly handles expression, middle, and
+format-specification modes. Semantic operations own field entry, punctuation
+and metadata completion, field closing, and debug-expression marking.
+Generic Python operators and bracket matching remain in the ordinary scanner.
+No additional state fields, allocation paths, or text copies were introduced.
+
+The cleanup preserves the ordering of metadata capture, bracket updates,
+`!=` recognition, debug `=`, nesting-limit diagnostics, and nested format
+continuations. In particular, closing a nested field still returns to MIDDLE.
+All mode/depth/debug state mutations now live in `string.c`.
+
+Independent reuse, quality, and efficiency reviews informed the extraction;
+the exact initial diff had no correctness findings. The final C99 refinement
+replaced a combined completion hook with named closing/debug operations and
+made enum-mode dispatch explicit. The first three #156654 commits replayed
+unchanged; the final offset commit adapts the saved expression start to an
+offset in the extracted entry path.
+
+Both final PR tips passed 52,027 full debug tests. Focused checks passed
+497 tests for #156484 and 498 for #156654; reference-leak checks passed 267
+and 268 tests, respectively. The final #156654 build also passed 98 PEG tests.
+Both tips matched their previous trees on 156 token/AST files, 557 syntax
+outcomes, and 243 incomplete-input outcomes. Patchcheck, diff whitespace,
+and build-file consistency checks passed. Final independent review found no
+correctness or reuse issues.
+
+Logs are `build-state-review/transitions-c99-{build,full,refleak}.log` and
+`build-opaque-review/transitions-final-{build,focused,full,refleak,peg}.log`.
+Differential and static results are `transitions-c99-comparisons.json` and
+`transitions-final-static.json`. A complete source view of the five lexer
+files is `formatted-string-state-machine.md`. All are under
+`/tmp/tokenizer-pr-review`.
+
+Release comparison used identical inputs and twelve alternating paired
+samples on CPU 2. Median process-CPU changes were +1.18% ordinary compilation,
+-0.77% ordinary tokenization, -0.02% extra-token tokenization, -1.60% formatted
+compilation, and -1.31% formatted tokenization. No consistent slowdown appeared,
+but outliers and wide intervals make small performance effects inconclusive.
+These results do not prove neutrality or a speedup. Artifacts are
+`transition-performance-{raw,summary,provenance}.json`. Static inspection found
+no new per-character or ordinary-token calls; the normal scanner's compiled
+code shrank by 448 bytes.
+
+The compatibility requirement is no regressions; behavior improvements are
+accepted. Existing removal of a tokenization MemoryError and correction of
+invalid-UTF-8 diagnostic columns are intentionally retained.
+
+## Earlier September 6 reviewable commit sequences
+
+At this stage #156484 had five commits, with four additional commits in
+#156654. Both PRs targeted main, so GitHub showed nine cumulative commits
+for #156654. Each commit formed a complete, buildable change.
 
 | PR | Commit | Change |
 |---|---|---|
@@ -849,8 +905,8 @@ copies.
 
 ## Immediate next action
 
-The rewritten five-commit and four-commit sequences are published with this
-handoff update. Check fresh CI against the recorded heads. PR titles and
+The six-commit and four-commit sequences are published with this handoff
+update. Check fresh CI against the recorded heads. PR titles and
 descriptions retain the agreed architectural scopes. Keep #156484 → #156654
 as the merge order. #156482 is already merged; no further merge is part of this
 restructuring task.
