@@ -712,7 +712,7 @@ tokenizer_new_with_reader(_PyTok_ReaderKind kind)
         return NULL;
     }
     tok->done = E_OK;
-    tok->atbol = 1;
+    tok->layout.at_bol = 1;
     tok->start_loc = (_PyTok_Loc){-1, -1};
     tok->ftstring_stack = tok->ftstring_stack_inline;
     tok->ftstring_capacity = FTSTRING_STACK_INLINE_CAPACITY;

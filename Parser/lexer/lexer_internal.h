@@ -31,6 +31,12 @@ tok_failed(const struct tok_state *tok)
            tok->done != E_INTERACT_STOP;
 }
 
+/* Return -1 on error, otherwise whether the line is blank. */
+int _PyLexer_BeginLine(struct tok_state *);
+int _PyLexer_ContinueLine(struct tok_state *);
+int _PyLexer_IndentationToken(struct tok_state *, struct token *);
+/* Return zero when the newline is suppressed, otherwise its token type. */
+int _PyLexer_Newline(struct tok_state *, struct token *, int);
 int _PyLexer_nextc(struct tok_state *);
 void _PyLexer_backup(struct tok_state *, int);
 int _PyLexer_record_ftstring_comment(

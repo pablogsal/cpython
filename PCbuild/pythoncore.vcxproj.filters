@@ -1349,6 +1349,9 @@
     <ClCompile Include="..\Parser\lexer\lexer.c">
       <Filter>Parser</Filter>
     </ClCompile>
+    <ClCompile Include="..\Parser\lexer\layout.c">
+      <Filter>Parser</Filter>
+    </ClCompile>
     <ClCompile Include="..\Parser\lexer\number.c">
       <Filter>Parser</Filter>
     </ClCompile>
