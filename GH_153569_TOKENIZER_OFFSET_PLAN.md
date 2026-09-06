@@ -21,18 +21,25 @@ The issue remains open. Four prerequisite PRs are merged:
 | [#156472](https://github.com/python/cpython/pull/156472) | Common tokenizer reader and decoder | Merged |
 | [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | Merged; merge commit `09117bc3173b` |
 
-The active review stack is #156484 → #156654, rebased onto the September 6
-squash merge of #156482. The two remaining PRs are organized around state
-consolidation followed by the opaque API cutover. Validation is recorded below.
+The active review stack now has eight drafts. The first remains in
+`python/cpython`; the seven dependent drafts are in `pablogsal/cpython`,
+each based on its predecessor branch so GitHub shows the incremental diff.
+The former cumulative CPython PR #156654 is closed and links to this split.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer source, formatted-string, and layout state | `0c5a5214d28f0ff99fc17ab10a9a9af1ddfbbad1` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and the opaque token API | `0eb2ce01076272a4ef588a57c672f530ee0b15a6` |
+| [python/cpython#156484](https://github.com/python/cpython/pull/156484) | Source spans and derived locations | `0b9a33b57560c55baebd9aed35fbdf220aec1944` |
+| [pablogsal/cpython#138](https://github.com/pablogsal/cpython/pull/138) | Reader ownership and source views | `730212bc8195d23d2ba4a7d1ada3c10fd122690b` |
+| [pablogsal/cpython#139](https://github.com/pablogsal/cpython/pull/139) | Formatted-string frames and transitions | `04b05de3e514f175ff160f8a921c07acbbe3ab58` |
+| [pablogsal/cpython#140](https://github.com/pablogsal/cpython/pull/140) | Indentation and logical-line state | `db92c94c066d76c1bbf4becb518d7fa12f2e0849` |
+| [pablogsal/cpython#141](https://github.com/pablogsal/cpython/pull/141) | Unused cursor removal | `d74ab27f045f40c4ef079e679c24195133f7ea3f` |
+| [pablogsal/cpython#142](https://github.com/pablogsal/cpython/pull/142) | Unused source lookup removal | `4b7786605c9b107d4b548c934a48d560694bc937` |
+| [pablogsal/cpython#143](https://github.com/pablogsal/cpython/pull/143) | Explicit diagnostic state | `ba20f3810ab37e3c2a028a0f3376cd3c78e145a2` |
+| [pablogsal/cpython#144](https://github.com/pablogsal/cpython/pull/144) | Opaque API and persistent offsets | `6f220e47077282617d9c5f50c5cf6dfb8de9931b` |
 
-At the user's request, storage ownership, remaining persistent offsets,
-explicit diagnostic state, and the opaque consumer API are folded into these
-three PRs. Validation tooling remains a separate follow-up.
+Storage ownership, remaining persistent offsets, explicit diagnostics, and
+the opaque consumer API remain implemented across this stack. Validation
+tooling remains a separate follow-up.
 
 The August 27 branch inventory and prototype commits below are historical
 recovery material. The active stack above supersedes the old instruction to
@@ -419,6 +426,61 @@ new commit and focused tokenizer/source tests passed again.
 Those endpoint checks used `state-foundation` for #156484 and `pr-156654`
 for #156654, under `/tmp/tokenizer-pr-review`. The current review worktrees
 are listed below.
+
+## September 7 split into small draft PRs
+
+The user requested at most 700 added and 500 deleted lines in every PR and
+all new PRs as drafts. These are the verified GitHub display sizes, not
+sizes measured against an undisplayed dependency:
+
+| PR | Added | Deleted | Commits |
+|---|---:|---:|---:|
+| [python/cpython#156484](https://github.com/python/cpython/pull/156484) | 308 | 315 | 2 |
+| [pablogsal/cpython#138](https://github.com/pablogsal/cpython/pull/138) | 210 | 263 | 2 |
+| [pablogsal/cpython#139](https://github.com/pablogsal/cpython/pull/139) | 463 | 358 | 2 |
+| [pablogsal/cpython#140](https://github.com/pablogsal/cpython/pull/140) | 241 | 178 | 1 |
+| [pablogsal/cpython#141](https://github.com/pablogsal/cpython/pull/141) | 4 | 303 | 1 |
+| [pablogsal/cpython#142](https://github.com/pablogsal/cpython/pull/142) | 16 | 380 | 1 |
+| [pablogsal/cpython#143](https://github.com/pablogsal/cpython/pull/143) | 167 | 79 | 1 |
+| [pablogsal/cpython#144](https://github.com/pablogsal/cpython/pull/144) | 567 | 450 | 3 |
+
+Diagnostic line views move with reader/source ownership, keeping the
+formatted-string PR focused on frames, token context, and transitions.
+The former unused-API commit is split into cursor removal and source lookup
+removal; the cursor-only boundary retains all source lookup implementations
+and tests until their own removal. The final cutover remains three focused
+commits: opaque consumers, persistent offsets, and complete token results.
+
+All eight boundaries built and passed the eight focused modules, with
+496–498 tests per boundary. The reordered reader/source boundary was built
+and tested separately; seven other final boundary trees exactly match the
+freshly tested snapshots. Windows project/filter and Unix source registrations
+and whitespace checks pass. Independent review found no missing cursor
+references or build/test dependencies at the new removal boundary.
+
+The final tree, `6f65c5bfc2160b2035b0c8b329054f91a93ea0cf`, is identical
+to previously published `0eb2ce01076`. The split preserves every implementation
+change, the 52,027-test final full-suite result, differential outcomes, and
+performance measurements documented in the preceding implementation round.
+Artifacts are under `/tmp/tokenizer-pr-review`:
+`small-pr-published-series.json`, `small-pr-final-validation.json`,
+`small-pr-github-verification.json`, and the logs in `build-small-pr-series`.
+The complete final history is local branch `tokenizer-small-pr-order` in
+`small-pr-order`, at `6f220e47077`.
+
+CPython repository rules rejected creation of temporary review-base branches
+with GH013 (“Cannot create ref due to creations being restricted”). The
+atomic push created no upstream branches, and repository rules were not
+changed. The user explicitly chose the fork for the dependent drafts.
+
+The main Tests workflow only runs automatically for main/release PR bases.
+It was dispatched explicitly on all seven fork head branches. Those remote
+runs are pending; local success is not a claim that fresh CI is green.
+The first draft uses the normal upstream-main PR workflow.
+
+The fork PRs are review artifacts. After each predecessor lands, rebase the
+next branch onto current upstream main and open its corresponding CPython
+landing PR as a draft. GitHub cannot move an existing PR between repositories.
 
 ## September 7 layout state and complete token results
 
@@ -984,11 +1046,11 @@ copies.
 
 ## Immediate next action
 
-The seven-commit and five-commit sequences are published with this handoff
-update. Check fresh CI against the recorded heads. PR titles and
-descriptions retain the agreed architectural scopes. Keep #156484 → #156654
-as the merge order. #156482 is already merged; no further merge is part of this
-restructuring task.
+Review the eight drafts in the order shown above and check fresh CI for their
+recorded heads. Land python/cpython#156484 first. After each predecessor lands,
+rebase the next fork branch and open its CPython landing PR as a draft.
+The fork drafts keep each dependent review within the agreed size limits.
+No PR was merged as part of this split.
 
 All three requested migrations remain implemented. Validation tooling remains
 a separate follow-up.
