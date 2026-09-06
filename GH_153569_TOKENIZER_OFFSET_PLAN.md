@@ -27,8 +27,8 @@ consolidation followed by the opaque API cutover. Validation is recorded below.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer state around source spans | `3ef307f12bfdd0dc3c37c1a06b9fd6d915920abc` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `924080632afd8fe23c32fdd262eb39b6f074c899` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer state around source spans | `177eca581b4e16e7b5a7c0e5f2e5629514342fad` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `fefec399906a509293fd4b08e23b8fcb5d5663c6` |
 
 At the user's request, storage ownership, remaining persistent offsets,
 explicit diagnostic state, and the opaque consumer API are folded into these
@@ -375,10 +375,11 @@ tip.
 
 ## September 6 redistribution into two architectural steps
 
-The user requested coherent, more balanced review boundaries. Each remaining
-PR now consists of one commit. The first consolidates state and source-span
-ownership; the second finishes persistent offsets, explicit diagnostics, and
-opaque consumers, then removes the obsolete API surface.
+The user requested coherent, more balanced review boundaries. The first PR
+consolidates state and source-span ownership; the second finishes persistent
+offsets, explicit diagnostics, and opaque consumers, and removes the obsolete
+API surface. The initial redistribution used one commit per PR; the reviewable
+commit sequences below replace that history without changing either final tree.
 
 | Incremental review | Added | Deleted |
 |---|---:|---:|
@@ -415,8 +416,68 @@ The unchanged final tree reused its existing binary for the full run; its
 banner still names 7e5d82. Build-version metadata was then refreshed to the
 new commit and focused tokenizer/source tests passed again.
 
-Current source worktrees are `state-foundation` for #156484 and `pr-156654`
-for #156654, under `/tmp/tokenizer-pr-review`. Both are clean.
+Those endpoint checks used `state-foundation` for #156484 and `pr-156654`
+for #156654, under `/tmp/tokenizer-pr-review`. The current review worktrees
+are listed below.
+
+## September 6 reviewable commit sequences
+
+#156484 now has five commits. #156654 adds four commits on top of it. Both PRs
+still target main, so GitHub shows nine cumulative commits for #156654 until
+#156484 lands. Each commit forms a complete, buildable change.
+
+| PR | Commit | Change |
+|---|---|---|
+| #156484 | `baef09eb7dc` | Store formatted-string text as source spans |
+| #156484 | `0b9a33b5756` | Derive locations and failures from scanner state |
+| #156484 | `8f92f4e89f4` | Move input state and relocation into the reader |
+| #156484 | `2b393f8f610` | Keep active formatted-string frames and token context |
+| #156484 | `177eca581b4` | Borrow diagnostic lines through the source API |
+| #156654 | `0f978add630` | Remove unused cursor and source lookup APIs |
+| #156654 | `8689442e347` | Report diagnostics without rewinding the scanner |
+| #156654 | `438567c1ab7` | Hide tokenizer state behind the consumer API |
+| #156654 | `fefec399906` | Store scanner positions as logical source offsets |
+
+The #156484 endpoint tree is `a83052357f8101363468f5e0909834c020ff2056`,
+identical to the previous `3ef307f12bf` tip. The #156654 endpoint tree remains
+`a9d4c7117674d2151e6d7d3faac7028232498e02`, identical to `924080632af`.
+All requested implementation changes are preserved exactly.
+
+An independent agent reviewed the boundaries and found no outstanding issues.
+The scanner-bookkeeping commit includes all affected initialization and field
+consumers. Reader ownership introduces retained-source access together with
+its consumers. Explicit diagnostics and opaque access each work before the
+final conversion from pointers to offsets.
+
+All five #156484 commits built and passed their focused suites: 496 tests for
+the first three and 497 for the final two. All four #156654 commits built and
+passed 152, 496, 498, and 498 focused tests, respectively. The diagnostic,
+opaque-API, and offset commits also matched the baseline for 557 syntax and
+243 incomplete-input outcomes; the last two matched 156 token/AST cases.
+The opaque-API step passed 98 PEG tests, and the offset step passed 369
+reference-leak checks. Reparenting the four commits onto the five-commit
+#156484 chain preserved every intermediate tree.
+
+Both rewritten PR tips passed fresh full debug runs of 52,027 tests each.
+The #156484 tip also passed 98 PEG tests and 368 reference-leak checks.
+Logs are `commit-series-full.log` in each current build directory, plus
+`commit-series-peg.log` and `commit-series-refleak.log` in `build-state-review`.
+The #156654 PEG and reference-leak results above cover the identical trees
+before reparenting.
+
+Every commit passed diff whitespace and Windows project/source consistency
+checks. Both endpoint diffs passed patchcheck and build-file consistency
+checks. Evidence is in `commit-series-static.json`,
+`commit-series-final-static.json`, `build-opaque-review/p3-commit-validation.json`,
+and `build-opaque-review/p3-reparent-trees.json` under
+`/tmp/tokenizer-pr-review`.
+
+Current source worktrees are `state-review-commits` for #156484 and
+`opaque-review-commits` for #156654. Build and test logs are in
+`build-state-review` and `build-opaque-review`, respectively, all under
+`/tmp/tokenizer-pr-review`. Earlier ASan/UBSan results above remain applicable
+to these identical endpoint trees. PR descriptions contain no validation
+sections or instructions.
 
 ## Earlier September 6 rebase before redistribution
 
@@ -788,9 +849,10 @@ copies.
 
 ## Immediate next action
 
-Both commits and the updated PR titles/descriptions are published. Check
-fresh CI against the recorded heads. Keep #156484 → #156654 as the merge
-order. #156482 is already merged; no further merge is part of this
+The rewritten five-commit and four-commit sequences are published with this
+handoff update. Check fresh CI against the recorded heads. PR titles and
+descriptions retain the agreed architectural scopes. Keep #156484 → #156654
+as the merge order. #156482 is already merged; no further merge is part of this
 restructuring task.
 
 All three requested migrations remain implemented. Validation tooling remains
