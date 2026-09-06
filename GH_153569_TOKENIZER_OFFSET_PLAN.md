@@ -22,12 +22,13 @@ The issue remains open. Four prerequisite PRs are merged:
 | [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | Merged; merge commit `09117bc3173b` |
 
 The active review stack is #156484 → #156654, rebased onto the September 6
-squash merge of #156482. Validation is recorded below.
+squash merge of #156482. The two remaining PRs are organized around state
+consolidation followed by the opaque API cutover. Validation is recorded below.
 
 | PR | Scope | Validated tip |
 |---|---|---|
-| [#156484](https://github.com/python/cpython/pull/156484) | Remove unused cursor, line index, and span-view API | `1a1a3c76261368515e09e9d96eae31d443f47a5f` |
-| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `7e5d82cb08a40c769b58f3effe170156d66c94cc` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Consolidate tokenizer state around source spans | `3ef307f12bfdd0dc3c37c1a06b9fd6d915920abc` |
+| [#156654](https://github.com/python/cpython/pull/156654) | Finish persistent offsets, explicit diagnostics, and opaque consumer API | `924080632afd8fe23c32fdd262eb39b6f074c899` |
 
 At the user's request, storage ownership, remaining persistent offsets,
 explicit diagnostic state, and the opaque consumer API are folded into these
@@ -58,7 +59,7 @@ The architectural goals, adjusted for the current storage decision, are:
 3. Tokens and errors describe half-open source spans.
 4. Persistent scanner positions use offsets; temporary pointer caches stay
    within the scanning/storage boundary. The unused cursor prototype is removed
-   in #156484 rather than retained as a second state representation.
+   in #156654 as part of the opaque API cutover.
 5. A common reader/decoder pipeline handles every source kind.
 6. Lexer and f-string state move from pointers to offsets and spans.
 7. Pegen and `_tokenize` consume an opaque tokenizer API rather than internal
@@ -111,7 +112,7 @@ makes the later offset conversion easier to review.
 ### Source and cursor primitives: PR #153587
 
 As merged, the source foundation provided the following primitives. Some were
-never adopted by the production lexer and are removed by #156484:
+never adopted by the production lexer and are removed by #156654:
 
 - `_PyTok_SourceText`, which owns decoded source bytes.
 - `_PyTok_Span`, a half-open byte range into the source.
@@ -183,7 +184,7 @@ Before the rebase, the same source material had these hashes:
 Never cherry-pick either `485acfcba70` or `7fd9ad7e10e` into a review
 branch. Both are integration checkpoints, not review units.
 
-## Current PR scopes and September 5 updates
+## Current PR scopes after redistribution
 
 ### #156482: token spans and unified source storage
 
@@ -201,23 +202,24 @@ Tests protect relocation in f/t strings, both extra-token modes, interactive
 multiline input, discard/reuse, implicit-line metadata reset, and logical
 offset limits. The bitset byte count avoids addition overflow on 32-bit builds.
 
-### #156484: remove unused primitives
+### #156484: consolidate tokenizer state around source spans
 
-Remove the unused cursor and sparse line index. Also remove
-`_PyTok_SourceSpanView()`, which has no production consumers. Keep the useful
-span types and helpers. Direct source tests continue to verify line append
-rules, offsets, implicit-newline flags, complete stored bytes, UTF-8 bytes,
-and the terminating NUL.
+Use one frame per active formatted string, with an inline common-case slot
+and a growable nesting stack. Frames hold kind, quote, opening location,
+mode, replacement depth, expression span, and comment spans. Raw-string
+context travels with emitted and cached parser tokens.
 
-Remove the unrelated junction-handling edit in `Lib/test/support/os_helper.py`
-from this PR's diff. No replacement filesystem cleanup change belongs in this
-stack.
+The reader owns input-specific state, tokenizer construction, and temporary
+pointer relocation. Locations and failures derive from existing scanner
+state, removing duplicate counters and flags. RetainedSource distinguishes
+prepared/interactive input from streaming windows; SourceLineView owns the
+retained-source line scan.
 
-### #156654: offsets, explicit diagnostics, and opaque consumers
+The existing unused cursor and sparse index remain unchanged in this PR.
+Their removal belongs to #156654's API cutover. Scanner positions remain
+pointers here; all decoded storage is still owned by SourceText from #156482.
 
-Keep one frame per active formatted string, an inline common-case slot, and a
-growable nesting stack. Frames contain kind, quote, opening location, mode,
-replacement depth, expression span, and comment spans.
+### #156654: finish offsets, diagnostics, and the opaque API cutover
 
 All persistent scanner positions are offsets, including token starts and
 line starts. SourceText is the sole owner of decoded bytes; the reader no
@@ -235,8 +237,9 @@ stored in persistent state. Existing done codes retain their classifications.
 The single consumer header, tokenizer.h, exposes an opaque tok_state and
 value records for tokens, views, observations, and diagnostics. Pegen and
 _tokenize use configuration, input-control, token, source-view, and diagnostic
-operations. They no longer include lexer state or inspect its fields. Raw
-formatted-string context travels in the emitted and cached parser tokens.
+operations. They no longer include lexer state or inspect its fields.
+The unused cursor, source location/index lookup, and old source span-view API
+are removed along with their tests and build entries.
 
 Token views preserve multiline TokenInfo.line and character-column behavior.
 SourceLineView owns the retained-source line scan, with 1-based clamping and
@@ -370,7 +373,52 @@ rebased integration branches as ready to merge. Rebasing changes commit IDs
 and upstream context. Each carved PR must be rebuilt and retested on its own
 tip.
 
-## September 6 rebase after #156482 landed
+## September 6 redistribution into two architectural steps
+
+The user requested coherent, more balanced review boundaries. Each remaining
+PR now consists of one commit. The first consolidates state and source-span
+ownership; the second finishes persistent offsets, explicit diagnostics, and
+opaque consumers, then removes the obsolete API surface.
+
+| Incremental review | Added | Deleted |
+|---|---:|---:|
+| #156484 against main | 846 | 862 |
+| #156654 against #156484 | 693 | 1,158 |
+
+Both PRs target upstream main, so GitHub displays the dependent PR's cumulative
+diff until #156484 lands. After that merge, rebase #156654 to expose only its
+remaining cutover diff.
+
+The combined tree is exactly the previously reviewed tree from `7e5d82cb08a`:
+`a9d4c7117674d2151e6d7d3faac7028232498e02`. No final implementation changes
+were added or lost. The intermediate state was independently reviewed for
+source retention, frame/token lifetime, old API compatibility, and Unix,
+Windows core/freezer, and PEG build integration.
+
+RetainedSource and token rawness moved into the first step to keep that
+intermediate state correct. Existing cursor/index code stays identical to
+main until its removal in the second step. PR titles and descriptions explain
+only the changes and dependencies; validation details remain in this handoff.
+
+The first PR passed 52,027 full debug tests, 98 PEG tests, 368 reference-leak
+checks, and 612 debug ASan/UBSan tests. Its 156 token/AST corpus results,
+557 syntax outcomes, and 243 incomplete-input results match the baseline.
+Logs are under `/tmp/tokenizer-pr-review/build-foundation` and
+`build-foundation-asan`, named `balanced-*.log`. Differential results are in
+`balanced-foundation-comparisons.json`; static checks for both PRs are in
+`balanced-static-checks.json`.
+
+The second PR also passed 52,027 full debug tests, 98 PEG tests, 369
+reference-leak checks, and 613 debug ASan/UBSan tests. Logs are
+`build-accessor/balanced-*.log` and `asan-candidate/balanced-*.log`.
+The unchanged final tree reused its existing binary for the full run; its
+banner still names 7e5d82. Build-version metadata was then refreshed to the
+new commit and focused tokenizer/source tests passed again.
+
+Current source worktrees are `state-foundation` for #156484 and `pr-156654`
+for #156654, under `/tmp/tokenizer-pr-review`. Both are clean.
+
+## Earlier September 6 rebase before redistribution
 
 #156482 landed as `09117bc3173b6854f3d614fb0efe79bca4b4cc63`. Both
 remaining PRs are rebased onto that commit. #156484 contains only the two
@@ -740,10 +788,10 @@ copies.
 
 ## Immediate next action
 
-The remaining review stack is #156484 → #156654. Both validated rebases are
-published and mergeable. Fresh CI is queued/running with no failures at the
-post-push check. Check those runs against the new heads above. #156482 is
-merged; no further merge is part of this rebase task.
+Both commits and the updated PR titles/descriptions are published. Check
+fresh CI against the recorded heads. Keep #156484 → #156654 as the merge
+order. #156482 is already merged; no further merge is part of this
+restructuring task.
 
 All three requested migrations remain implemented. Validation tooling remains
 a separate follow-up.
