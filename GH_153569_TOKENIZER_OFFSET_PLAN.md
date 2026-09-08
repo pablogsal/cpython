@@ -1,6 +1,6 @@
 # gh-153569 tokenizer offset migration: status, plan, and handoff
 
-Last checked: 2026-09-07
+Last checked: 2026-09-09
 
 Tracking issue: https://github.com/python/cpython/issues/153569
 
@@ -12,7 +12,7 @@ is submitted.
 
 ## Executive status
 
-The issue remains open. Four prerequisite PRs are merged:
+The issue remains open. Five prerequisite PRs are merged:
 
 | PR | Scope | State |
 |---|---|---|
@@ -20,16 +20,17 @@ The issue remains open. Four prerequisite PRs are merged:
 | [#153587](https://github.com/python/cpython/pull/153587) | Add decoded source, spans, locations, and offset-only cursor primitives | Merged; merge commit `f54fd2ab6e1f` |
 | [#156472](https://github.com/python/cpython/pull/156472) | Common tokenizer reader and decoder | Merged |
 | [#156482](https://github.com/python/cpython/pull/156482) | Return token spans and unify decoded storage | Merged; merge commit `09117bc3173b` |
+| [#156484](https://github.com/python/cpython/pull/156484) | Formatted-string spans, derived locations, active frames, and transitions | Merged; merge commit `2ddc218b2062` |
 
-The active review consists of exactly three independent draft PRs from
-`pablogsal/cpython` into `python/cpython:main`. Each actual GitHub diff adds
-at most 700 lines. Each branch builds without the other two branches.
+The two remaining PRs are rebased onto `2ddc218b2062`. Each has its own
+diff against main and remains below 700 added lines.
 
 | PR | Scope | Added lines | Commits |
 |---|---|---:|---:|
-| [#156484](https://github.com/python/cpython/pull/156484) | Formatted-string spans, derived locations, active frames, and transitions | 668 | 4 |
-| [#156654](https://github.com/python/cpython/pull/156654) | Opaque consumer API, cached token context, persistent offsets, and character scanning | 686 | 4 |
-| [#157055](https://github.com/python/cpython/pull/157055) | Reader ownership, source views, layout state, explicit diagnostics, and unused API removal | 697 | 5 |
+| [#156654](https://github.com/python/cpython/pull/156654) | Opaque consumer API, cached token context, persistent offsets, and character scanning | 657 | 4 |
+| [#157055](https://github.com/python/cpython/pull/157055) | Reader ownership, source views, layout state, explicit diagnostics, and unused API removal | 607 | 5 |
+
+Review #156654 first. Hold review of #157055 until #156654 lands.
 
 The seven accidental PRs into the fork, #138–#144, are closed. They are not
 part of the review or landing plan. #156654 is reopened. No stacked base
@@ -43,7 +44,7 @@ persistent offsets, explicit diagnostics, opaque consumers, formatted-string
 transitions, layout state, and complete token results are all included.
 
 The older branch inventories and implementation rounds below are historical
-recovery material. This three-PR split supersedes their review instructions.
+recovery material. The current two-PR review order supersedes their review instructions.
 
 ## Why this work exists
 
@@ -1044,20 +1045,45 @@ At the August 27 handoff, useful local recovery locations included:
 Local worktrees are recovery aids. The fork branches are the durable remote
 copies.
 
+## September 9 rebase after #156484
+
+Both remaining fork branches are rebased onto `2ddc218b2062` and pushed:
+
+- #156654: `aef6c9ee7b3d616acdac77ffd8fd2b8a62448953`.
+- #157055: `11383f5dad9af29c4eeac8023921ddf020b8b24e`.
+
+GitHub reports both as conflict-free. The obsolete review hold on #156654
+has been removed; #157055 still waits for #156654.
+
+All nine individual commits build and pass focused tests. The API branch
+passes 497 focused tests, 270 leak checks, and 98 PEG tests. Its full suite
+passes 52,045 tests; the final two-line header-guard restoration was then
+rebuilt and checked with the focused, leak, and PEG suites. The control branch
+passes 498 focused tests, 270 leak checks, and 98 PEG tests.
+
+Each branch and their integrated result match freshly built main across
+3,541 differential outcomes. The integration also passes its 498 focused
+tests. All 60 unrelated upstream file changes are preserved byte-for-byte.
+Evidence: `../tokenizer-rebase-validation-sep9.json` and the build directories
+listed below. GitHub CI runs separately on the pushed heads.
+
 ## Immediate next action
 
-Review the three CPython drafts listed above. Each targets main directly;
-there are no dependent fork PRs to reopen or promote. After a PR lands,
-rebase the remaining branches onto main and resolve their shared interface
-changes using the integration worktree. Keep each PR within 700 additions.
-No PR was merged as part of this correction.
+Review #156654. After it lands, rebase #157055 and review it. Keep each PR
+within 700 additions. #156654 is ready for review; #157055 remains a draft.
+No additional PRs were opened.
 
-The active worktrees under `/tmp/tokenizer-pr-review` are:
+Current worktrees under `/home/pablogsal/github/python/worktrees`:
 
-- `three-pr-strings`: #156484, branch `tokenizer-three-strings`.
-- `three-pr-api`: #156654, branch `tokenizer-three-api`.
-- `three-pr-control`: #157055, branch `tokenizer-three-control`.
-- `three-pr-integration`: combined implementation and conflict resolutions.
+- `tokenizer-api-rebase-sep9`: #156654, branch `gh-153569-api-rebase-sep9`.
+- `tokenizer-control-rebase-sep9`: #157055, branch `gh-153569-control-rebase-sep9`.
+- `tokenizer-baseline-sep9`: main at `2ddc218b2062`.
+- `tokenizer-integration-sep9`: combined rebased implementation.
 
-All three requested migrations are included. Validation tooling remains a
-separate follow-up. PR descriptions contain no validation sections.
+Builds and evidence use the corresponding `build-tokenizer-*-sep9`
+directories. Earlier `/tmp/tokenizer-pr-review` worktrees and test artifacts
+were removed outside this session; their commit objects remain available.
+
+All three requested migrations are included across merged and remaining
+PRs. Validation tooling remains a separate follow-up. PR descriptions contain
+no validation sections.
