@@ -194,13 +194,28 @@ initialize_token(Parser *p, Token *parser_token, struct token *new_token, int to
     const char *text = _PyToken_TextView(p->tok, new_token, &length);
     parser_token->type = token_type == NAME
         ? _get_keyword_or_name_type(p, text, length) : token_type;
-    parser_token->bytes = PyBytes_FromStringAndSize(text, length);
-    if (parser_token->bytes == NULL) {
-        return -1;
-    }
-    if (_PyArena_AddPyObject(p->arena, parser_token->bytes) < 0) {
-        Py_DECREF(parser_token->bytes);
-        return -1;
+    switch (parser_token->type) {
+        case NAME:
+        case NUMBER:
+        case STRING:
+        case TYPE_COMMENT:
+        case FSTRING_START:
+        case FSTRING_MIDDLE:
+        case FSTRING_END:
+        case TSTRING_START:
+        case TSTRING_MIDDLE:
+        case TSTRING_END:
+            parser_token->bytes = PyBytes_FromStringAndSize(text, length);
+            if (parser_token->bytes == NULL) {
+                return -1;
+            }
+            if (_PyArena_AddPyObject(p->arena, parser_token->bytes) < 0) {
+                Py_DECREF(parser_token->bytes);
+                return -1;
+            }
+            break;
+        default:
+            parser_token->bytes = NULL;
     }
 
     parser_token->metadata = NULL;
@@ -214,6 +229,7 @@ initialize_token(Parser *p, Token *parser_token, struct token *new_token, int to
 
     parser_token->level = new_token->level;
     parser_token->is_raw = new_token->is_raw;
+    parser_token->is_barry = token_type == NOTEQUAL && text[0] == '<';
     parser_token->lineno = new_token->start_loc.lineno;
     parser_token->col_offset = new_token->end_loc.lineno == p->starting_lineno
         ? p->starting_col_offset + new_token->start_loc.byte_col
