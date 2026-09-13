@@ -814,7 +814,9 @@ class CParserGenerator(ParserGenerator, GrammarVisitor):
         # The seed algorithm retries the base after its last unsuccessful grow.
         # Require that retry to reuse a result, not run an operand action again.
         for name, rhs in candidates.items():
-            operand = rhs.alts[-1].items[0].item.value
+            operand_item = rhs.alts[-1].items[0].item
+            assert isinstance(operand_item, NameLeaf)
+            operand = operand_item.value
             rule = self.all_rules[operand]
             if operand not in candidates and not self._should_memoize(rule):
                 reject(name, f"requires operand {operand!r} to use (operator_loop), "
@@ -836,7 +838,9 @@ class CParserGenerator(ParserGenerator, GrammarVisitor):
             self.print("}")
             self.print("int _mark = p->mark;")
             self._set_up_token_start_metadata_extraction()
-            operand = rhs.alts[-1].items[0].item.value
+            operand_item = rhs.alts[-1].items[0].item
+            assert isinstance(operand_item, NameLeaf)
+            operand = operand_item.value
             self.print(f"_res = {operand}_rule(p);")
             self._check_for_errors()
             self.print("if (_res == NULL) {")
@@ -856,6 +860,7 @@ class CParserGenerator(ParserGenerator, GrammarVisitor):
                 with self.indent():
                     for alt in rhs.alts[:-1]:
                         left, operator, right = alt.items
+                        assert isinstance(operator.item, StringLeaf)
                         token = self.exact_tokens[ast.literal_eval(operator.item.value)]
                         self.print(f"case {token}: {{")
                         with self.indent():
