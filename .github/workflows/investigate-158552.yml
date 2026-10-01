@@ -9,6 +9,10 @@ on:
         description: Open a tmate session on the first runner after collecting results
         type: boolean
         default: true
+      ssh_only:
+        description: Open one runner with the rc1 sources, skipping builds and measurements
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [1, 2]
+        runner: ${{ fromJSON(inputs.ssh_only && '[1]' || '[1, 2]') }}
     defaults:
       run:
         shell: pwsh
@@ -60,18 +64,21 @@ jobs:
           "Image: $env:ImageOS $env:ImageVersion" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Build unmodified rc1
+        if: ${{ !inputs.ssh_only }}
         working-directory: source
         run: |
           & .\PCbuild\build.bat -e -p x64 -c Release --no-ssl --no-tkinter
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Measure unmodified rc1
+        if: ${{ !inputs.ssh_only }}
         continue-on-error: true
         run: |
           & source/PCbuild/amd64/python.exe .github/diagnostics/158552/run_suite.py baseline
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Apply the existing first-frame parsing fix
+        if: ${{ !inputs.ssh_only }}
         working-directory: source
         run: |
           git apply --check ../.github/diagnostics/158552/parser-fix.patch
@@ -81,12 +88,14 @@ jobs:
           git diff --stat
 
       - name: Rebuild with parser fix
+        if: ${{ !inputs.ssh_only }}
         working-directory: source
         run: |
           & .\PCbuild\build.bat -e -p x64 -c Release --no-ssl --no-tkinter
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Measure with parser fix
+        if: ${{ !inputs.ssh_only }}
         continue-on-error: true
         run: |
           & source/PCbuild/amd64/python.exe .github/diagnostics/158552/run_suite.py parser-fix
@@ -105,12 +114,15 @@ jobs:
         id: tmate
         if: ${{ !cancelled() && matrix.runner == 1 && (github.event_name == 'push' || inputs.ssh) }}
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3
-        timeout-minutes: 15
+        timeout-minutes: 3
         continue-on-error: true
         with:
           limit-access-to-actor: true
           detached: true
-          connect-timeout-seconds: 600
+          connect-timeout-seconds: 900
+          tmate-server-host: gha.warp.build
+          tmate-server-rsa-fingerprint: SHA256:xx8GG3NVyIlZRFvm+a0N8U3NVXCIZXMsOnes0ERRz1k
+          tmate-server-ed25519-fingerprint: SHA256:+aWjAPAeKuvuZSPG92Q8yaEkd5eb2T+uF9Jp+8Sb/+A
 
       - name: Save SSH connection details
         if: ${{ !cancelled() && steps.tmate.outcome == 'success' }}
