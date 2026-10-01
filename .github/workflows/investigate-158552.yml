@@ -1,0 +1,142 @@
+name: Investigate Windows sampling 158552
+
+on:
+  push:
+    branches: [investigate/158552-windows]
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: Open a tmate session on the first runner after collecting results
+        type: boolean
+        default: true
+      ssh_only:
+        description: Open one runner with the rc1 sources, skipping builds and measurements
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: investigate-158552-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  investigate:
+    if: github.repository == 'pablogsal/cpython' && github.actor == 'pablogsal'
+    name: Windows sampling (${{ matrix.runner }})
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(inputs.ssh_only && '[1]' || '[1, 2]') }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check out Python 3.15.0rc1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: python/cpython
+          ref: 37e98da7c19a9e5892ee756d6dee08225422cd49
+          path: source
+          persist-credentials: false
+
+      - name: Record runner hardware and image
+        run: |
+          New-Item -ItemType Directory -Force results | Out-Null
+          $info = @{
+            processors = @(Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors)
+            os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
+            image = $env:ImageOS
+            image_version = $env:ImageVersion
+            runner = $env:RUNNER_NAME
+            source = '37e98da7c19a9e5892ee756d6dee08225422cd49'
+          }
+          $info | ConvertTo-Json -Depth 5 | Tee-Object results/hardware.json
+          $cpu = ($info.processors | ForEach-Object Name) -join ', '
+          "CPU: $cpu" >> $env:GITHUB_STEP_SUMMARY
+          "Image: $env:ImageOS $env:ImageVersion" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Build unmodified rc1
+        if: ${{ !inputs.ssh_only }}
+        working-directory: source
+        run: |
+          & .\PCbuild\build.bat -e -p x64 -c Release --no-ssl --no-tkinter
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Measure unmodified rc1
+        if: ${{ !inputs.ssh_only }}
+        continue-on-error: true
+        run: |
+          & source/PCbuild/amd64/python.exe .github/diagnostics/158552/run_suite.py baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Apply the existing first-frame parsing fix
+        if: ${{ !inputs.ssh_only }}
+        working-directory: source
+        run: |
+          git apply --check ../.github/diagnostics/158552/parser-fix.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply ../.github/diagnostics/158552/parser-fix.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --stat
+
+      - name: Rebuild with parser fix
+        if: ${{ !inputs.ssh_only }}
+        working-directory: source
+        run: |
+          & .\PCbuild\build.bat -e -p x64 -c Release --no-ssl --no-tkinter
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Measure with parser fix
+        if: ${{ !inputs.ssh_only }}
+        continue-on-error: true
+        run: |
+          & source/PCbuild/amd64/python.exe .github/diagnostics/158552/run_suite.py parser-fix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload diagnostic results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-158552-${{ matrix.runner }}
+          path: results/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Open SSH session for the investigation
+        id: tmate
+        if: ${{ !cancelled() && matrix.runner == 1 && (github.event_name == 'push' || inputs.ssh) }}
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          limit-access-to-actor: true
+          detached: true
+          connect-timeout-seconds: 900
+          tmate-server-host: gha.warp.build
+          tmate-server-rsa-fingerprint: SHA256:xx8GG3NVyIlZRFvm+a0N8U3NVXCIZXMsOnes0ERRz1k
+          tmate-server-ed25519-fingerprint: SHA256:+aWjAPAeKuvuZSPG92Q8yaEkd5eb2T+uF9Jp+8Sb/+A
+
+      - name: Save SSH connection details
+        if: ${{ !cancelled() && steps.tmate.outcome == 'success' }}
+        env:
+          SSH_COMMAND: ${{ steps.tmate.outputs.ssh-command }}
+        run: |
+          $env:SSH_COMMAND | Set-Content results/ssh.txt
+          "SSH (requires your GitHub account's private key):" >> $env:GITHUB_STEP_SUMMARY
+          $env:SSH_COMMAND >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload SSH connection details
+        if: ${{ !cancelled() && steps.tmate.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-158552-ssh
+          path: results/ssh.txt
+          retention-days: 1
