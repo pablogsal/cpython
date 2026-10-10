@@ -1,0 +1,10 @@
+sphinx==8.2.3
+pylint==4.1.2
+parso==0.8.7
+sqlglot==30.22.0
+beautifulsoup4==4.15.0
+pygments==2.21.0
+networkx==3.7
+black==26.10.1
+sympy==1.14.0
+mypy==2.4.0
