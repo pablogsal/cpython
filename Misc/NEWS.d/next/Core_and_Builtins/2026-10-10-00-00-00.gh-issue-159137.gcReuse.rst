@@ -1,0 +1,2 @@
+Avoid a second reachability analysis in the garbage collector when no weakref
+callback, finalizer, or collectable-object debug output ran.

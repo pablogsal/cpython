@@ -805,7 +805,8 @@ move_legacy_finalizer_reachable(PyGC_Head *finalizers)
  * Python-level code.  See bpo-38006 as an example bug.
  */
 static int
-handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
+handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old,
+                        bool *needs_resurrection_check)
 {
     PyGC_Head *gc;
     PyGC_Head wrcb_to_call;     /* weakrefs with callbacks to call */
@@ -917,6 +918,7 @@ handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
         callback = wr->wr_callback;
         _PyObject_ASSERT(op, callback != NULL);
 
+        *needs_resurrection_check = true;
         /* copy-paste of weakrefobject.c's handle_callback() */
         temp = PyObject_CallOneArg(callback, (PyObject *)wr);
         if (temp == NULL) {
@@ -1043,7 +1045,8 @@ handle_legacy_finalizers(PyThreadState *tstate,
  * list, due to refcounts falling to 0.
  */
 static void
-finalize_garbage(PyThreadState *tstate, PyGC_Head *collectable)
+finalize_garbage(PyThreadState *tstate, PyGC_Head *collectable,
+                 bool *needs_resurrection_check)
 {
     destructor finalize;
     PyGC_Head seen;
@@ -1065,6 +1068,7 @@ finalize_garbage(PyThreadState *tstate, PyGC_Head *collectable)
         if (!_PyGC_FINALIZED(op) &&
             (finalize = Py_TYPE(op)->tp_finalize) != NULL)
         {
+            *needs_resurrection_check = true;
             _PyGC_SET_FINALIZED(op);
             Py_INCREF(op);
             finalize(op);
@@ -1550,26 +1554,38 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     validate_list(&finalizers, collecting_clear_unreachable_clear);
     validate_list(&unreachable, collecting_set_unreachable_clear);
 
+    bool needs_resurrection_check = false;
+
     /* Print debugging information. */
     if (gcstate->debug & _PyGC_DEBUG_COLLECTABLE) {
+        /* sys.stderr.write() can resurrect objects. */
+        needs_resurrection_check = true;
         for (gc = GC_NEXT(&unreachable); gc != &unreachable; gc = GC_NEXT(gc)) {
             debug_cycle("collectable", FROM_GC(gc));
         }
     }
 
     /* Clear weakrefs and invoke callbacks as necessary. */
-    stats.collected += handle_weakref_callbacks(&unreachable, old);
+    stats.collected += handle_weakref_callbacks(&unreachable, old,
+                                               &needs_resurrection_check);
     validate_list(old, collecting_clear_unreachable_clear);
     validate_list(&unreachable, collecting_set_unreachable_clear);
 
     /* Call tp_finalize on objects which have one. */
-    finalize_garbage(tstate, &unreachable);
+    finalize_garbage(tstate, &unreachable, &needs_resurrection_check);
 
     /* Handle any objects that may have resurrected after the call
      * to 'finalize_garbage' and continue the collection with the
      * objects that are still unreachable */
     PyGC_Head final_unreachable;
-    handle_resurrected_objects(&unreachable, &final_unreachable, old);
+    if (needs_resurrection_check) {
+        handle_resurrected_objects(&unreachable, &final_unreachable, old);
+    }
+    else {
+        /* No callbacks ran, so the original unreachable set is still valid. */
+        gc_list_init(&final_unreachable);
+        gc_list_merge(&unreachable, &final_unreachable);
+    }
 
     /* Clear weakrefs to objects in the unreachable set.  No Python-level
      * code must be allowed to access those unreachable objects.  During
