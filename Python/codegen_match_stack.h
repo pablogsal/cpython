@@ -51,6 +51,30 @@ stack_live_after(match_dag *d, dag_node node, int value)
            (node.no >= 0 && d->values_live[(size_t)node.no * d->nvalues + value]);
 }
 
+/* Failure edges retain the current value order. Success edges call this
+ * after dead-value cleanup, which can change that order through SWAP. */
+static int
+stack_record_entry(match_dag *d, dag_stack *stack, int target)
+{
+    dag_stack *entry = &d->blocks[target].entry;
+    if (entry->values != NULL) {
+        return SUCCESS;
+    }
+    entry->values = PyMem_Malloc(stack->size * sizeof(int));
+    if (entry->values == NULL) {
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    unsigned char *live = d->values_live + (size_t)target * d->nvalues;
+    for (int i = 0; i < stack->size; i++) {
+        int value = stack->values[i];
+        if (value >= 0 && live[value]) {
+            entry->values[entry->size++] = value;
+        }
+    }
+    return SUCCESS;
+}
+
 static int
 stack_edge(match_dag *d, dag_stack *stack, int target, location loc)
 {
@@ -64,21 +88,8 @@ stack_edge(match_dag *d, dag_stack *stack, int target, location loc)
             stack->size--;
         }
     }
+    RETURN_IF_ERROR(stack_record_entry(d, stack, target));
     dag_stack *entry = &d->blocks[target].entry;
-    if (entry->values == NULL) {
-        entry->values = PyMem_Malloc(stack->size * sizeof(int));
-        if (entry->values == NULL) {
-            PyErr_NoMemory();
-            return ERROR;
-        }
-        unsigned char *needed = d->values_live + (size_t)target * d->nvalues;
-        for (int i = 0; i < stack->size; i++) {
-            int value = stack->values[i];
-            if (value >= 0 && needed[value]) {
-                entry->values[entry->size++] = value;
-            }
-        }
-    }
     assert(entry->size == stack->size);
     for (int dest = 0; dest < stack->size; dest++) {
         int value = entry->values[dest];
@@ -115,22 +126,7 @@ stack_queue_failure(match_dag *d, dag_stack *stack, int target,
         .label = label, .loc = loc, .size = stack->size, .pop_none = pop_none};
     memcpy(failure->values, stack->values, stack->size * sizeof(int));
     d->blocks[target].failures = failure;
-    dag_stack *entry = &d->blocks[target].entry;
-    if (entry->values == NULL) {
-        entry->values = PyMem_Malloc(stack->size * sizeof(int));
-        if (entry->values == NULL) {
-            PyErr_NoMemory();
-            return ERROR;
-        }
-        unsigned char *needed = d->values_live + (size_t)target * d->nvalues;
-        for (int i = 0; i < stack->size; i++) {
-            int value = stack->values[i];
-            if (value >= 0 && needed[value]) {
-                entry->values[entry->size++] = value;
-            }
-        }
-    }
-    return SUCCESS;
+    return stack_record_entry(d, stack, target);
 }
 
 static int
