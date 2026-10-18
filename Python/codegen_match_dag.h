@@ -422,6 +422,53 @@ dag_pattern(match_dag *d, pattern_ty p, int value, int yes, int no)
     return result;
 }
 
+/* Length comparisons use integer bounds, so their implications do not depend
+ * on the pattern that introduced them. Record these while the tested fact is
+ * still available, before the continuation drops facts it no longer needs. */
+static void
+dag_record_fact(match_dag *d, unsigned char *facts, int tested, int outcome)
+{
+    facts[tested] = outcome;
+    dag_operation op = DAG_OP(d, tested);
+    Py_ssize_t lower = 0, upper = PY_SSIZE_T_MAX;
+    if (op.kind == DAG_LENGTH_EQ && outcome == 1) {
+        lower = upper = op.arg;
+    }
+    else if (op.kind == DAG_LENGTH_GE) {
+        if (outcome == 1) {
+            lower = op.arg;
+        }
+        else {
+            upper = (Py_ssize_t)op.arg - 1;
+        }
+    }
+    else {
+        return;
+    }
+    for (int i = 0; i < d->nops; i++) {
+        dag_operation other = DAG_OP(d, i);
+        if (other.a != op.a) {
+            continue;
+        }
+        if (other.kind == DAG_LENGTH_EQ) {
+            if (lower == upper && lower == other.arg) {
+                facts[i] = 1;
+            }
+            else if (other.arg < lower || other.arg > upper) {
+                facts[i] = 2;
+            }
+        }
+        else if (other.kind == DAG_LENGTH_GE) {
+            if (lower >= other.arg) {
+                facts[i] = 1;
+            }
+            else if (upper < other.arg) {
+                facts[i] = 2;
+            }
+        }
+    }
+}
+
 /* The source is acyclic and each node is created after its successors. Facts
  * irrelevant to the remaining tests are removed before memoizing a state. */
 static int
@@ -471,13 +518,19 @@ dag_specialize(match_dag *d, int source, const unsigned char *context)
                     memcpy(after, facts, d->nops);
                 }
                 if (op.reusable) {
-                    after[node.op] = 1;
+                    dag_record_fact(d, after, node.op, 1);
                 }
                 int yes = dag_specialize(d, node.yes, after);
                 int no = -1;
                 if (yes >= 0 && node.no >= 0) {
+                    if (op.kind == DAG_GUARD) {
+                        memset(after, 0, d->nops);
+                    }
+                    else {
+                        memcpy(after, facts, d->nops);
+                    }
                     if (op.reusable) {
-                        after[node.op] = 2;
+                        dag_record_fact(d, after, node.op, 2);
                     }
                     no = dag_specialize(d, node.no, after);
                 }
