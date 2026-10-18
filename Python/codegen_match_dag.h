@@ -5,26 +5,49 @@
  * extracted values and pending captures until their last use.
  */
 
+#include "pycore_setobject.h"    // _PySet_NextEntry(), _PySet_AddTakeRef()
+
 enum dag_kind {
-    DAG_ENTER, DAG_BIND, DAG_COMMIT, DAG_GUARD, DAG_ACCEPT, DAG_END,
-    DAG_LOAD, DAG_ATTRIBUTE, DAG_SEQUENCE, DAG_MAPPING, DAG_LENGTH, DAG_LENGTH_EQ,
-    DAG_LENGTH_GE, DAG_EQUAL, DAG_SINGLETON, DAG_UNPACK, DAG_INDEX,
-    DAG_TUPLE, DAG_KEYS, DAG_CLASS, DAG_REST
+    DAG_ENTER,      /* Keep the source location of a case entry. */
+    DAG_BIND,       /* Copy a value to a pending capture. */
+    DAG_COMMIT,     /* Store pending captures in Python names. */
+    DAG_GUARD,      /* Evaluate a guard and clear cached facts and values. */
+    DAG_ACCEPT,     /* Jump to the selected case body. */
+    DAG_END,        /* No case matched. */
+    /* Kinds from DAG_LOAD onward can be shared unless marked fresh. */
+    DAG_LOAD,      /* Evaluate a pattern expression. */
+    DAG_ATTRIBUTE, /* Read an attribute from a pattern expression. */
+    DAG_SEQUENCE, DAG_MAPPING, /* Check the subject protocol. */
+    DAG_LENGTH,    /* Read a length for subsequent integer comparisons. */
+    DAG_LENGTH_EQ, DAG_LENGTH_GE, /* Exact and minimum lengths. */
+    DAG_EQUAL, DAG_SINGLETON,  /* Equality and identity comparisons. */
+    DAG_UNPACK,    /* Unpack a sequence or an extraction tuple. */
+    DAG_INDEX,     /* Read an item before or after a wildcard star. */
+    DAG_TUPLE,     /* Build the tuple of mapping keys. */
+    DAG_KEYS, DAG_CLASS, /* Extract mapping values or class attributes. */
+    DAG_REST       /* Build a fresh mapping for a rest capture. */
 };
 
 typedef struct {
-    int kind, a, b, arg, output, count, reusable;
-    PyObject *data;
-    expr_ty expr;
+    enum dag_kind kind;
+    int a, b;           /* Input value IDs, or -1 for absent inputs. */
+    int arg;            /* Kind-specific index, count, or comparison bound. */
+    int output, count;  /* Consecutive output IDs; BIND uses a capture ID. */
+    int first;          /* Smallest original node that can use this fact. */
+    bool reusable;      /* Reuse is limited to paths with no executed guard. */
+    PyObject *data;     /* Owned constant, names, or tuple of producer IDs. */
+    expr_ty expr;       /* Borrowed AST for LOAD. */
 } dag_operation;
 
 typedef struct {
-    int op, yes, no;
+    int op;             /* Index in operations. */
+    int yes, no;        /* Successor node IDs, or -1; successors come first. */
     location loc;
+    bool uses_facts;    /* A reusable operation is reachable before a guard. */
 } dag_node;
 
 typedef struct {
-    int *values;
+    int *values;        /* Value IDs; -1 marks a prepared stack operand. */
     int size;
 } dag_stack;
 
@@ -32,15 +55,16 @@ typedef struct dag_failure {
     struct dag_failure *next;
     jump_target_label label;
     location loc;
-    int size, pop_none;
+    int size, pop_none;  /* Snapshot excludes the None result on failure. */
     int values[];
 } dag_failure;
 
 typedef struct {
-    dag_stack entry;
+    dag_stack entry;     /* Layout fixed by the first incoming edge. */
+    dag_stack live;      /* Sorted IDs of values needed at block entry. */
     jump_target_label label;
     dag_failure *failures;
-    int pending;
+    int pending;        /* Incoming graph edges not yet processed. */
     bool reachable, single_predecessor, inlined;
 } dag_block;
 
@@ -51,7 +75,7 @@ typedef struct {
     PyObject *op_ids, *node_ids, *state_ids, *captures;
     PyObject **stores;
     PyObject **constants;
-    unsigned char *facts_live, *values_live;
+    int *length_first;   /* Last possible use of a bound on each value. */
     dag_block *blocks;
     jump_target_label *bodies;
     jump_target_label end;
@@ -63,19 +87,13 @@ typedef struct {
 static int
 dag_capture(match_dag *d, PyObject *name)
 {
-    PyObject *found = PyDict_GetItemWithError(d->captures, name);
-    if (found) {
-        return (int)PyLong_AsLong(found);
-    }
-    RETURN_IF_ERROR(PyErr_Occurred() ? -1 : 0);
-    int id = d->nvalues++;
-    PyObject *number = PyLong_FromLong(id);
-    if (number == NULL) {
-        return ERROR;
-    }
-    int err = PyDict_SetItem(d->captures, name, number);
-    Py_DECREF(number);
-    return err < 0 ? ERROR : id;
+    /* Register all captures before operations allocate value IDs.
+     * Capture indices start at zero; value zero is the match subject. */
+    int index = (int)_PyCompile_DictAddObj(d->captures, name);
+    RETURN_IF_ERROR(index);
+    int value = index + 1;
+    d->nvalues = Py_MAX(d->nvalues, value + 1);
+    return value;
 }
 
 /* Pattern expressions are names, attribute chains, or folded constants. Use
@@ -98,7 +116,7 @@ dag_expression_key(expr_ty expr)
 }
 
 static int
-dag_operation_new(match_dag *d, int kind, int a, int b, int arg,
+dag_operation_new(match_dag *d, enum dag_kind kind, int a, int b, int arg,
                   PyObject *data, expr_ty expr, int count, int fresh)
 {
     if (a < -1 || b < -1 || PyErr_Occurred()) {
@@ -142,8 +160,9 @@ dag_node_new(match_dag *d, int op, int yes, int no, location loc)
     if (op < 0 || PyErr_Occurred()) {
         return ERROR;
     }
-    PyObject *key = Py_BuildValue("(iiiiiii)", op, yes, no, loc.lineno,
-                                 loc.end_lineno, loc.col_offset, loc.end_col_offset);
+    const int fields[] = {op, yes, no, loc.lineno, loc.end_lineno,
+                          loc.col_offset, loc.end_col_offset};
+    PyObject *key = PyBytes_FromStringAndSize((const char *)fields, sizeof(fields));
     if (key == NULL) {
         return ERROR;
     }
@@ -153,13 +172,18 @@ dag_node_new(match_dag *d, int op, int yes, int no, location loc)
         return id;
     }
     RETURN_IF_ERROR(_Py_CArray_EnsureCapacity(&d->nodes, id));
-    DAG_NODE(d, id) = (dag_node){op, yes, no, loc};
+    dag_operation *operation = &DAG_OP(d, op);
+    bool uses_facts = operation->kind != DAG_GUARD &&
+        (operation->reusable ||
+         (yes >= 0 && DAG_NODE(d, yes).uses_facts) ||
+         (no >= 0 && DAG_NODE(d, no).uses_facts));
+    DAG_NODE(d, id) = (dag_node){op, yes, no, loc, uses_facts};
     d->nnodes++;
     return id;
 }
 
 static int
-dag_emit(match_dag *d, int kind, int a, int b, int arg, PyObject *data,
+dag_emit(match_dag *d, enum dag_kind kind, int a, int b, int arg, PyObject *data,
          expr_ty expr, int count, int fresh, int yes, int no, location loc)
 {
     int op = dag_operation_new(d, kind, a, b, arg, data, expr, count, fresh);
@@ -311,23 +335,7 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
                 }
                 PyTuple_SET_ITEM(loads, i, number);
             }
-            PyObject *inputs = PyTuple_New(n);
-            if (inputs == NULL) {
-                Py_DECREF(loads);
-                return ERROR;
-            }
-            for (int i = 0; i < n; i++) {
-                int op = (int)PyLong_AsLong(PyTuple_GET_ITEM(loads, i));
-                PyObject *number = PyLong_FromLong(DAG_OP(d, op).output);
-                if (number == NULL) {
-                    Py_DECREF(inputs);
-                    Py_DECREF(loads);
-                    return ERROR;
-                }
-                PyTuple_SET_ITEM(inputs, i, number);
-            }
-            int tuple = dag_operation_new(d, DAG_TUPLE, -1, -1, n, inputs, NULL, 1, 0);
-            Py_DECREF(inputs);
+            int tuple = dag_operation_new(d, DAG_TUPLE, -1, -1, n, loads, NULL, 1, 0);
             if (tuple < 0) {
                 Py_DECREF(loads);
                 return ERROR;
@@ -421,14 +429,21 @@ dag_pattern(match_dag *d, pattern_ty p, int value, int yes, int no)
     return result;
 }
 
-/* Length comparisons use integer bounds, so their implications do not depend
- * on the pattern that introduced them. Record these while the tested fact is
- * still available, before the continuation drops facts it no longer needs. */
-static void
-dag_record_fact(match_dag *d, unsigned char *facts, int tested, int outcome)
+/* A positive fact encodes a successful operation ID plus one; a negative
+ * fact encodes failure. Length implications are queried when needed, rather
+ * than stored as separate facts for every possible comparison. */
+static int
+dag_known(match_dag *d, int fact, int tested)
 {
-    facts[tested] = outcome;
-    dag_operation op = DAG_OP(d, tested);
+    int id = abs(fact) - 1, outcome = fact > 0 ? 1 : 2;
+    if (id == tested) {
+        return outcome;
+    }
+    dag_operation op = DAG_OP(d, id), target = DAG_OP(d, tested);
+    if (op.a != target.a ||
+        (target.kind != DAG_LENGTH_EQ && target.kind != DAG_LENGTH_GE)) {
+        return 0;
+    }
     Py_ssize_t lower = 0, upper = PY_SSIZE_T_MAX;
     if (op.kind == DAG_LENGTH_EQ && outcome == 1) {
         lower = upper = op.arg;
@@ -442,55 +457,55 @@ dag_record_fact(match_dag *d, unsigned char *facts, int tested, int outcome)
         }
     }
     else {
-        return;
+        return 0;
     }
-    for (int i = 0; i < d->nops; i++) {
-        dag_operation other = DAG_OP(d, i);
-        if (other.a != op.a) {
-            continue;
-        }
-        if (other.kind == DAG_LENGTH_EQ) {
-            if (lower == upper && lower == other.arg) {
-                facts[i] = 1;
-            }
-            else if (other.arg < lower || other.arg > upper) {
-                facts[i] = 2;
-            }
-        }
-        else if (other.kind == DAG_LENGTH_GE) {
-            if (lower >= other.arg) {
-                facts[i] = 1;
-            }
-            else if (upper < other.arg) {
-                facts[i] = 2;
-            }
-        }
+    if (target.kind == DAG_LENGTH_EQ) {
+        return lower == upper && lower == target.arg ? 1 :
+               target.arg < lower || target.arg > upper ? 2 : 0;
     }
+    return lower >= target.arg ? 1 : upper < target.arg ? 2 : 0;
 }
 
-/* The source is acyclic and each node is created after its successors. Facts
- * irrelevant to the remaining tests are removed before memoizing a state. */
+/* Successors precede their source. A fact whose last possible use is behind
+ * us cannot affect any continuation. Frozen sets make memo keys independent
+ * of the order in which facts were learned. */
 static int
-dag_specialize(match_dag *d, int source, const unsigned char *context)
+dag_specialize(match_dag *d, int source, PyObject *context)
 {
     dag_node node = DAG_NODE(d, source);
-    if (node.yes < 0 || d->states >= 4 * d->original) {
+    if (node.yes < 0 || d->states >= 4 * d->original ||
+        _Py_ReachedRecursionLimitWithMargin(_PyThreadState_GET(), 1)) {
         return source;
     }
-    if (Py_EnterRecursiveCall(" during match DAG specialization")) {
+    int result = ERROR, known = 0;
+    PyObject *key = NULL, *facts = PyFrozenSet_New(NULL);
+    if (facts == NULL) {
         return ERROR;
     }
-    int result = ERROR;
-    unsigned char *after = NULL;
-    PyObject *key = PyBytes_FromStringAndSize(NULL, sizeof(int) + d->nops);
+    dag_operation op = DAG_OP(d, node.op);
+    Py_ssize_t pos = 0;
+    PyObject *item;
+    Py_hash_t hash;
+    while (node.uses_facts && _PySet_NextEntry(context, &pos, &item, &hash)) {
+        int fact = (int)PyLong_AsLong(item);
+        dag_operation previous = DAG_OP(d, abs(fact) - 1);
+        int first = previous.first;
+        if (previous.kind == DAG_LENGTH_GE ||
+            (previous.kind == DAG_LENGTH_EQ && fact > 0)) {
+            first = d->length_first[previous.a];
+        }
+        if (first <= source) {
+            if (PySet_Add(facts, item) < 0) {
+                goto done;
+            }
+            if (op.reusable && !known) {
+                known = dag_known(d, fact, node.op);
+            }
+        }
+    }
+    key = Py_BuildValue("(iO)", source, facts);
     if (key == NULL) {
         goto done;
-    }
-    char *bytes = PyBytes_AS_STRING(key);
-    memcpy(bytes, &source, sizeof(int));
-    unsigned char *facts = (unsigned char *)bytes + sizeof(int);
-    for (int i = 0; i < d->nops; i++) {
-        facts[i] = d->facts_live[(size_t)source * d->nops + i] ? context[i] : 0;
     }
     PyObject *found = PyDict_GetItemWithError(d->state_ids, key);
     if (found) {
@@ -501,38 +516,36 @@ dag_specialize(match_dag *d, int source, const unsigned char *context)
         goto done;
     }
     d->states++;
-    dag_operation op = DAG_OP(d, node.op);
-    int known = op.reusable ? facts[node.op] : 0;
     if (known) {
         d->removed++;
         result = dag_specialize(d, known == 1 ? node.yes : node.no, facts);
     }
     else {
-        after = PyMem_Malloc(d->nops);
-        if (after == NULL) {
-            PyErr_NoMemory();
-            goto done;
-        }
         int targets[2] = {node.yes, node.no};
         for (int edge = 0; edge < 2; edge++) {
             if (targets[edge] < 0) {
                 continue;
             }
-            if (op.kind == DAG_GUARD) {
-                memset(after, 0, d->nops);
-            }
-            else {
-                memcpy(after, facts, d->nops);
+            PyObject *after = op.reusable ? PySet_New(facts) : Py_NewRef(facts);
+            if (after == NULL) {
+                goto done;
             }
             if (op.reusable) {
-                dag_record_fact(d, after, node.op, edge + 1);
+                int value = edge ? -node.op - 1 : node.op + 1;
+                PyObject *fact = PyLong_FromLong(value);
+                if (fact == NULL || _PySet_AddTakeRef((PySetObject *)after, fact) < 0) {
+                    Py_DECREF(after);
+                    goto done;
+                }
             }
             targets[edge] = dag_specialize(d, targets[edge], after);
+            Py_DECREF(after);
             if (targets[edge] < 0) {
                 goto done;
             }
         }
-        result = dag_node_new(d, node.op, targets[0], targets[1], node.loc);
+        result = targets[0] == node.yes && targets[1] == node.no ? source :
+                 dag_node_new(d, node.op, targets[0], targets[1], node.loc);
     }
     if (result >= 0) {
         PyObject *number = PyLong_FromLong(result);
@@ -542,34 +555,59 @@ dag_specialize(match_dag *d, int source, const unsigned char *context)
         Py_XDECREF(number);
     }
 done:
-    PyMem_Free(after);
+    Py_DECREF(facts);
     Py_XDECREF(key);
-    Py_LeaveRecursiveCall();
     return result;
 }
 
-static void
-dag_inputs(match_dag *d, dag_operation *op, unsigned char *live)
+static int
+dag_tuple_value(match_dag *d, dag_operation *op, int index)
 {
-    if (op->a >= 0 && !d->constants[op->a]) {
-        live[op->a] = 1;
+    int producer = (int)PyLong_AsLong(PyTuple_GET_ITEM(op->data, index));
+    return DAG_OP(d, producer).output;
+}
+
+static int
+dag_compare_values(const void *left, const void *right)
+{
+    return *(const int *)left - *(const int *)right;
+}
+
+static int
+dag_value_live(match_dag *d, int target, int value)
+{
+    if (target < 0) {
+        return 0;
     }
-    if (op->b >= 0 && !d->constants[op->b]) {
-        live[op->b] = 1;
+    dag_stack *live = &d->blocks[target].live;
+    return live->size && bsearch(&value, live->values, live->size,
+                                sizeof(int), dag_compare_values) != NULL;
+}
+
+static void
+dag_live_add(match_dag *d, dag_stack *live, unsigned char *seen, int value)
+{
+    if (value >= 0 && !d->constants[value] && !seen[value]) {
+        seen[value] = 1;
+        live->values[live->size++] = value;
     }
+}
+
+static void
+dag_inputs(match_dag *d, dag_operation *op, dag_stack *live, unsigned char *seen)
+{
+    dag_live_add(d, live, seen, op->a);
+    dag_live_add(d, live, seen, op->b);
     if (op->kind == DAG_TUPLE) {
         for (int i = 0; i < PyTuple_GET_SIZE(op->data); i++) {
-            int value = (int)PyLong_AsLong(PyTuple_GET_ITEM(op->data, i));
-            if (!d->constants[value]) {
-                live[value] = 1;
-            }
+            dag_live_add(d, live, seen, dag_tuple_value(d, op, i));
         }
     }
     if (op->kind == DAG_COMMIT) {
         PyObject *stores = d->stores[op->arg];
         for (int i = 0; i < PyList_GET_SIZE(stores); i++) {
             PyObject *id = PyDict_GetItem(d->captures, PyList_GET_ITEM(stores, i));
-            live[PyLong_AsLong(id)] = 1;
+            dag_live_add(d, live, seen, (int)PyLong_AsLong(id) + 1);
         }
     }
 }
@@ -592,7 +630,7 @@ dag_analyze_values(match_dag *d, int root)
         else if (op->kind == DAG_TUPLE) {
             int constant = 1;
             for (int j = 0; j < op->arg; j++) {
-                int value = (int)PyLong_AsLong(PyTuple_GET_ITEM(op->data, j));
+                int value = dag_tuple_value(d, op, j);
                 constant &= d->constants[value] != NULL;
             }
             if (constant) {
@@ -601,7 +639,7 @@ dag_analyze_values(match_dag *d, int root)
                     return ERROR;
                 }
                 for (int j = 0; j < op->arg; j++) {
-                    int value = (int)PyLong_AsLong(PyTuple_GET_ITEM(op->data, j));
+                    int value = dag_tuple_value(d, op, j);
                     PyTuple_SET_ITEM(tuple, j, Py_NewRef(d->constants[value]));
                 }
                 d->constants[op->output] = tuple;
@@ -609,10 +647,12 @@ dag_analyze_values(match_dag *d, int root)
         }
     }
     d->blocks = PyMem_Calloc(d->nnodes, sizeof(dag_block));
-    d->values_live = PyMem_Calloc(d->nnodes, nv);
-    if (!d->blocks || !d->values_live) {
+    unsigned char *seen = PyMem_Calloc(nv, 1);
+    dag_stack work = {.values = PyMem_Malloc(nv * sizeof(int))};
+    int result = ERROR;
+    if (!d->blocks || !seen || !work.values) {
         PyErr_NoMemory();
-        return ERROR;
+        goto done;
     }
     d->blocks[root].reachable = true;
     for (int i = root; i >= 0; i--) {
@@ -636,24 +676,42 @@ dag_analyze_values(match_dag *d, int root)
         }
         dag_node node = DAG_NODE(d, i);
         dag_operation *op = &DAG_OP(d, node.op);
-        unsigned char *live = d->values_live + i * nv;
-        if (node.yes >= 0) {
-            memcpy(live, d->values_live + node.yes * nv, nv);
-        }
-        if (node.no >= 0) {
-            for (size_t v = 0; v < nv; v++) {
-                live[v] |= d->values_live[node.no * nv + v];
+        work.size = 0;
+        int targets[2] = {node.yes, node.no};
+        for (int edge = 0; edge < 2; edge++) {
+            if (targets[edge] < 0) {
+                continue;
+            }
+            dag_stack *next = &d->blocks[targets[edge]].live;
+            for (int j = 0; j < next->size; j++) {
+                int value = next->values[j];
+                if ((op->kind == DAG_GUARD && value != 0) ||
+                    (value >= op->output && value - op->output < op->count)) {
+                    continue;
+                }
+                dag_live_add(d, &work, seen, value);
             }
         }
-        if (op->kind == DAG_GUARD) {
-            memset(live + 1, 0, nv - 1);
+        dag_inputs(d, op, &work, seen);
+        qsort(work.values, work.size, sizeof(int), dag_compare_values);
+        dag_stack *live = &d->blocks[i].live;
+        live->values = PyMem_Malloc(work.size * sizeof(int));
+        if (live->values == NULL) {
+            PyErr_NoMemory();
+            goto done;
         }
-        else {
-            memset(live + op->output, 0, op->count);
+        live->size = work.size;
+        memcpy(live->values, work.values, work.size * sizeof(int));
+        /* Clear only the IDs used by this block, not the whole value space. */
+        for (int j = 0; j < work.size; j++) {
+            seen[work.values[j]] = 0;
         }
-        dag_inputs(d, op, live);
     }
-    return SUCCESS;
+    result = SUCCESS;
+done:
+    PyMem_Free(seen);
+    PyMem_Free(work.values);
+    return result;
 }
 
 static location
@@ -732,29 +790,39 @@ static int
 dag_optimize(match_dag *d, int root)
 {
     d->original = d->nnodes;
-    d->facts_live = PyMem_Calloc(d->original, d->nops);
-    unsigned char *context = PyMem_Calloc(d->nops, 1);
-    if (d->facts_live == NULL || context == NULL) {
-        PyMem_Free(context);
+    d->length_first = PyMem_Malloc(d->nvalues * sizeof(int));
+    if (d->length_first == NULL) {
         PyErr_NoMemory();
         return ERROR;
     }
+    for (int i = 0; i < d->nvalues; i++) {
+        d->length_first[i] = d->original;
+    }
+    for (int i = 0; i < d->nops; i++) {
+        DAG_OP(d, i).first = d->original;
+    }
+    bool shared = false;
     for (int i = 0; i < d->original; i++) {
-        dag_node node = DAG_NODE(d, i);
-        dag_operation op = DAG_OP(d, node.op);
-        unsigned char *live = d->facts_live + (size_t)i * d->nops;
-        if (op.kind != DAG_GUARD) {
-            for (int j = 0; j < d->nops; j++) {
-                live[j] = (node.yes >= 0 && d->facts_live[(size_t)node.yes * d->nops + j]) ||
-                          (node.no >= 0 && d->facts_live[(size_t)node.no * d->nops + j]);
-            }
-        }
-        if (op.reusable) {
-            live[node.op] = 1;
+        dag_operation *op = &DAG_OP(d, DAG_NODE(d, i).op);
+        shared |= op->reusable && op->first < i;
+        op->first = Py_MIN(op->first, i);
+    }
+    for (int i = 0; i < d->nops; i++) {
+        dag_operation *op = &DAG_OP(d, i);
+        if (op->kind == DAG_LENGTH_EQ || op->kind == DAG_LENGTH_GE) {
+            shared |= d->length_first[op->a] < d->original;
+            d->length_first[op->a] = Py_MIN(d->length_first[op->a], op->first);
         }
     }
+    if (!shared) {
+        return root;
+    }
+    PyObject *context = PyFrozenSet_New(NULL);
+    if (context == NULL) {
+        return ERROR;
+    }
     int result = dag_specialize(d, root, context);
-    PyMem_Free(context);
+    Py_DECREF(context);
     return result;
 }
 
@@ -779,6 +847,9 @@ codegen_match_dag(compiler *c, stmt_ty s)
         if (result >= 0) {
             result = dag_optimize(&d, result);
         }
+        Py_CLEAR(d.op_ids);
+        Py_CLEAR(d.node_ids);
+        Py_CLEAR(d.state_ids);
         if (result >= 0) {
             result = d.removed ? dag_emit_match(&d, s, result) : 1;
         }
@@ -802,11 +873,11 @@ codegen_match_dag(compiler *c, stmt_ty s)
     _Py_CArray_Fini(&d.nodes);
     PyMem_Free(d.stores);
     PyMem_Free(d.bodies);
-    PyMem_Free(d.facts_live);
-    PyMem_Free(d.values_live);
+    PyMem_Free(d.length_first);
     if (d.blocks) {
         for (int i = 0; i < d.nnodes; i++) {
             PyMem_Free(d.blocks[i].entry.values);
+            PyMem_Free(d.blocks[i].live.values);
             dag_failure *failure = d.blocks[i].failures;
             while (failure) {
                 dag_failure *next = failure->next;

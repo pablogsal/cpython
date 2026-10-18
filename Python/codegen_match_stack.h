@@ -47,8 +47,7 @@ stack_use(match_dag *d, dag_stack *stack, int value, int keep, location loc)
 static int
 stack_live_after(match_dag *d, dag_node node, int value)
 {
-    return (node.yes >= 0 && d->values_live[(size_t)node.yes * d->nvalues + value]) ||
-           (node.no >= 0 && d->values_live[(size_t)node.no * d->nvalues + value]);
+    return dag_value_live(d, node.yes, value) || dag_value_live(d, node.no, value);
 }
 
 /* Failure edges retain the current value order. Success edges call this
@@ -65,10 +64,9 @@ stack_record_entry(match_dag *d, dag_stack *stack, int target)
         PyErr_NoMemory();
         return ERROR;
     }
-    unsigned char *live = d->values_live + (size_t)target * d->nvalues;
     for (int i = 0; i < stack->size; i++) {
         int value = stack->values[i];
-        if (value >= 0 && live[value]) {
+        if (value >= 0 && dag_value_live(d, target, value)) {
             entry->values[entry->size++] = value;
         }
     }
@@ -79,10 +77,9 @@ static int
 stack_edge(match_dag *d, dag_stack *stack, int target, location loc)
 {
     compiler *c = d->c;
-    unsigned char *live = d->values_live + (size_t)target * d->nvalues;
     for (int i = stack->size; i--;) {
         int value = stack->values[i];
-        if (value < 0 || !live[value]) {
+        if (value < 0 || !dag_value_live(d, target, value)) {
             RETURN_IF_ERROR(stack_swap(d, stack, i, loc));
             ADDOP(c, loc, POP_TOP);
             stack->size--;
@@ -130,14 +127,13 @@ stack_queue_failure(match_dag *d, dag_stack *stack, int target,
 }
 
 static int
-stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capacity)
+stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace)
 {
     compiler *c = d->c;
     dag_node node = DAG_NODE(d, index);
     dag_operation op = DAG_OP(d, node.op);
     location loc = node.loc;
     dag_stack stack = {.values = workspace};
-    dag_stack failed = {.values = workspace + capacity};
     dag_stack *entry = &d->blocks[index].entry;
     assert(entry->values != NULL);
     stack.size = entry->size;
@@ -155,13 +151,11 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
     if (op.kind == DAG_GUARD) {
         /* Liveness removes every cached value before executing the guard. */
         assert(stack.size <= 1 && (!stack.size || stack.values[0] == 0));
-        failed.size = stack.size;
-        memcpy(failed.values, stack.values, stack.size * sizeof(int));
         NEW_JUMP_TARGET_LABEL(c, fail);
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, op.arg);
         RETURN_IF_ERROR(codegen_jump_if(c, loc, m->guard, fail, 0));
-        RETURN_IF_ERROR(stack_edge(d, &stack, node.yes, loc));
-        return stack_queue_failure(d, &failed, node.no, fail, 0, loc);
+        RETURN_IF_ERROR(stack_queue_failure(d, &stack, node.no, fail, 0, loc));
+        return stack_edge(d, &stack, node.yes, loc);
     }
     int inline_equal = -1;
     if (op.kind == DAG_ATTRIBUTE && d->blocks[node.yes].single_predecessor) {
@@ -198,7 +192,7 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
         PyObject *stores = d->stores[op.arg];
         for (int i = 0; i < PyList_GET_SIZE(stores); i++) {
             PyObject *name = PyList_GET_ITEM(stores, i);
-            int value = (int)PyLong_AsLong(PyDict_GetItem(d->captures, name));
+            int value = (int)PyLong_AsLong(PyDict_GetItem(d->captures, name)) + 1;
             RETURN_IF_ERROR(stack_use(d, &stack, value,
                                       stack_live_after(d, node, value), loc));
             RETURN_IF_ERROR(codegen_nameop(c, loc, name, Store));
@@ -273,10 +267,10 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
                 break;
             case DAG_TUPLE:
                 for (int i = 0; i < op.arg; i++) {
-                    int value = (int)PyLong_AsLong(PyTuple_GET_ITEM(op.data, i));
+                    int value = dag_tuple_value(d, &op, i);
                     int keep = stack_live_after(d, node, value);
                     for (int j = i + 1; j < op.arg; j++) {
-                        keep |= value == PyLong_AsLong(PyTuple_GET_ITEM(op.data, j));
+                        keep |= value == dag_tuple_value(d, &op, j);
                     }
                     RETURN_IF_ERROR(stack_use(d, &stack, value, keep, loc));
                     inputs++;
@@ -331,19 +325,14 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
         else {
             ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, fail);
         }
-        failed.size = stack.size;
-        memcpy(failed.values, stack.values, stack.size * sizeof(int));
+        RETURN_IF_ERROR(stack_queue_failure(d, &stack, node.no, fail, pop_none,
+                                           dag_destination_location(d, s, node.no)));
     }
     for (int i = op.count; i--;) {
         stack.values[stack.size++] = op.output + i;
     }
-    RETURN_IF_ERROR(stack_edge(d, &stack, node.yes,
-                              dag_destination_location(d, s, node.yes)));
-    if (node.no >= 0) {
-        loc = dag_destination_location(d, s, node.no);
-        return stack_queue_failure(d, &failed, node.no, fail, pop_none, loc);
-    }
-    return SUCCESS;
+    return stack_edge(d, &stack, node.yes,
+                      dag_destination_location(d, s, node.yes));
 }
 
 static int
@@ -362,7 +351,7 @@ stack_emit_failure(match_dag *d, dag_failure *failure, int target)
  * when its other predecessors are ready. Place cleanup before its destination,
  * so failure paths do not need backward jumps or extra trace events. */
 static int
-stack_codegen_graph(match_dag *d, stmt_ty s, int root, int *workspace, int capacity)
+stack_codegen_graph(match_dag *d, stmt_ty s, int root, int *workspace)
 {
     int *pending = PyMem_Malloc(d->nnodes * sizeof(int));
     if (pending == NULL) {
@@ -387,7 +376,7 @@ stack_codegen_graph(match_dag *d, stmt_ty s, int root, int *workspace, int capac
             break;
         }
         if (!block->inlined) {
-            result = stack_codegen_node(d, s, index, workspace, capacity);
+            result = stack_codegen_node(d, s, index, workspace);
             if (result < 0) {
                 break;
             }
@@ -411,14 +400,6 @@ dag_emit_match(match_dag *d, stmt_ty s, int root)
     int ncases = asdl_seq_LEN(s->v.Match.cases);
     RETURN_IF_ERROR(dag_analyze_values(d, root));
     for (int i = 0; i < d->nnodes; i++) {
-        dag_operation *op = &DAG_OP(d, DAG_NODE(d, i).op);
-        if (op->kind == DAG_ACCEPT && !d->blocks[i].reachable) {
-            match_case_ty m = asdl_seq_GET(s->v.Match.cases, op->arg);
-            RETURN_IF_ERROR(_PyCompile_Warn(c, LOC(m->pattern),
-                                           "pattern is unreachable"));
-        }
-    }
-    for (int i = 0; i < d->nnodes; i++) {
         d->blocks[i].label = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
     }
     for (int i = 0; i < ncases; i++) {
@@ -434,18 +415,14 @@ dag_emit_match(match_dag *d, stmt_ty s, int root)
     entry->size = 1;
     VISIT(c, expr, s->v.Match.subject);
     ADDOP_JUMP(c, NO_LOCATION, JUMP, d->blocks[root].label);
+    /* Mapping keys also reserve one unpacked value per key. */
     int capacity = 2 * d->nvalues + 4;
-    for (int i = 0; i < d->nops; i++) {
-        if (DAG_OP(d, i).kind == DAG_TUPLE) {
-            capacity = Py_MAX(capacity, 2 * d->nvalues + DAG_OP(d, i).arg + 4);
-        }
-    }
-    int *workspace = PyMem_Malloc(2 * capacity * sizeof(int));
+    int *workspace = PyMem_Malloc(capacity * sizeof(int));
     if (workspace == NULL) {
         PyErr_NoMemory();
         return ERROR;
     }
-    int result = stack_codegen_graph(d, s, root, workspace, capacity);
+    int result = stack_codegen_graph(d, s, root, workspace);
     PyMem_Free(workspace);
     RETURN_IF_ERROR(result);
     for (int i = 0; i < ncases; i++) {
