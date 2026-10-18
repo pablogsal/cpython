@@ -59,7 +59,7 @@ stack_record_entry(match_dag *d, dag_stack *stack, int target)
     if (entry->values != NULL) {
         return SUCCESS;
     }
-    entry->values = PyMem_Malloc(stack->size * sizeof(int));
+    entry->values = PyMem_Malloc(d->blocks[target].live.size * sizeof(int));
     if (entry->values == NULL) {
         PyErr_NoMemory();
         return ERROR;
@@ -351,8 +351,10 @@ stack_emit_failure(match_dag *d, dag_failure *failure, int target)
  * when its other predecessors are ready. Place cleanup before its destination,
  * so failure paths do not need backward jumps or extra trace events. */
 static int
-stack_codegen_graph(match_dag *d, stmt_ty s, int root, int *workspace)
+stack_codegen_graph(match_dag *d, stmt_ty s, int root)
 {
+    /* Each block has at most DAG_MAX_WIDTH resident values and operands. */
+    int workspace[2 * DAG_MAX_WIDTH + 4];
     int *pending = PyMem_Malloc(d->nnodes * sizeof(int));
     if (pending == NULL) {
         PyErr_NoMemory();
@@ -418,16 +420,7 @@ dag_emit_match(match_dag *d, stmt_ty s, int root)
     entry->size = 1;
     VISIT(c, expr, s->v.Match.subject);
     ADDOP_JUMP(c, NO_LOCATION, JUMP, d->blocks[root].label);
-    /* Mapping keys also reserve one unpacked value per key. */
-    int capacity = 2 * d->nvalues + 4;
-    int *workspace = PyMem_Malloc(capacity * sizeof(int));
-    if (workspace == NULL) {
-        PyErr_NoMemory();
-        return ERROR;
-    }
-    result = stack_codegen_graph(d, s, root, workspace);
-    PyMem_Free(workspace);
-    RETURN_IF_ERROR(result);
+    RETURN_IF_ERROR(stack_codegen_graph(d, s, root));
     for (int i = 0; i < ncases; i++) {
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
         USE_LABEL(c, d->bodies[i]);

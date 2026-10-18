@@ -65,7 +65,7 @@ typedef struct {
     jump_target_label label;
     dag_failure *failures;
     int pending;        /* Incoming graph edges not yet processed. */
-    bool reachable, single_predecessor, inlined;
+    bool single_predecessor, inlined;
 } dag_block;
 
 typedef struct {
@@ -134,7 +134,7 @@ dag_operation_new(match_dag *d, enum dag_kind kind, int a, int b, int arg,
     }
     int id = (int)_PyCompile_DictAddObj(d->op_ids, key);
     Py_DECREF(key);
-    if (id < 0 || id < d->nops) {
+    if (id < d->nops) {
         return id;
     }
     RETURN_IF_ERROR(_Py_CArray_EnsureCapacity(&d->operations, id));
@@ -168,7 +168,7 @@ dag_node_new(match_dag *d, int op, int yes, int no, location loc)
     }
     int id = (int)_PyCompile_DictAddObj(d->node_ids, key);
     Py_DECREF(key);
-    if (id < 0 || id < d->nnodes) {
+    if (id < d->nnodes) {
         return id;
     }
     RETURN_IF_ERROR(_Py_CArray_EnsureCapacity(&d->nodes, id));
@@ -621,21 +621,21 @@ dag_analyze_values(match_dag *d, int root)
             d->constants[op->output] = Py_NewRef(op->expr->v.Constant.value);
         }
         else if (op->kind == DAG_TUPLE) {
-            int constant = 1;
-            for (int j = 0; j < op->arg; j++) {
-                int value = dag_tuple_value(d, op, j);
-                constant &= d->constants[value] != NULL;
+            /* The matching UNPACK bounds the number of keys. */
+            assert(op->arg <= DAG_MAX_WIDTH);
+            PyObject *items[DAG_MAX_WIDTH];
+            int j = 0;
+            for (; j < op->arg; j++) {
+                items[j] = d->constants[dag_tuple_value(d, op, j)];
+                if (items[j] == NULL) {
+                    break;
+                }
             }
-            if (constant) {
-                PyObject *tuple = PyTuple_New(op->arg);
-                if (tuple == NULL) {
+            if (j == op->arg) {
+                d->constants[op->output] = PyTuple_FromArray(items, op->arg);
+                if (d->constants[op->output] == NULL) {
                     return ERROR;
                 }
-                for (int j = 0; j < op->arg; j++) {
-                    int value = dag_tuple_value(d, op, j);
-                    PyTuple_SET_ITEM(tuple, j, Py_NewRef(d->constants[value]));
-                }
-                d->constants[op->output] = tuple;
             }
         }
     }
@@ -647,9 +647,9 @@ dag_analyze_values(match_dag *d, int root)
         PyErr_NoMemory();
         goto done;
     }
-    d->blocks[root].reachable = true;
+    d->blocks[root].pending = 1;  /* The entry edge supplies the subject. */
     for (int i = root; i >= 0; i--) {
-        if (!d->blocks[i].reachable) {
+        if (d->blocks[i].pending == 0) {
             continue;
         }
         dag_node node = DAG_NODE(d, i);
@@ -657,14 +657,13 @@ dag_analyze_values(match_dag *d, int root)
         for (int edge = 0; edge < 2; edge++) {
             if (targets[edge] >= 0) {
                 dag_block *target = &d->blocks[targets[edge]];
-                target->reachable = true;
                 target->pending++;
                 target->single_predecessor = target->pending == 1;
             }
         }
     }
     for (int i = 0; i < d->nnodes; i++) {
-        if (!d->blocks[i].reachable) {
+        if (d->blocks[i].pending == 0) {
             continue;
         }
         dag_node node = DAG_NODE(d, i);
@@ -775,7 +774,7 @@ dag_build_patterns(match_dag *d, stmt_ty s)
                            yes, -1, LOC(m->pattern));
         }
         yes = dag_pattern(d, m->pattern, 0, yes, tail);
-        tail = dag_emit(d, DAG_ENTER, -1, -1, i, NULL, NULL, 0, 0,
+        tail = dag_emit(d, DAG_ENTER, -1, -1, 0, NULL, NULL, 0, 0,
                         yes, -1, LOC(m->pattern));
         RETURN_IF_ERROR(tail);
     }
