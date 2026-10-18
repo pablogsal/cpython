@@ -27,12 +27,11 @@ typedef struct {
     compiler *c;
     _Py_c_array_t operations, nodes, exits;
     int nexits;
-    int nops, nnodes, nvalues, original, states, slots, removed;
+    int nops, nnodes, nvalues, original, states, removed;
     PyObject *op_ids, *node_ids, *state_ids, *captures;
     PyObject **stores;
     PyObject **constants;
     unsigned char *facts_live, *values_live, *reachable;
-    int *colors;
     int **entry_layouts;
     int ordered_stack;
     int *predecessors, *first_exit;
@@ -594,15 +593,7 @@ dag_allocate(match_dag *d, int root)
     }
     d->reachable = PyMem_Calloc(d->nnodes, 1);
     d->values_live = PyMem_Calloc(d->nnodes, nv);
-    d->colors = PyMem_Calloc(nv, sizeof(int));
-    unsigned char *interference = PyMem_Calloc(nv, nv);
-    unsigned char *after = PyMem_Calloc(nv, 1);
-    int *active = PyMem_Malloc(nv * sizeof(int));
-    if (!d->reachable || !d->values_live || !d->colors || !interference ||
-        !after || !active) {
-        PyMem_Free(interference);
-        PyMem_Free(after);
-        PyMem_Free(active);
+    if (!d->reachable || !d->values_live) {
         PyErr_NoMemory();
         return ERROR;
     }
@@ -612,11 +603,11 @@ dag_allocate(match_dag *d, int root)
             continue;
         }
         dag_node node = DAG_NODE(d, i);
-        if (node.yes >= 0) {
-            d->reachable[node.yes] = 1;
-        }
-        if (node.no >= 0) {
-            d->reachable[node.no] = 1;
+        int targets[2] = {node.yes, node.no};
+        for (int edge = 0; edge < 2; edge++) {
+            if (targets[edge] >= 0) {
+                d->reachable[targets[edge]] = 1;
+            }
         }
     }
     for (int i = 0; i < d->nnodes; i++) {
@@ -626,16 +617,14 @@ dag_allocate(match_dag *d, int root)
         dag_node node = DAG_NODE(d, i);
         dag_operation *op = &DAG_OP(d, node.op);
         unsigned char *live = d->values_live + i * nv;
-        memset(after, 0, nv);
         if (node.yes >= 0) {
-            memcpy(after, d->values_live + node.yes * nv, nv);
+            memcpy(live, d->values_live + node.yes * nv, nv);
         }
         if (node.no >= 0) {
             for (size_t v = 0; v < nv; v++) {
-                after[v] |= d->values_live[node.no * nv + v];
+                live[v] |= d->values_live[node.no * nv + v];
             }
         }
-        memcpy(live, after, nv);
         if (op->kind == DAG_GUARD) {
             memset(live + 1, 0, nv - 1);
         }
@@ -643,62 +632,7 @@ dag_allocate(match_dag *d, int root)
             memset(live + op->output, 0, op->count);
         }
         dag_inputs(d, op, live);
-        if (d->ordered_stack) {
-            continue;
-        }
-        int count = 0;
-        for (size_t v = 0; v < nv; v++) {
-            if (live[v]) {
-                active[count++] = (int)v;
-            }
-        }
-        for (int a = 0; a < count; a++) {
-            for (int b = 0; b < a; b++) {
-                interference[active[a] * nv + active[b]] = 1;
-                interference[active[b] * nv + active[a]] = 1;
-            }
-        }
-        for (int a = op->output; a < op->output + op->count; a++) {
-            if (!after[a]) {
-                continue;
-            }
-            for (size_t b = 0; b < nv; b++) {
-                if (after[b] && b != (size_t)a) {
-                    interference[a * nv + b] = interference[b * nv + a] = 1;
-                }
-            }
-        }
     }
-    if (d->ordered_stack) {
-        d->slots = 1;
-    }
-    for (size_t a = 0; !d->ordered_stack && a < nv; a++) {
-        memset(after, 0, nv);
-        for (size_t b = 0; b < a; b++) {
-            if (interference[a * nv + b]) {
-                after[d->colors[b]] = 1;
-            }
-        }
-        int color = 0;
-        while (after[color]) {
-            color++;
-        }
-        /* Prefer the same slot for a move's input and output when their live
-         * ranges do not overlap. This also handles OR capture permutations. */
-        for (int i = 0; i < d->nops; i++) {
-            dag_operation *op = &DAG_OP(d, i);
-            if (op->kind == DAG_BIND && op->a == (int)a &&
-                op->output < (int)a && !after[d->colors[op->output]]) {
-                color = d->colors[op->output];
-                break;
-            }
-        }
-        d->colors[a] = color;
-        d->slots = Py_MAX(d->slots, color + 1);
-    }
-    PyMem_Free(interference);
-    PyMem_Free(after);
-    PyMem_Free(active);
     return SUCCESS;
 }
 
@@ -921,7 +855,6 @@ codegen_match_dag(compiler *c, stmt_ty s)
     PyMem_Free(d.facts_live);
     PyMem_Free(d.values_live);
     PyMem_Free(d.reachable);
-    PyMem_Free(d.colors);
     PyMem_Free(d.predecessors);
     PyMem_Free(d.first_exit);
     PyMem_Free(d.inlined);
