@@ -7,7 +7,7 @@
 
 enum dag_kind {
     DAG_ENTER, DAG_BIND, DAG_COMMIT, DAG_GUARD, DAG_ACCEPT, DAG_END,
-    DAG_LOAD, DAG_SEQUENCE, DAG_MAPPING, DAG_LENGTH, DAG_LENGTH_EQ,
+    DAG_LOAD, DAG_ATTRIBUTE, DAG_SEQUENCE, DAG_MAPPING, DAG_LENGTH, DAG_LENGTH_EQ,
     DAG_LENGTH_GE, DAG_EQUAL, DAG_SINGLETON, DAG_UNPACK, DAG_INDEX,
     DAG_TUPLE, DAG_KEYS, DAG_CLASS, DAG_REST
 };
@@ -65,13 +65,6 @@ dag_expression_key(expr_ty expr)
     switch (expr->kind) {
         case Name_kind:
             return Py_BuildValue("(iO)", Name_kind, expr->v.Name.id);
-        case Attribute_kind: {
-            PyObject *base = dag_expression_key(expr->v.Attribute.value);
-            if (base == NULL) {
-                return NULL;
-            }
-            return Py_BuildValue("(iNO)", Attribute_kind, base, expr->v.Attribute.attr);
-        }
         case Constant_kind: {
             PyObject *key = _PyCode_ConstantKey(expr->v.Constant.value);
             return key ? Py_BuildValue("(iN)", Constant_kind, key) : NULL;
@@ -175,6 +168,33 @@ dag_emit(match_dag *d, int kind, int a, int b, int arg, PyObject *data,
 }
 
 static int
+dag_expression(match_dag *d, expr_ty expr)
+{
+    if (expr->kind == Attribute_kind) {
+        if (Py_EnterRecursiveCall(" during match DAG expression construction")) {
+            return ERROR;
+        }
+        int base = dag_expression(d, expr->v.Attribute.value);
+        Py_LeaveRecursiveCall();
+        RETURN_IF_ERROR(base);
+        return dag_operation_new(d, DAG_ATTRIBUTE, DAG_OP(d, base).output,
+                                 -1, base, expr->v.Attribute.attr, NULL, 1, 0);
+    }
+    return dag_operation_new(d, DAG_LOAD, -1, -1, 0, NULL, expr, 1, 0);
+}
+
+static int
+dag_expression_nodes(match_dag *d, int op, int yes, location loc)
+{
+    while (op >= 0 && DAG_OP(d, op).kind == DAG_ATTRIBUTE) {
+        yes = dag_node_new(d, op, yes, -1, loc);
+        RETURN_IF_ERROR(yes);
+        op = DAG_OP(d, op).arg;
+    }
+    return dag_node_new(d, op, yes, -1, loc);
+}
+
+static int
 dag_bind(match_dag *d, identifier name, int value, int yes, location loc)
 {
     if (name == NULL) {
@@ -211,12 +231,11 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
             return dag_emit(d, DAG_SINGLETON, value, -1, 0,
                             p->v.MatchSingleton.value, NULL, 0, 0, yes, no, loc);
         case MatchValue_kind: {
-            int load = dag_operation_new(d, DAG_LOAD, -1, -1, 0, NULL,
-                                         p->v.MatchValue.value, 1, 0);
+            int load = dag_expression(d, p->v.MatchValue.value);
             RETURN_IF_ERROR(load);
             yes = dag_emit(d, DAG_EQUAL, value, DAG_OP(d, load).output,
                            0, NULL, NULL, 0, 0, yes, no, loc);
-            return dag_node_new(d, load, yes, -1, loc);
+            return dag_expression_nodes(d, load, yes, loc);
         }
         case MatchSequence_kind: {
             asdl_pattern_seq *items = p->v.MatchSequence.patterns;
@@ -281,8 +300,7 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
                 return ERROR;
             }
             for (int i = 0; i < n; i++) {
-                int op = dag_operation_new(d, DAG_LOAD, -1, -1, 0, NULL,
-                    asdl_seq_GET(p->v.MatchMapping.keys, i), 1, 0);
+                int op = dag_expression(d, asdl_seq_GET(p->v.MatchMapping.keys, i));
                 if (op < 0) {
                     Py_DECREF(loads);
                     return ERROR;
@@ -342,7 +360,7 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
             yes = dag_node_new(d, tuple, yes, -1, loc);
             for (int i = n; i-- && !PyErr_Occurred();) {
                 int load = (int)PyLong_AsLong(PyTuple_GET_ITEM(loads, i));
-                yes = dag_node_new(d, load, yes, -1, loc);
+                yes = dag_expression_nodes(d, load, yes, loc);
             }
             Py_DECREF(loads);
             if (n) {
@@ -366,8 +384,7 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
             for (int i = 0; i < nattrs; i++) {
                 PyTuple_SET_ITEM(names, i, Py_NewRef(asdl_seq_GET(p->v.MatchClass.kwd_attrs, i)));
             }
-            int load = dag_operation_new(d, DAG_LOAD, -1, -1, 0, NULL,
-                                         p->v.MatchClass.cls, 1, 0);
+            int load = dag_expression(d, p->v.MatchClass.cls);
             if (load < 0) {
                 Py_DECREF(names);
                 return ERROR;
@@ -388,7 +405,7 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
             }
             yes = dag_node_new(d, unpack, yes, -1, loc);
             yes = dag_node_new(d, cls, yes, no, loc);
-            return dag_node_new(d, load, yes, -1, loc);
+            return dag_expression_nodes(d, load, yes, loc);
         }
     }
     Py_UNREACHABLE();
@@ -692,10 +709,21 @@ static int
 dag_edge(match_dag *d, int source, int target, int define, location loc)
 {
     compiler *c = d->c;
+    int kind = DAG_OP(d, DAG_NODE(d, target).op).kind;
+    if (kind == DAG_ACCEPT || kind == DAG_END) {
+        /* The destination releases every slot. Clearing them first would
+         * add a load and swap for each value immediately before its pop. */
+        ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[target]);
+        return SUCCESS;
+    }
     dag_operation *op = &DAG_OP(d, DAG_NODE(d, source).op);
     unsigned char *before = d->values_live + (size_t)source * d->nvalues;
     unsigned char *after = d->values_live + (size_t)target * d->nvalues;
     for (int slot = 0; slot < d->slots; slot++) {
+        if (kind == DAG_GUARD && slot != d->colors[0]) {
+            /* The guard clears these before evaluating its expression. */
+            continue;
+        }
         int was_live = 0, remains = 0;
         for (int v = 0; v < d->nvalues; v++) {
             if (d->colors[v] == slot) {
@@ -777,6 +805,9 @@ dag_codegen_node(match_dag *d, stmt_ty s, int index)
         }
         switch (op.kind) {
             case DAG_BIND:
+                break;
+            case DAG_ATTRIBUTE:
+                ADDOP_NAME(c, loc, LOAD_ATTR, op.data, names);
                 break;
             case DAG_LOAD: {
                 int start = INSTR_SEQUENCE(c)->s_used;
@@ -928,8 +959,10 @@ dag_build(match_dag *d, stmt_ty s)
             yes = dag_emit(d, DAG_GUARD, -1, -1, i, NULL, NULL, 0, 0,
                            yes, tail, LOC(m->pattern));
         }
-        yes = dag_emit(d, DAG_COMMIT, -1, -1, i, NULL, NULL, 0, 0,
-                       yes, -1, LOC(m->pattern));
+        if (PyList_GET_SIZE(d->stores[i])) {
+            yes = dag_emit(d, DAG_COMMIT, -1, -1, i, NULL, NULL, 0, 0,
+                           yes, -1, LOC(m->pattern));
+        }
         yes = dag_pattern(d, m->pattern, 0, yes, tail);
         tail = dag_emit(d, DAG_ENTER, -1, -1, i, NULL, NULL, 0, 0,
                         yes, -1, LOC(m->pattern));
@@ -966,6 +999,14 @@ dag_build(match_dag *d, stmt_ty s)
         return 1;
     }
     RETURN_IF_ERROR(dag_allocate(d, root));
+    for (int i = 0; i < d->nnodes; i++) {
+        dag_operation *op = &DAG_OP(d, DAG_NODE(d, i).op);
+        if (op->kind == DAG_ACCEPT && !d->reachable[i]) {
+            match_case_ty m = asdl_seq_GET(s->v.Match.cases, op->arg);
+            RETURN_IF_ERROR(_PyCompile_Warn(c, LOC(m->pattern),
+                                           "pattern is unreachable"));
+        }
+    }
     d->labels = PyMem_Malloc(d->nnodes * sizeof(jump_target_label));
     if (d->labels == NULL) {
         PyErr_NoMemory();
