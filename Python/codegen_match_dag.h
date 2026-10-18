@@ -73,7 +73,7 @@ typedef struct {
     _Py_c_array_t operations, nodes;
     int nops, nnodes, nvalues, original, states, removed;
     PyObject *op_ids, *node_ids, *state_ids, *captures;
-    PyObject **stores;
+    PyObject *stores;    /* Owned tuple of capture-name lists, one per case. */
     PyObject **constants;
     int *length_first;   /* Last possible use of a bound on each value. */
     dag_block *blocks;
@@ -90,13 +90,10 @@ typedef struct {
 static int
 dag_capture(match_dag *d, PyObject *name)
 {
-    /* Register all captures before operations allocate value IDs.
-     * Capture indices start at zero; value zero is the match subject. */
-    int index = (int)_PyCompile_DictAddObj(d->captures, name);
-    RETURN_IF_ERROR(index);
-    int value = index + 1;
-    d->nvalues = Py_MAX(d->nvalues, value + 1);
-    return value;
+    /* Capture indices start at zero; value zero is the match subject. */
+    PyObject *index = PyDict_GetItem(d->captures, name);
+    assert(index != NULL);
+    return (int)PyLong_AsLong(index) + 1;
 }
 
 /* Pattern expressions are names, attribute chains, or folded constants. Use
@@ -226,9 +223,7 @@ dag_bind(match_dag *d, identifier name, int value, int yes, location loc)
     if (name == NULL) {
         return yes;
     }
-    int capture = dag_capture(d, name);
-    RETURN_IF_ERROR(capture);
-    return dag_emit(d, DAG_BIND, value, -1, capture, NULL, NULL, 1, 0,
+    return dag_emit(d, DAG_BIND, value, -1, dag_capture(d, name), NULL, NULL, 1, 0,
                     yes, -1, loc);
 }
 
@@ -339,40 +334,39 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
                 PyTuple_SET_ITEM(loads, i, number);
             }
             int tuple = dag_operation_new(d, DAG_TUPLE, -1, -1, n, loads, NULL, 1, 0);
-            if (tuple < 0) {
-                Py_DECREF(loads);
-                return ERROR;
-            }
+            Py_DECREF(loads);
+            RETURN_IF_ERROR(tuple);
+            loads = DAG_OP(d, tuple).data;  /* The operation owns this tuple. */
             int keys_value = DAG_OP(d, tuple).output;
             if (p->v.MatchMapping.rest) {
                 int rest = dag_operation_new(d, DAG_REST, value, keys_value,
                                              n, NULL, NULL, 1, 1);
-                if (rest >= 0) {
-                    yes = dag_bind(d, p->v.MatchMapping.rest,
-                                   DAG_OP(d, rest).output, yes, loc);
-                    yes = dag_node_new(d, rest, yes, -1, loc);
-                }
+                RETURN_IF_ERROR(rest);
+                yes = dag_bind(d, p->v.MatchMapping.rest,
+                               DAG_OP(d, rest).output, yes, loc);
+                yes = dag_node_new(d, rest, yes, -1, loc);
+                RETURN_IF_ERROR(yes);
             }
             int keys = dag_operation_new(d, DAG_KEYS, value, keys_value, 0, NULL, NULL, 1, 0);
-            if (keys >= 0) {
-                int unpack = dag_operation_new(d, DAG_UNPACK, DAG_OP(d, keys).output,
-                                               -1, n, Py_False, NULL, n, 0);
-                if (unpack >= 0) {
-                    int output = DAG_OP(d, unpack).output;
-                    for (int i = n; i-- && !PyErr_Occurred();) {
-                        yes = dag_pattern(d, asdl_seq_GET(p->v.MatchMapping.patterns, i),
-                                          output + i, yes, no);
-                    }
-                    yes = dag_node_new(d, unpack, yes, -1, loc);
-                    yes = dag_node_new(d, keys, yes, no, loc);
-                }
+            RETURN_IF_ERROR(keys);
+            int unpack = dag_operation_new(d, DAG_UNPACK, DAG_OP(d, keys).output,
+                                           -1, n, Py_False, NULL, n, 0);
+            RETURN_IF_ERROR(unpack);
+            int output = DAG_OP(d, unpack).output;
+            for (int i = n; i--;) {
+                yes = dag_pattern(d, asdl_seq_GET(p->v.MatchMapping.patterns, i),
+                                  output + i, yes, no);
+                RETURN_IF_ERROR(yes);
             }
+            yes = dag_node_new(d, unpack, yes, -1, loc);
+            yes = dag_node_new(d, keys, yes, no, loc);
             yes = dag_node_new(d, tuple, yes, -1, loc);
-            for (int i = n; i-- && !PyErr_Occurred();) {
+            RETURN_IF_ERROR(yes);
+            for (int i = n; i--;) {
                 int load = (int)PyLong_AsLong(PyTuple_GET_ITEM(loads, i));
                 yes = dag_expression_nodes(d, load, yes, loc);
+                RETURN_IF_ERROR(yes);
             }
-            Py_DECREF(loads);
             if (n) {
                 int length = dag_operation_new(d, DAG_LENGTH, value, -1, 0, NULL, NULL, 1, 0);
                 RETURN_IF_ERROR(length);
@@ -384,19 +378,14 @@ dag_pattern_impl(match_dag *d, pattern_ty p, int value, int yes, int no)
                             0, 0, yes, no, loc);
         }
         case MatchClass_kind: {
-            int nargs = asdl_seq_LEN(p->v.MatchClass.patterns);
-            int nattrs = asdl_seq_LEN(p->v.MatchClass.kwd_attrs);
-            int n = nargs + nattrs;
-            PyObject *names = PyTuple_New(nattrs);
-            if (names == NULL) {
-                return ERROR;
-            }
-            for (int i = 0; i < nattrs; i++) {
-                PyTuple_SET_ITEM(names, i, Py_NewRef(asdl_seq_GET(p->v.MatchClass.kwd_attrs, i)));
-            }
             int load = dag_expression(d, p->v.MatchClass.cls);
-            if (load < 0) {
-                Py_DECREF(names);
+            RETURN_IF_ERROR(load);
+            int nargs = asdl_seq_LEN(p->v.MatchClass.patterns);
+            asdl_identifier_seq *attrs = p->v.MatchClass.kwd_attrs;
+            int nattrs = asdl_seq_LEN(attrs);
+            int n = nargs + nattrs;
+            PyObject *names = PyTuple_FromArray(attrs ? attrs->typed_elements : NULL, nattrs);
+            if (names == NULL) {
                 return ERROR;
             }
             int cls = dag_operation_new(d, DAG_CLASS, value, DAG_OP(d, load).output,
@@ -608,10 +597,10 @@ dag_inputs(match_dag *d, dag_operation *op, dag_stack *live, unsigned char *seen
         }
     }
     if (op->kind == DAG_COMMIT) {
-        PyObject *stores = d->stores[op->arg];
+        PyObject *stores = PyTuple_GET_ITEM(d->stores, op->arg);
         for (int i = 0; i < PyList_GET_SIZE(stores); i++) {
-            PyObject *id = PyDict_GetItem(d->captures, PyList_GET_ITEM(stores, i));
-            dag_live_add(d, live, seen, (int)PyLong_AsLong(id) + 1);
+            int value = dag_capture(d, PyList_GET_ITEM(stores, i));
+            dag_live_add(d, live, seen, value);
         }
     }
 }
@@ -763,15 +752,14 @@ dag_build_patterns(match_dag *d, stmt_ty s)
         INSTR_SEQUENCE(c)->s_used = start;
         INSTR_SEQUENCE(c)->s_next_free_label = labels;
         PyMem_Free(pc.fail_pop);
-        if (result < 0) {
-            Py_DECREF(pc.stores);
-            return ERROR;
-        }
-        d->stores[i] = pc.stores;
+        PyTuple_SET_ITEM(d->stores, i, pc.stores);
+        RETURN_IF_ERROR(result);
         for (int j = 0; j < PyList_GET_SIZE(pc.stores); j++) {
-            RETURN_IF_ERROR(dag_capture(d, PyList_GET_ITEM(pc.stores, j)));
+            RETURN_IF_ERROR(_PyCompile_DictAddObj(d->captures, PyList_GET_ITEM(pc.stores, j)));
         }
     }
+    /* Reserve every capture ID before operations allocate their outputs. */
+    d->nvalues = (int)PyDict_GET_SIZE(d->captures) + 1;
     int tail = dag_emit(d, DAG_END, -1, -1, 0, NULL, NULL, 0, 0,
                         -1, -1, NO_LOCATION);
     for (int i = ncases; i--;) {
@@ -782,7 +770,7 @@ dag_build_patterns(match_dag *d, stmt_ty s)
             yes = dag_emit(d, DAG_GUARD, -1, -1, i, NULL, NULL, 0, 0,
                            yes, tail, LOC(m->pattern));
         }
-        if (PyList_GET_SIZE(d->stores[i])) {
+        if (PyList_GET_SIZE(PyTuple_GET_ITEM(d->stores, i))) {
             yes = dag_emit(d, DAG_COMMIT, -1, -1, i, NULL, NULL, 0, 0,
                            yes, -1, LOC(m->pattern));
         }
@@ -850,7 +838,7 @@ codegen_match_dag(compiler *c, stmt_ty s)
     d.state_ids = PyDict_New();
     d.captures = PyDict_New();
     int ncases = asdl_seq_LEN(s->v.Match.cases);
-    d.stores = PyMem_Calloc(ncases, sizeof(PyObject *));
+    d.stores = PyTuple_New(ncases);
     d.bodies = PyMem_Malloc(ncases * sizeof(jump_target_label));
     int result = ERROR;
     if (d.op_ids && d.node_ids && d.state_ids && d.captures && d.stores && d.bodies) {
@@ -871,18 +859,13 @@ codegen_match_dag(compiler *c, stmt_ty s)
     for (int i = 0; i < d.nops; i++) {
         Py_XDECREF(DAG_OP(&d, i).data);
     }
-    if (d.stores) {
-        for (int i = 0; i < ncases; i++) {
-            Py_XDECREF(d.stores[i]);
-        }
-    }
+    Py_XDECREF(d.stores);
     Py_XDECREF(d.op_ids);
     Py_XDECREF(d.node_ids);
     Py_XDECREF(d.state_ids);
     Py_XDECREF(d.captures);
     _Py_CArray_Fini(&d.operations);
     _Py_CArray_Fini(&d.nodes);
-    PyMem_Free(d.stores);
     PyMem_Free(d.bodies);
     PyMem_Free(d.length_first);
     if (d.blocks) {

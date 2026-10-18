@@ -189,10 +189,10 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace)
         Py_UNREACHABLE();
     }
     if (op.kind == DAG_COMMIT) {
-        PyObject *stores = d->stores[op.arg];
+        PyObject *stores = PyTuple_GET_ITEM(d->stores, op.arg);
         for (int i = 0; i < PyList_GET_SIZE(stores); i++) {
             PyObject *name = PyList_GET_ITEM(stores, i);
-            int value = (int)PyLong_AsLong(PyDict_GetItem(d->captures, name)) + 1;
+            int value = dag_capture(d, name);
             RETURN_IF_ERROR(stack_use(d, &stack, value,
                                       stack_live_after(d, node, value), loc));
             RETURN_IF_ERROR(codegen_nameop(c, loc, name, Store));
