@@ -25,7 +25,8 @@ typedef struct {
 
 typedef struct {
     compiler *c;
-    _Py_c_array_t operations, nodes;
+    _Py_c_array_t operations, nodes, exits;
+    int nexits;
     int nops, nnodes, nvalues, original, states, slots, removed;
     PyObject *op_ids, *node_ids, *state_ids, *captures;
     PyObject **stores;
@@ -34,7 +35,7 @@ typedef struct {
     int *colors, *local_slots;
     int **entry_layouts;
     int ordered_stack;
-    int *predecessors;
+    int *predecessors, *first_exit;
     unsigned char *inlined;
     jump_target_label *labels, *bodies;
     jump_target_label end;
@@ -1116,10 +1117,12 @@ dag_build(match_dag *d, stmt_ty s)
         d->entry_layouts = PyMem_Calloc(d->nnodes, sizeof(int *));
         d->predecessors = PyMem_Calloc(d->nnodes, sizeof(int));
         d->inlined = PyMem_Calloc(d->nnodes, 1);
-        if (!d->entry_layouts || !d->predecessors || !d->inlined) {
+        d->first_exit = PyMem_Malloc(d->nnodes * sizeof(int));
+        if (!d->entry_layouts || !d->predecessors || !d->inlined || !d->first_exit) {
             PyErr_NoMemory();
             return ERROR;
         }
+        for (int i = 0; i < d->nnodes; i++) d->first_exit[i] = -1;
         d->entry_layouts[root] = PyMem_Malloc(2 * sizeof(int));
         if (d->entry_layouts[root] == NULL) {
             PyErr_NoMemory();
@@ -1178,17 +1181,24 @@ dag_build(match_dag *d, stmt_ty s)
         PyErr_NoMemory();
         return ERROR;
     }
-    for (int i = d->nnodes; i--;) {
-        if (d->reachable[i] && (!d->inlined || !d->inlined[i])) {
-            int result = sparse ? stack_codegen_node(d, s, i, workspace, capacity)
-                                : dag_codegen_node(d, s, i);
-            if (result < 0) {
-                PyMem_Free(workspace);
-                return ERROR;
+    if (d->ordered_stack) {
+        int result = stack_codegen_graph(d, s, root, workspace, capacity);
+        PyMem_Free(workspace);
+        RETURN_IF_ERROR(result);
+    }
+    else {
+        for (int i = d->nnodes; i--;) {
+            if (d->reachable[i]) {
+                int result = sparse ? stack_codegen_node(d, s, i, workspace, capacity)
+                                    : dag_codegen_node(d, s, i);
+                if (result < 0) {
+                    PyMem_Free(workspace);
+                    return ERROR;
+                }
             }
         }
+        PyMem_Free(workspace);
     }
-    PyMem_Free(workspace);
     for (int i = 0; i < ncases; i++) {
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
         USE_LABEL(c, d->bodies[i]);
@@ -1207,6 +1217,7 @@ codegen_match_dag(compiler *c, stmt_ty s)
                    .ordered_stack = placement && strcmp(placement, "2") == 0};
     _Py_CArray_Init(&d.operations, sizeof(dag_operation), 32);
     _Py_CArray_Init(&d.nodes, sizeof(dag_node), 64);
+    _Py_CArray_Init(&d.exits, sizeof(dag_pending_edge), 32);
     d.op_ids = PyDict_New();
     d.node_ids = PyDict_New();
     d.state_ids = PyDict_New();
@@ -1235,6 +1246,10 @@ codegen_match_dag(compiler *c, stmt_ty s)
     Py_XDECREF(d.captures);
     _Py_CArray_Fini(&d.operations);
     _Py_CArray_Fini(&d.nodes);
+    for (int i = 0; i < d.nexits; i++) {
+        PyMem_Free(((dag_pending_edge *)d.exits.array)[i].values);
+    }
+    _Py_CArray_Fini(&d.exits);
     PyMem_Free(d.stores);
     PyMem_Free(d.bodies);
     PyMem_Free(d.facts_live);
@@ -1243,6 +1258,7 @@ codegen_match_dag(compiler *c, stmt_ty s)
     PyMem_Free(d.colors);
     PyMem_Free(d.local_slots);
     PyMem_Free(d.predecessors);
+    PyMem_Free(d.first_exit);
     PyMem_Free(d.inlined);
     if (d.entry_layouts) {
         for (int i = 0; i < d.nnodes; i++) {

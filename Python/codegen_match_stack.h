@@ -113,6 +113,50 @@ stack_edge(match_dag *d, dag_stack *stack, int target, location loc)
     return SUCCESS;
 }
 
+typedef struct {
+    jump_target_label label;
+    int target, size, optional, next;
+    int *values;
+    location loc;
+} dag_pending_edge;
+
+static int
+stack_queue_failure(match_dag *d, dag_stack *stack, int target,
+                    jump_target_label label, int optional, location loc)
+{
+    int *values = PyMem_Malloc((stack->size + 1) * sizeof(int));
+    if (values == NULL) {
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    memcpy(values, stack->values, stack->size * sizeof(int));
+    if (_Py_CArray_EnsureCapacity(&d->exits, d->nexits) < 0) {
+        PyMem_Free(values);
+        return ERROR;
+    }
+    dag_pending_edge edge = {label, target, stack->size, optional,
+                             d->first_exit[target], values, loc};
+    d->first_exit[target] = d->nexits;
+    ((dag_pending_edge *)d->exits.array)[d->nexits++] = edge;
+    if (d->entry_layouts[target] == NULL) {
+        int *layout = PyMem_Malloc((stack->size + 1) * sizeof(int));
+        if (layout == NULL) {
+            PyErr_NoMemory();
+            return ERROR;
+        }
+        int count = 0;
+        unsigned char *live = d->values_live + (size_t)target * d->nvalues;
+        for (int i = 0; i < stack->size; i++) {
+            if (stack->values[i] >= 0 && live[stack->values[i]]) {
+                layout[++count] = stack->values[i];
+            }
+        }
+        layout[0] = count;
+        d->entry_layouts[target] = layout;
+    }
+    return SUCCESS;
+}
+
 static int
 stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capacity)
 {
@@ -155,6 +199,9 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, op.arg);
         RETURN_IF_ERROR(codegen_jump_if(c, loc, m->guard, fail, 0));
         RETURN_IF_ERROR(stack_edge(d, &stack, node.yes, loc));
+        if (d->ordered_stack) {
+            return stack_queue_failure(d, &failed, node.no, fail, 0, loc);
+        }
         USE_LABEL(c, fail);
         return stack_edge(d, &failed, node.no, loc);
     }
@@ -340,12 +387,68 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
     RETURN_IF_ERROR(stack_edge(d, &stack, node.yes,
                               dag_destination_location(d, s, node.yes)));
     if (node.no >= 0) {
-        USE_LABEL(c, fail);
         loc = dag_destination_location(d, s, node.no);
+        if (d->ordered_stack) {
+            return stack_queue_failure(d, &failed, node.no, fail, optional, loc);
+        }
+        USE_LABEL(c, fail);
         if (optional) {
             ADDOP(c, loc, POP_TOP);
         }
         RETURN_IF_ERROR(stack_edge(d, &failed, node.no, loc));
     }
     return SUCCESS;
+}
+
+static int
+stack_emit_failure(match_dag *d, dag_pending_edge *edge)
+{
+    compiler *c = d->c;
+    dag_stack stack = {edge->values, edge->size};
+    USE_LABEL(c, edge->label);
+    if (edge->optional) {
+        ADDOP(c, edge->loc, POP_TOP);
+    }
+    return stack_edge(d, &stack, edge->target, edge->loc);
+}
+
+/* A topological order keeps all graph edges forward. Prefer a success edge
+ * when its other predecessors are ready. Place cleanup before its destination,
+ * so failure paths do not need backward jumps or extra trace events. */
+static int
+stack_codegen_graph(match_dag *d, stmt_ty s, int root, int *workspace, int capacity)
+{
+    int *pending = PyMem_Malloc(d->nnodes * sizeof(int));
+    int *incoming = PyMem_Malloc(d->nnodes * sizeof(int));
+    if (pending == NULL || incoming == NULL) {
+        PyMem_Free(pending);
+        PyMem_Free(incoming);
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    memcpy(incoming, d->predecessors, d->nnodes * sizeof(int));
+    int count = 1, result = SUCCESS;
+    pending[0] = root;
+    while (count) {
+        int index = pending[--count];
+        for (int i = d->first_exit[index]; i >= 0;) {
+            dag_pending_edge *edge = &((dag_pending_edge *)d->exits.array)[i];
+            i = edge->next;
+            result = stack_emit_failure(d, edge);
+            PyMem_Free(edge->values);
+            edge->values = NULL;
+            if (result < 0) break;
+        }
+        if (result < 0) break;
+        if (!d->inlined[index] && stack_codegen_node(d, s, index, workspace, capacity) < 0) {
+            result = ERROR;
+            break;
+        }
+        dag_node node = DAG_NODE(d, index);
+        if (node.no >= 0 && --incoming[node.no] == 0) pending[count++] = node.no;
+        if (node.yes >= 0 && --incoming[node.yes] == 0) pending[count++] = node.yes;
+    }
+    PyMem_Free(pending);
+    PyMem_Free(incoming);
+    return result;
 }
