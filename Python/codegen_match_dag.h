@@ -83,6 +83,9 @@ typedef struct {
 
 #define DAG_OP(d, i) (((dag_operation *)(d)->operations.array)[i])
 #define DAG_NODE(d, i) (((dag_node *)(d)->nodes.array)[i])
+/* Bound per-state facts, live values, and operation outputs. The state budget
+ * then also bounds the total DAG analysis and stack-layout work. */
+#define DAG_MAX_WIDTH 64
 
 static int
 dag_capture(match_dag *d, PyObject *name)
@@ -474,6 +477,7 @@ dag_specialize(match_dag *d, int source, PyObject *context)
 {
     dag_node node = DAG_NODE(d, source);
     if (node.yes < 0 || d->states >= 4 * d->original ||
+        PySet_GET_SIZE(context) > DAG_MAX_WIDTH ||
         _Py_ReachedRecursionLimitWithMargin(_PyThreadState_GET(), 1)) {
         return source;
     }
@@ -693,6 +697,10 @@ dag_analyze_values(match_dag *d, int root)
             }
         }
         dag_inputs(d, op, &work, seen);
+        if (work.size > DAG_MAX_WIDTH) {
+            result = 1;  /* Use ordinary code generation before emission starts. */
+            goto done;
+        }
         qsort(work.values, work.size, sizeof(int), dag_compare_values);
         dag_stack *live = &d->blocks[i].live;
         live->values = PyMem_Malloc(work.size * sizeof(int));
@@ -799,6 +807,9 @@ dag_optimize(match_dag *d, int root)
         d->length_first[i] = d->original;
     }
     for (int i = 0; i < d->nops; i++) {
+        if (DAG_OP(d, i).count > DAG_MAX_WIDTH) {
+            return root;
+        }
         DAG_OP(d, i).first = d->original;
     }
     bool shared = false;
@@ -898,3 +909,4 @@ codegen_match_dag(compiler *c, stmt_ty s)
 
 #undef DAG_OP
 #undef DAG_NODE
+#undef DAG_MAX_WIDTH

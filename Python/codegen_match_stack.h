@@ -398,7 +398,10 @@ dag_emit_match(match_dag *d, stmt_ty s, int root)
 {
     compiler *c = d->c;
     int ncases = asdl_seq_LEN(s->v.Match.cases);
-    RETURN_IF_ERROR(dag_analyze_values(d, root));
+    int result = dag_analyze_values(d, root);
+    if (result != SUCCESS) {
+        return result;
+    }
     for (int i = 0; i < d->nnodes; i++) {
         d->blocks[i].label = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
     }
@@ -422,7 +425,7 @@ dag_emit_match(match_dag *d, stmt_ty s, int root)
         PyErr_NoMemory();
         return ERROR;
     }
-    int result = stack_codegen_graph(d, s, root, workspace);
+    result = stack_codegen_graph(d, s, root, workspace);
     PyMem_Free(workspace);
     RETURN_IF_ERROR(result);
     for (int i = 0; i < ncases; i++) {
