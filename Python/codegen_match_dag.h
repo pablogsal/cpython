@@ -92,29 +92,18 @@ dag_operation_new(match_dag *d, int kind, int a, int b, int arg,
     if (expr_key == NULL) {
         return ERROR;
     }
-    PyObject *key = Py_BuildValue("(iiiiiOON)", kind, a, b, arg,
+    PyObject *key = Py_BuildValue("(iiiiiON)", kind, a, b, arg,
                                  fresh ? d->nops + 1 : 0,
-                                 data ? data : Py_None, Py_None, expr_key);
+                                 data ? data : Py_None, expr_key);
     if (key == NULL) {
         return ERROR;
     }
-    PyObject *found = PyDict_GetItemWithError(d->op_ids, key);
-    if (found) {
-        int id = (int)PyLong_AsLong(found);
-        Py_DECREF(key);
+    int id = (int)_PyCompile_DictAddObj(d->op_ids, key);
+    Py_DECREF(key);
+    if (id < 0 || id < d->nops) {
         return id;
     }
-    int id = d->nops;
-    PyObject *number = PyLong_FromLong(id);
-    if (number == NULL || PyErr_Occurred() ||
-        _Py_CArray_EnsureCapacity(&d->operations, id) < 0 ||
-        PyDict_SetItem(d->op_ids, key, number) < 0) {
-        Py_DECREF(key);
-        Py_XDECREF(number);
-        return ERROR;
-    }
-    Py_DECREF(number);
-    Py_DECREF(key);
+    RETURN_IF_ERROR(_Py_CArray_EnsureCapacity(&d->operations, id));
     DAG_OP(d, id) = (dag_operation){
         .kind = kind, .a = a, .b = b, .arg = arg,
         .output = d->nvalues, .count = count,
@@ -142,23 +131,12 @@ dag_node_new(match_dag *d, int op, int yes, int no, location loc)
     if (key == NULL) {
         return ERROR;
     }
-    PyObject *found = PyDict_GetItemWithError(d->node_ids, key);
-    if (found) {
-        int id = (int)PyLong_AsLong(found);
-        Py_DECREF(key);
+    int id = (int)_PyCompile_DictAddObj(d->node_ids, key);
+    Py_DECREF(key);
+    if (id < 0 || id < d->nnodes) {
         return id;
     }
-    int id = d->nnodes;
-    PyObject *number = PyLong_FromLong(id);
-    if (number == NULL || PyErr_Occurred() ||
-        _Py_CArray_EnsureCapacity(&d->nodes, id) < 0 ||
-        PyDict_SetItem(d->node_ids, key, number) < 0) {
-        Py_DECREF(key);
-        Py_XDECREF(number);
-        return ERROR;
-    }
-    Py_DECREF(number);
-    Py_DECREF(key);
+    RETURN_IF_ERROR(_Py_CArray_EnsureCapacity(&d->nodes, id));
     DAG_NODE(d, id) = (dag_node){op, yes, no, loc};
     d->nnodes++;
     return id;
