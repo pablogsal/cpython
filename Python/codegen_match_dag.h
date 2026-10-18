@@ -464,10 +464,11 @@ dag_specialize(match_dag *d, int source, const unsigned char *context)
     if (Py_EnterRecursiveCall(" during match DAG specialization")) {
         return ERROR;
     }
+    int result = ERROR;
+    unsigned char *after = NULL;
     PyObject *key = PyBytes_FromStringAndSize(NULL, sizeof(int) + d->nops);
     if (key == NULL) {
-        Py_LeaveRecursiveCall();
-        return ERROR;
+        goto done;
     }
     char *bytes = PyBytes_AS_STRING(key);
     memcpy(bytes, &source, sizeof(int));
@@ -476,62 +477,57 @@ dag_specialize(match_dag *d, int source, const unsigned char *context)
         facts[i] = d->facts_live[(size_t)source * d->nops + i] ? context[i] : 0;
     }
     PyObject *found = PyDict_GetItemWithError(d->state_ids, key);
-    int result = ERROR;
     if (found) {
         result = (int)PyLong_AsLong(found);
+        goto done;
     }
-    else if (!PyErr_Occurred()) {
-        d->states++;
-        dag_operation op = DAG_OP(d, node.op);
-        int known = op.reusable ? facts[node.op] : 0;
-        if (known) {
-            d->removed++;
-            result = dag_specialize(d, known == 1 ? node.yes : node.no, facts);
+    if (PyErr_Occurred()) {
+        goto done;
+    }
+    d->states++;
+    dag_operation op = DAG_OP(d, node.op);
+    int known = op.reusable ? facts[node.op] : 0;
+    if (known) {
+        d->removed++;
+        result = dag_specialize(d, known == 1 ? node.yes : node.no, facts);
+    }
+    else {
+        after = PyMem_Malloc(d->nops);
+        if (after == NULL) {
+            PyErr_NoMemory();
+            goto done;
         }
-        else {
-            unsigned char *after = PyMem_Malloc(d->nops);
-            if (after == NULL) {
-                PyErr_NoMemory();
+        int targets[2] = {node.yes, node.no};
+        for (int edge = 0; edge < 2; edge++) {
+            if (targets[edge] < 0) {
+                continue;
+            }
+            if (op.kind == DAG_GUARD) {
+                memset(after, 0, d->nops);
             }
             else {
-                if (op.kind == DAG_GUARD) {
-                    memset(after, 0, d->nops);
-                }
-                else {
-                    memcpy(after, facts, d->nops);
-                }
-                if (op.reusable) {
-                    dag_record_fact(d, after, node.op, 1);
-                }
-                int yes = dag_specialize(d, node.yes, after);
-                int no = -1;
-                if (yes >= 0 && node.no >= 0) {
-                    if (op.kind == DAG_GUARD) {
-                        memset(after, 0, d->nops);
-                    }
-                    else {
-                        memcpy(after, facts, d->nops);
-                    }
-                    if (op.reusable) {
-                        dag_record_fact(d, after, node.op, 2);
-                    }
-                    no = dag_specialize(d, node.no, after);
-                }
-                PyMem_Free(after);
-                if (yes >= 0 && !PyErr_Occurred()) {
-                    result = dag_node_new(d, node.op, yes, no, node.loc);
-                }
+                memcpy(after, facts, d->nops);
+            }
+            if (op.reusable) {
+                dag_record_fact(d, after, node.op, edge + 1);
+            }
+            targets[edge] = dag_specialize(d, targets[edge], after);
+            if (targets[edge] < 0) {
+                goto done;
             }
         }
-        if (result >= 0) {
-            PyObject *number = PyLong_FromLong(result);
-            if (number == NULL || PyDict_SetItem(d->state_ids, key, number) < 0) {
-                result = ERROR;
-            }
-            Py_XDECREF(number);
-        }
+        result = dag_node_new(d, node.op, targets[0], targets[1], node.loc);
     }
-    Py_DECREF(key);
+    if (result >= 0) {
+        PyObject *number = PyLong_FromLong(result);
+        if (number == NULL || PyDict_SetItem(d->state_ids, key, number) < 0) {
+            result = ERROR;
+        }
+        Py_XDECREF(number);
+    }
+done:
+    PyMem_Free(after);
+    Py_XDECREF(key);
     Py_LeaveRecursiveCall();
     return result;
 }
@@ -743,9 +739,8 @@ dag_destination_location(match_dag *d, stmt_ty s, int target)
             match_case_ty m = asdl_seq_GET(s->v.Match.cases, op->arg);
             return LOC((stmt_ty)asdl_seq_GET(m->body, 0));
         }
-        if ((op->kind == DAG_COMMIT && !PyList_GET_SIZE(d->stores[op->arg])) ||
-            ((op->kind == DAG_LOAD || op->kind == DAG_TUPLE) &&
-             d->constants[op->output])) {
+        if ((op->kind == DAG_LOAD || op->kind == DAG_TUPLE) &&
+            d->constants[op->output]) {
             target = node.yes;
             continue;
         }
