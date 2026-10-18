@@ -32,7 +32,7 @@ typedef struct {
     PyObject **stores;
     PyObject **constants;
     unsigned char *facts_live, *values_live, *reachable;
-    int *colors, *local_slots;
+    int *colors;
     int **entry_layouts;
     int ordered_stack;
     int *predecessors, *first_exit;
@@ -702,33 +702,6 @@ dag_allocate(match_dag *d, int root)
     return SUCCESS;
 }
 
-static int
-dag_copy(match_dag *d, int value, int extra, location loc)
-{
-    if (d->constants[value]) {
-        return codegen_addop_load_const(d->c, loc, d->constants[value]);
-    }
-    if (d->local_slots) {
-        return codegen_addop_i(INSTR_SEQUENCE(d->c), LOAD_FAST,
-                              d->local_slots[d->colors[value]], loc);
-    }
-    return codegen_addop_i(INSTR_SEQUENCE(d->c), COPY,
-                          d->slots + extra - d->colors[value], loc);
-}
-
-static int
-dag_store(match_dag *d, int value, int extra, location loc)
-{
-    compiler *c = d->c;
-    if (d->local_slots) {
-        ADDOP_I(c, loc, STORE_FAST, d->local_slots[d->colors[value]]);
-        return SUCCESS;
-    }
-    ADDOP_I(c, loc, SWAP, d->slots + extra - d->colors[value]);
-    ADDOP(c, loc, POP_TOP);
-    return SUCCESS;
-}
-
 static location
 dag_destination_location(match_dag *d, stmt_ty s, int target)
 {
@@ -750,235 +723,6 @@ dag_destination_location(match_dag *d, stmt_ty s, int target)
 
 /* All edges use one allocated layout. Clear values at their last use; the
  * normal exception unwinder also owns and releases these operand-stack slots. */
-static int
-dag_edge(match_dag *d, int source, int target, int define, location loc)
-{
-    compiler *c = d->c;
-    int kind = DAG_OP(d, DAG_NODE(d, target).op).kind;
-    if (kind == DAG_ACCEPT || kind == DAG_END) {
-        /* The destination releases every slot. Clearing them first would
-         * add a load and swap for each value immediately before its pop. */
-        ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[target]);
-        return SUCCESS;
-    }
-    dag_operation *op = &DAG_OP(d, DAG_NODE(d, source).op);
-    unsigned char *before = d->values_live + (size_t)source * d->nvalues;
-    unsigned char *after = d->values_live + (size_t)target * d->nvalues;
-    for (int slot = 0; slot < d->slots; slot++) {
-        if (kind == DAG_GUARD && slot != d->colors[0]) {
-            /* The guard clears these before evaluating its expression. */
-            continue;
-        }
-        int was_live = 0, remains = 0;
-        for (int v = 0; v < d->nvalues; v++) {
-            if (d->colors[v] == slot) {
-                was_live |= before[v] || (define && v >= op->output && v < op->output + op->count);
-                remains |= after[v];
-            }
-        }
-        if (was_live && !remains) {
-            ADDOP_LOAD_CONST(c, loc, Py_None);
-            if (d->local_slots) {
-                ADDOP_I(c, loc, STORE_FAST, d->local_slots[slot]);
-            }
-            else {
-                ADDOP_I(c, loc, SWAP, d->slots + 1 - slot);
-                ADDOP(c, loc, POP_TOP);
-            }
-        }
-    }
-    ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[target]);
-    return SUCCESS;
-}
-
-static int
-dag_codegen_node(match_dag *d, stmt_ty s, int index)
-{
-    compiler *c = d->c;
-    dag_node node = DAG_NODE(d, index);
-    dag_operation op = DAG_OP(d, node.op);
-    location loc = node.loc;
-    USE_LABEL(c, d->labels[index]);
-    if ((op.kind == DAG_LOAD || op.kind == DAG_TUPLE) &&
-        d->constants[op.output]) {
-        ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[node.yes]);
-        return SUCCESS;
-    }
-    if (op.kind == DAG_BIND && d->colors[op.a] == d->colors[op.output]) {
-        return dag_edge(d, index, node.yes, 1, loc);
-    }
-    if (op.kind == DAG_ACCEPT || op.kind == DAG_END) {
-        loc = dag_destination_location(d, s, index);
-        for (int i = 0; i < d->slots; i++) {
-            if (d->local_slots) {
-                ADDOP_I(c, loc, DELETE_FAST, d->local_slots[i]);
-            }
-            else {
-                ADDOP(c, loc, POP_TOP);
-            }
-        }
-        ADDOP_JUMP(c, NO_LOCATION, JUMP,
-                   op.kind == DAG_END ? d->end : d->bodies[op.arg]);
-        return SUCCESS;
-    }
-    if (op.kind == DAG_GUARD) {
-        /* Captures have been committed. A guard can mutate any value examined
-         * by a pattern, even when it eventually returns true. */
-        for (int slot = 0; slot < d->slots; slot++) {
-            if (slot != d->colors[0]) {
-                ADDOP_LOAD_CONST(c, NO_LOCATION, Py_None);
-                if (d->local_slots) {
-                    ADDOP_I(c, NO_LOCATION, STORE_FAST, d->local_slots[slot]);
-                }
-                else {
-                    ADDOP_I(c, NO_LOCATION, SWAP, d->slots + 1 - slot);
-                    ADDOP(c, NO_LOCATION, POP_TOP);
-                }
-            }
-        }
-        NEW_JUMP_TARGET_LABEL(c, fail);
-        match_case_ty m = asdl_seq_GET(s->v.Match.cases, op.arg);
-        RETURN_IF_ERROR(codegen_jump_if(c, loc, m->guard, fail, 0));
-        ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[node.yes]);
-        USE_LABEL(c, fail);
-        ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[node.no]);
-        return SUCCESS;
-    }
-    if (op.kind == DAG_COMMIT) {
-        PyObject *stores = d->stores[op.arg];
-        for (int i = 0; i < PyList_GET_SIZE(stores); i++) {
-            PyObject *name = PyList_GET_ITEM(stores, i);
-            int value = (int)PyLong_AsLong(PyDict_GetItem(d->captures, name));
-            RETURN_IF_ERROR(dag_copy(d, value, 0, loc));
-            RETURN_IF_ERROR(codegen_nameop(c, loc, name, Store));
-        }
-    }
-    else if (op.kind == DAG_ENTER) {
-        ADDOP(c, loc, NOP);
-    }
-    else {
-        if (op.a >= 0) {
-            RETURN_IF_ERROR(dag_copy(d, op.a, 0, loc));
-        }
-        if (op.b >= 0 && op.kind != DAG_INDEX) {
-            RETURN_IF_ERROR(dag_copy(d, op.b, 1, loc));
-        }
-        switch (op.kind) {
-            case DAG_BIND:
-                break;
-            case DAG_ATTRIBUTE:
-                ADDOP_NAME(c, loc, LOAD_ATTR, op.data, names);
-                break;
-            case DAG_LOAD: {
-                int start = INSTR_SEQUENCE(c)->s_used;
-                VISIT(c, expr, op.expr);
-                /* The operation can originate at a different occurrence of
-                 * the same expression. Locations belong to graph nodes. */
-                for (int i = start; i < INSTR_SEQUENCE(c)->s_used; i++) {
-                    INSTR_SEQUENCE(c)->s_instrs[i].i_loc = loc;
-                }
-                break;
-            }
-            case DAG_SEQUENCE:
-            case DAG_MAPPING:
-            case DAG_LENGTH:
-                ADDOP(c, loc, op.kind == DAG_SEQUENCE ? MATCH_SEQUENCE :
-                      op.kind == DAG_MAPPING ? MATCH_MAPPING : GET_LEN);
-                ADDOP_I(c, loc, SWAP, 2);
-                ADDOP(c, loc, POP_TOP);
-                break;
-            case DAG_LENGTH_EQ:
-            case DAG_LENGTH_GE:
-                ADDOP_LOAD_CONST_NEW(c, loc, PyLong_FromLong(op.arg));
-                ADDOP_COMPARE(c, loc, op.kind == DAG_LENGTH_EQ ? Eq : GtE);
-                break;
-            case DAG_EQUAL:
-                ADDOP_COMPARE(c, loc, Eq);
-                ADDOP(c, loc, TO_BOOL);
-                break;
-            case DAG_SINGLETON:
-                ADDOP_LOAD_CONST(c, loc, op.data);
-                ADDOP_I(c, loc, IS_OP, 0);
-                break;
-            case DAG_INDEX:
-                if (op.arg < 0) {
-                    RETURN_IF_ERROR(dag_copy(d, op.b, 1, loc));
-                    ADDOP_LOAD_CONST_NEW(c, loc, PyLong_FromLong(-op.arg));
-                    ADDOP_BINARY(c, loc, Sub);
-                }
-                else {
-                    ADDOP_LOAD_CONST_NEW(c, loc, PyLong_FromLong(op.arg));
-                }
-                ADDOP_I(c, loc, BINARY_OP, NB_SUBSCR);
-                break;
-            case DAG_TUPLE:
-                for (int i = 0; i < op.arg; i++) {
-                    int value = (int)PyLong_AsLong(PyTuple_GET_ITEM(op.data, i));
-                    RETURN_IF_ERROR(dag_copy(d, value, i, loc));
-                }
-                ADDOP_I(c, loc, BUILD_TUPLE, op.arg);
-                break;
-            case DAG_UNPACK:
-                ADDOP_I(c, loc, op.data == Py_True ? UNPACK_EX : UNPACK_SEQUENCE, op.arg);
-                break;
-            case DAG_KEYS:
-                ADDOP(c, loc, MATCH_KEYS);
-                ADDOP_I(c, loc, SWAP, 2);
-                ADDOP(c, loc, POP_TOP);
-                ADDOP_I(c, loc, SWAP, 2);
-                ADDOP(c, loc, POP_TOP);
-                break;
-            case DAG_CLASS:
-                ADDOP_LOAD_CONST(c, loc, op.data);
-                ADDOP_I(c, loc, MATCH_CLASS, op.arg);
-                break;
-            case DAG_REST:
-                ADDOP_I(c, loc, BUILD_MAP, 0);
-                ADDOP_I(c, loc, SWAP, 3);
-                ADDOP_I(c, loc, DICT_UPDATE, 2);
-                ADDOP_I(c, loc, UNPACK_SEQUENCE, op.arg);
-                for (int i = op.arg; i > 0; i--) {
-                    ADDOP_I(c, loc, COPY, 1 + i);
-                    ADDOP_I(c, loc, SWAP, 2);
-                    ADDOP(c, loc, DELETE_SUBSCR);
-                }
-                break;
-            default:
-                Py_UNREACHABLE();
-        }
-    }
-    NEW_JUMP_TARGET_LABEL(c, fail);
-    int optional = op.kind == DAG_CLASS || op.kind == DAG_KEYS;
-    if (node.no >= 0) {
-        if (optional) {
-            ADDOP_I(c, loc, COPY, 1);
-            ADDOP_JUMP(c, loc, POP_JUMP_IF_NONE, fail);
-        }
-        else {
-            ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, fail);
-        }
-    }
-    for (int i = 0; i < op.count; i++) {
-        int value = op.output + i;
-        if (d->values_live[(size_t)node.yes * d->nvalues + value]) {
-            RETURN_IF_ERROR(dag_store(d, value, op.count - i, loc));
-        }
-        else {
-            ADDOP(c, loc, POP_TOP);
-        }
-    }
-    RETURN_IF_ERROR(dag_edge(d, index, node.yes, 1,
-                            dag_destination_location(d, s, node.yes)));
-    if (node.no >= 0) {
-        USE_LABEL(c, fail);
-        loc = dag_destination_location(d, s, node.no);
-        if (optional) {
-            ADDOP(c, loc, POP_TOP);
-        }
-        RETURN_IF_ERROR(dag_edge(d, index, node.no, 0, loc));
-    }
-    return SUCCESS;
-}
 
 #include "codegen_match_stack.h"
 
@@ -1081,67 +825,32 @@ dag_build(match_dag *d, stmt_ty s)
         d->bodies[i] = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
     }
     d->end = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
-    int sparse = Py_GETENV("PYTHON_MATCH_STACK") != NULL;
-    if (sparse && Py_GETENV("PYTHON_MATCH_LOCALS") != NULL) {
-        PyErr_SetString(PyExc_ValueError, "choose stack or local match placement");
+    d->entry_layouts = PyMem_Calloc(d->nnodes, sizeof(int *));
+    d->predecessors = PyMem_Calloc(d->nnodes, sizeof(int));
+    d->inlined = PyMem_Calloc(d->nnodes, 1);
+    d->first_exit = PyMem_Malloc(d->nnodes * sizeof(int));
+    if (!d->entry_layouts || !d->predecessors || !d->inlined || !d->first_exit) {
+        PyErr_NoMemory();
         return ERROR;
     }
-    if (d->ordered_stack) {
-        d->entry_layouts = PyMem_Calloc(d->nnodes, sizeof(int *));
-        d->predecessors = PyMem_Calloc(d->nnodes, sizeof(int));
-        d->inlined = PyMem_Calloc(d->nnodes, 1);
-        d->first_exit = PyMem_Malloc(d->nnodes * sizeof(int));
-        if (!d->entry_layouts || !d->predecessors || !d->inlined || !d->first_exit) {
-            PyErr_NoMemory();
-            return ERROR;
-        }
-        for (int i = 0; i < d->nnodes; i++) d->first_exit[i] = -1;
-        d->entry_layouts[root] = PyMem_Malloc(2 * sizeof(int));
-        if (d->entry_layouts[root] == NULL) {
-            PyErr_NoMemory();
-            return ERROR;
-        }
-        d->entry_layouts[root][0] = 1;
-        d->entry_layouts[root][1] = 0;
-        for (int i = 0; i < d->nnodes; i++) {
-            if (d->reachable[i]) {
-                dag_node node = DAG_NODE(d, i);
-                if (node.yes >= 0) d->predecessors[node.yes]++;
-                if (node.no >= 0) d->predecessors[node.no]++;
-            }
+    for (int i = 0; i < d->nnodes; i++) d->first_exit[i] = -1;
+    d->entry_layouts[root] = PyMem_Malloc(2 * sizeof(int));
+    if (d->entry_layouts[root] == NULL) {
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    d->entry_layouts[root][0] = 1;
+    d->entry_layouts[root][1] = 0;
+    for (int i = 0; i < d->nnodes; i++) {
+        if (d->reachable[i]) {
+            dag_node node = DAG_NODE(d, i);
+            if (node.yes >= 0) d->predecessors[node.yes]++;
+            if (node.no >= 0) d->predecessors[node.no]++;
         }
     }
-    if (Py_GETENV("PYTHON_MATCH_LOCALS") != NULL) {
-        d->local_slots = PyMem_Malloc(d->slots * sizeof(int));
-        if (d->local_slots == NULL) {
-            PyErr_NoMemory();
-            return ERROR;
-        }
-        for (int slot = 0; slot < d->slots; slot++) {
-            PyObject *name = PyUnicode_FromFormat(".match.%zd", PyDict_Size(METADATA(c)->u_varnames));
-            if (name == NULL) {
-                return ERROR;
-            }
-            int local = (int)_PyCompile_DictAddObj(METADATA(c)->u_varnames, name);
-            if (local >= 0 && METADATA(c)->u_fasthidden) {
-                local = PySet_Add(METADATA(c)->u_fasthidden, name) < 0 ? -1 : local;
-            }
-            Py_DECREF(name);
-            RETURN_IF_ERROR(local);
-            d->local_slots[slot] = local;
-        }
-    }
+
     VISIT(c, expr, s->v.Match.subject);
-    if (d->local_slots) {
-        ADDOP_I(c, NO_LOCATION, STORE_FAST, d->local_slots[0]);
-    }
-    for (int i = 1; !sparse && i < d->slots; i++) {
-        ADDOP_LOAD_CONST(c, NO_LOCATION, Py_None);
-        if (d->local_slots) {
-            ADDOP_I(c, NO_LOCATION, STORE_FAST, d->local_slots[i]);
-        }
-    }
-    assert(d->colors[0] == 0);
+
     ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[root]);
     int capacity = 2 * d->nvalues + 4;
     for (int i = 0; i < d->nops; i++) {
@@ -1149,29 +858,15 @@ dag_build(match_dag *d, stmt_ty s)
             capacity = Py_MAX(capacity, 2 * d->nvalues + DAG_OP(d, i).arg + 4);
         }
     }
-    int *workspace = sparse ? PyMem_Malloc(2 * capacity * sizeof(int)) : NULL;
-    if (sparse && workspace == NULL) {
+    int *workspace = PyMem_Malloc(2 * capacity * sizeof(int));
+    if (workspace == NULL) {
         PyErr_NoMemory();
         return ERROR;
     }
-    if (d->ordered_stack) {
-        int result = stack_codegen_graph(d, s, root, workspace, capacity);
-        PyMem_Free(workspace);
-        RETURN_IF_ERROR(result);
-    }
-    else {
-        for (int i = d->nnodes; i--;) {
-            if (d->reachable[i]) {
-                int result = sparse ? stack_codegen_node(d, s, i, workspace, capacity)
-                                    : dag_codegen_node(d, s, i);
-                if (result < 0) {
-                    PyMem_Free(workspace);
-                    return ERROR;
-                }
-            }
-        }
-        PyMem_Free(workspace);
-    }
+    int result = stack_codegen_graph(d, s, root, workspace, capacity);
+    PyMem_Free(workspace);
+    RETURN_IF_ERROR(result);
+
     for (int i = 0; i < ncases; i++) {
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
         USE_LABEL(c, d->bodies[i]);
@@ -1185,9 +880,7 @@ dag_build(match_dag *d, stmt_ty s)
 static int
 codegen_match_dag(compiler *c, stmt_ty s)
 {
-    const char *placement = Py_GETENV("PYTHON_MATCH_STACK");
-    match_dag d = {.c = c, .nvalues = 1,
-                   .ordered_stack = placement && strcmp(placement, "2") == 0};
+    match_dag d = {.c = c, .nvalues = 1, .ordered_stack = 1};
     _Py_CArray_Init(&d.operations, sizeof(dag_operation), 32);
     _Py_CArray_Init(&d.nodes, sizeof(dag_node), 64);
     _Py_CArray_Init(&d.exits, sizeof(dag_pending_edge), 32);
@@ -1229,7 +922,6 @@ codegen_match_dag(compiler *c, stmt_ty s)
     PyMem_Free(d.values_live);
     PyMem_Free(d.reachable);
     PyMem_Free(d.colors);
-    PyMem_Free(d.local_slots);
     PyMem_Free(d.predecessors);
     PyMem_Free(d.first_exit);
     PyMem_Free(d.inlined);
