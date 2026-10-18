@@ -407,3 +407,57 @@ stack_codegen_graph(match_dag *d, stmt_ty s, int root, int *workspace, int capac
     PyMem_Free(pending);
     return result;
 }
+
+static int
+dag_emit_match(match_dag *d, stmt_ty s, int root)
+{
+    compiler *c = d->c;
+    int ncases = asdl_seq_LEN(s->v.Match.cases);
+    RETURN_IF_ERROR(dag_analyze_values(d, root));
+    for (int i = 0; i < d->nnodes; i++) {
+        dag_operation *op = &DAG_OP(d, DAG_NODE(d, i).op);
+        if (op->kind == DAG_ACCEPT && !d->blocks[i].reachable) {
+            match_case_ty m = asdl_seq_GET(s->v.Match.cases, op->arg);
+            RETURN_IF_ERROR(_PyCompile_Warn(c, LOC(m->pattern),
+                                           "pattern is unreachable"));
+        }
+    }
+    for (int i = 0; i < d->nnodes; i++) {
+        d->blocks[i].label = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+    }
+    for (int i = 0; i < ncases; i++) {
+        d->bodies[i] = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+    }
+    d->end = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+    dag_stack *entry = &d->blocks[root].entry;
+    entry->values = PyMem_Calloc(1, sizeof(int));
+    if (entry->values == NULL) {
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    entry->size = 1;
+    VISIT(c, expr, s->v.Match.subject);
+    ADDOP_JUMP(c, NO_LOCATION, JUMP, d->blocks[root].label);
+    int capacity = 2 * d->nvalues + 4;
+    for (int i = 0; i < d->nops; i++) {
+        if (DAG_OP(d, i).kind == DAG_TUPLE) {
+            capacity = Py_MAX(capacity, 2 * d->nvalues + DAG_OP(d, i).arg + 4);
+        }
+    }
+    int *workspace = PyMem_Malloc(2 * capacity * sizeof(int));
+    if (workspace == NULL) {
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    int result = stack_codegen_graph(d, s, root, workspace, capacity);
+    PyMem_Free(workspace);
+    RETURN_IF_ERROR(result);
+    for (int i = 0; i < ncases; i++) {
+        match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
+        USE_LABEL(c, d->bodies[i]);
+        VISIT_SEQ(c, stmt, m->body);
+        ADDOP_JUMP(c, NO_LOCATION, JUMP, d->end);
+    }
+    USE_LABEL(c, d->end);
+    return SUCCESS;
+}
