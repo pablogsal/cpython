@@ -31,7 +31,7 @@ typedef struct {
     PyObject **stores;
     PyObject **constants;
     unsigned char *facts_live, *values_live, *reachable;
-    int *colors;
+    int *colors, *local_slots;
     jump_target_label *labels, *bodies;
     jump_target_label end;
 } match_dag;
@@ -723,6 +723,10 @@ dag_copy(match_dag *d, int value, int extra, location loc)
     if (d->constants[value]) {
         return codegen_addop_load_const(d->c, loc, d->constants[value]);
     }
+    if (d->local_slots) {
+        return codegen_addop_i(INSTR_SEQUENCE(d->c), LOAD_FAST,
+                              d->local_slots[d->colors[value]], loc);
+    }
     return codegen_addop_i(INSTR_SEQUENCE(d->c), COPY,
                           d->slots + extra - d->colors[value], loc);
 }
@@ -731,6 +735,10 @@ static int
 dag_store(match_dag *d, int value, int extra, location loc)
 {
     compiler *c = d->c;
+    if (d->local_slots) {
+        ADDOP_I(c, loc, STORE_FAST, d->local_slots[d->colors[value]]);
+        return SUCCESS;
+    }
     ADDOP_I(c, loc, SWAP, d->slots + extra - d->colors[value]);
     ADDOP(c, loc, POP_TOP);
     return SUCCESS;
@@ -786,8 +794,13 @@ dag_edge(match_dag *d, int source, int target, int define, location loc)
         }
         if (was_live && !remains) {
             ADDOP_LOAD_CONST(c, loc, Py_None);
-            ADDOP_I(c, loc, SWAP, d->slots + 1 - slot);
-            ADDOP(c, loc, POP_TOP);
+            if (d->local_slots) {
+                ADDOP_I(c, loc, STORE_FAST, d->local_slots[slot]);
+            }
+            else {
+                ADDOP_I(c, loc, SWAP, d->slots + 1 - slot);
+                ADDOP(c, loc, POP_TOP);
+            }
         }
     }
     ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[target]);
@@ -813,7 +826,12 @@ dag_codegen_node(match_dag *d, stmt_ty s, int index)
     if (op.kind == DAG_ACCEPT || op.kind == DAG_END) {
         loc = dag_destination_location(d, s, index);
         for (int i = 0; i < d->slots; i++) {
-            ADDOP(c, loc, POP_TOP);
+            if (d->local_slots) {
+                ADDOP_I(c, loc, DELETE_FAST, d->local_slots[i]);
+            }
+            else {
+                ADDOP(c, loc, POP_TOP);
+            }
         }
         ADDOP_JUMP(c, NO_LOCATION, JUMP,
                    op.kind == DAG_END ? d->end : d->bodies[op.arg]);
@@ -825,8 +843,13 @@ dag_codegen_node(match_dag *d, stmt_ty s, int index)
         for (int slot = 0; slot < d->slots; slot++) {
             if (slot != d->colors[0]) {
                 ADDOP_LOAD_CONST(c, NO_LOCATION, Py_None);
-                ADDOP_I(c, NO_LOCATION, SWAP, d->slots + 1 - slot);
-                ADDOP(c, NO_LOCATION, POP_TOP);
+                if (d->local_slots) {
+                    ADDOP_I(c, NO_LOCATION, STORE_FAST, d->local_slots[slot]);
+                }
+                else {
+                    ADDOP_I(c, NO_LOCATION, SWAP, d->slots + 1 - slot);
+                    ADDOP(c, NO_LOCATION, POP_TOP);
+                }
             }
         }
         NEW_JUMP_TARGET_LABEL(c, fail);
@@ -973,6 +996,8 @@ dag_codegen_node(match_dag *d, stmt_ty s, int index)
     return SUCCESS;
 }
 
+#include "codegen_match_stack.h"
+
 static int
 dag_build(match_dag *d, stmt_ty s)
 {
@@ -1072,17 +1097,61 @@ dag_build(match_dag *d, stmt_ty s)
         d->bodies[i] = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
     }
     d->end = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+    int sparse = Py_GETENV("PYTHON_MATCH_STACK") != NULL;
+    if (Py_GETENV("PYTHON_MATCH_LOCALS") != NULL) {
+        d->local_slots = PyMem_Malloc(d->slots * sizeof(int));
+        if (d->local_slots == NULL) {
+            PyErr_NoMemory();
+            return ERROR;
+        }
+        for (int slot = 0; slot < d->slots; slot++) {
+            PyObject *name = PyUnicode_FromFormat(".match.%zd", PyDict_Size(METADATA(c)->u_varnames));
+            if (name == NULL) {
+                return ERROR;
+            }
+            int local = (int)_PyCompile_DictAddObj(METADATA(c)->u_varnames, name);
+            if (local >= 0 && METADATA(c)->u_fasthidden) {
+                local = PySet_Add(METADATA(c)->u_fasthidden, name) < 0 ? -1 : local;
+            }
+            Py_DECREF(name);
+            RETURN_IF_ERROR(local);
+            d->local_slots[slot] = local;
+        }
+    }
     VISIT(c, expr, s->v.Match.subject);
-    for (int i = 1; i < d->slots; i++) {
+    if (d->local_slots) {
+        ADDOP_I(c, NO_LOCATION, STORE_FAST, d->local_slots[0]);
+    }
+    for (int i = 1; !sparse && i < d->slots; i++) {
         ADDOP_LOAD_CONST(c, NO_LOCATION, Py_None);
+        if (d->local_slots) {
+            ADDOP_I(c, NO_LOCATION, STORE_FAST, d->local_slots[i]);
+        }
     }
     assert(d->colors[0] == 0);
     ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[root]);
-    for (int i = d->nnodes; i--;) {
-        if (d->reachable[i]) {
-            RETURN_IF_ERROR(dag_codegen_node(d, s, i));
+    int capacity = 2 * d->nvalues + 4;
+    for (int i = 0; i < d->nops; i++) {
+        if (DAG_OP(d, i).kind == DAG_TUPLE) {
+            capacity = Py_MAX(capacity, 2 * d->nvalues + DAG_OP(d, i).arg + 4);
         }
     }
+    int *workspace = sparse ? PyMem_Malloc(2 * capacity * sizeof(int)) : NULL;
+    if (sparse && workspace == NULL) {
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    for (int i = d->nnodes; i--;) {
+        if (d->reachable[i]) {
+            int result = sparse ? stack_codegen_node(d, s, i, workspace, capacity)
+                                : dag_codegen_node(d, s, i);
+            if (result < 0) {
+                PyMem_Free(workspace);
+                return ERROR;
+            }
+        }
+    }
+    PyMem_Free(workspace);
     for (int i = 0; i < ncases; i++) {
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
         USE_LABEL(c, d->bodies[i]);
@@ -1133,6 +1202,7 @@ codegen_match_dag(compiler *c, stmt_ty s)
     PyMem_Free(d.values_live);
     PyMem_Free(d.reachable);
     PyMem_Free(d.colors);
+    PyMem_Free(d.local_slots);
     PyMem_Free(d.labels);
     if (d.constants) {
         for (int i = 0; i < d.nvalues; i++) {
