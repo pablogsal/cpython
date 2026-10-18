@@ -1,8 +1,8 @@
 /* Experimental ordered match DAG. Included by codegen.c.
  *
  * Operations name their input values, independently of operand-stack positions.
- * Specialization remembers both outcomes of a test. Liveness then assigns the
- * same kind of temporary slot to extracted values and pending captures.
+ * Specialization remembers both outcomes of a test. The stack emitter keeps
+ * extracted values and pending captures until their last use.
  */
 
 enum dag_kind {
@@ -24,19 +24,36 @@ typedef struct {
 } dag_node;
 
 typedef struct {
+    int *values;
+    int size;
+} dag_stack;
+
+typedef struct dag_failure {
+    struct dag_failure *next;
+    jump_target_label label;
+    location loc;
+    int size, pop_none;
+    int values[];
+} dag_failure;
+
+typedef struct {
+    dag_stack entry;
+    jump_target_label label;
+    dag_failure *failures;
+    int pending;
+    bool reachable, single_predecessor, inlined;
+} dag_block;
+
+typedef struct {
     compiler *c;
-    _Py_c_array_t operations, nodes, exits;
-    int nexits;
+    _Py_c_array_t operations, nodes;
     int nops, nnodes, nvalues, original, states, removed;
     PyObject *op_ids, *node_ids, *state_ids, *captures;
     PyObject **stores;
     PyObject **constants;
-    unsigned char *facts_live, *values_live, *reachable;
-    int **entry_layouts;
-    int ordered_stack;
-    int *predecessors, *first_exit;
-    unsigned char *inlined;
-    jump_target_label *labels, *bodies;
+    unsigned char *facts_live, *values_live;
+    dag_block *blocks;
+    jump_target_label *bodies;
     jump_target_label end;
 } match_dag;
 
@@ -591,27 +608,30 @@ dag_allocate(match_dag *d, int root)
             }
         }
     }
-    d->reachable = PyMem_Calloc(d->nnodes, 1);
+    d->blocks = PyMem_Calloc(d->nnodes, sizeof(dag_block));
     d->values_live = PyMem_Calloc(d->nnodes, nv);
-    if (!d->reachable || !d->values_live) {
+    if (!d->blocks || !d->values_live) {
         PyErr_NoMemory();
         return ERROR;
     }
-    d->reachable[root] = 1;
+    d->blocks[root].reachable = true;
     for (int i = root; i >= 0; i--) {
-        if (!d->reachable[i]) {
+        if (!d->blocks[i].reachable) {
             continue;
         }
         dag_node node = DAG_NODE(d, i);
         int targets[2] = {node.yes, node.no};
         for (int edge = 0; edge < 2; edge++) {
             if (targets[edge] >= 0) {
-                d->reachable[targets[edge]] = 1;
+                dag_block *target = &d->blocks[targets[edge]];
+                target->reachable = true;
+                target->pending++;
+                target->single_predecessor = target->pending == 1;
             }
         }
     }
     for (int i = 0; i < d->nnodes; i++) {
-        if (!d->reachable[i]) {
+        if (!d->blocks[i].reachable) {
             continue;
         }
         dag_node node = DAG_NODE(d, i);
@@ -654,9 +674,6 @@ dag_destination_location(match_dag *d, stmt_ty s, int target)
         return node.loc;
     }
 }
-
-/* All edges use one allocated layout. Clear values at their last use; the
- * normal exception unwinder also owns and releases these operand-stack slots. */
 
 #include "codegen_match_stack.h"
 
@@ -734,58 +751,33 @@ dag_build(match_dag *d, stmt_ty s)
     PyMem_Free(context);
     RETURN_IF_ERROR(root);
     if (!d->removed) {
-        /* Nothing was shared. Preserve the ordinary compiler's stack layout
-         * instead of paying for graph temporaries with no possible saving. */
         return 1;
     }
     RETURN_IF_ERROR(dag_allocate(d, root));
     for (int i = 0; i < d->nnodes; i++) {
         dag_operation *op = &DAG_OP(d, DAG_NODE(d, i).op);
-        if (op->kind == DAG_ACCEPT && !d->reachable[i]) {
+        if (op->kind == DAG_ACCEPT && !d->blocks[i].reachable) {
             match_case_ty m = asdl_seq_GET(s->v.Match.cases, op->arg);
             RETURN_IF_ERROR(_PyCompile_Warn(c, LOC(m->pattern),
                                            "pattern is unreachable"));
         }
     }
-    d->labels = PyMem_Malloc(d->nnodes * sizeof(jump_target_label));
-    if (d->labels == NULL) {
-        PyErr_NoMemory();
-        return ERROR;
-    }
     for (int i = 0; i < d->nnodes; i++) {
-        d->labels[i] = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+        d->blocks[i].label = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
     }
     for (int i = 0; i < ncases; i++) {
         d->bodies[i] = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
     }
     d->end = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
-    d->entry_layouts = PyMem_Calloc(d->nnodes, sizeof(int *));
-    d->predecessors = PyMem_Calloc(d->nnodes, sizeof(int));
-    d->inlined = PyMem_Calloc(d->nnodes, 1);
-    d->first_exit = PyMem_Malloc(d->nnodes * sizeof(int));
-    if (!d->entry_layouts || !d->predecessors || !d->inlined || !d->first_exit) {
+    dag_stack *entry = &d->blocks[root].entry;
+    entry->values = PyMem_Calloc(1, sizeof(int));
+    if (entry->values == NULL) {
         PyErr_NoMemory();
         return ERROR;
     }
-    for (int i = 0; i < d->nnodes; i++) d->first_exit[i] = -1;
-    d->entry_layouts[root] = PyMem_Malloc(2 * sizeof(int));
-    if (d->entry_layouts[root] == NULL) {
-        PyErr_NoMemory();
-        return ERROR;
-    }
-    d->entry_layouts[root][0] = 1;
-    d->entry_layouts[root][1] = 0;
-    for (int i = 0; i < d->nnodes; i++) {
-        if (d->reachable[i]) {
-            dag_node node = DAG_NODE(d, i);
-            if (node.yes >= 0) d->predecessors[node.yes]++;
-            if (node.no >= 0) d->predecessors[node.no]++;
-        }
-    }
-
+    entry->size = 1;
     VISIT(c, expr, s->v.Match.subject);
-
-    ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[root]);
+    ADDOP_JUMP(c, NO_LOCATION, JUMP, d->blocks[root].label);
     int capacity = 2 * d->nvalues + 4;
     for (int i = 0; i < d->nops; i++) {
         if (DAG_OP(d, i).kind == DAG_TUPLE) {
@@ -800,7 +792,6 @@ dag_build(match_dag *d, stmt_ty s)
     int result = stack_codegen_graph(d, s, root, workspace, capacity);
     PyMem_Free(workspace);
     RETURN_IF_ERROR(result);
-
     for (int i = 0; i < ncases; i++) {
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
         USE_LABEL(c, d->bodies[i]);
@@ -811,13 +802,14 @@ dag_build(match_dag *d, stmt_ty s)
     return SUCCESS;
 }
 
+/* Return 1 when no work was shared, so codegen_match can use ordinary
+ * bytecode without the cost of graph temporaries. Otherwise return 0 or -1. */
 static int
 codegen_match_dag(compiler *c, stmt_ty s)
 {
-    match_dag d = {.c = c, .nvalues = 1, .ordered_stack = 1};
+    match_dag d = {.c = c, .nvalues = 1};
     _Py_CArray_Init(&d.operations, sizeof(dag_operation), 32);
     _Py_CArray_Init(&d.nodes, sizeof(dag_node), 64);
-    _Py_CArray_Init(&d.exits, sizeof(dag_pending_edge), 32);
     d.op_ids = PyDict_New();
     d.node_ids = PyDict_New();
     d.state_ids = PyDict_New();
@@ -846,25 +838,22 @@ codegen_match_dag(compiler *c, stmt_ty s)
     Py_XDECREF(d.captures);
     _Py_CArray_Fini(&d.operations);
     _Py_CArray_Fini(&d.nodes);
-    for (int i = 0; i < d.nexits; i++) {
-        PyMem_Free(((dag_pending_edge *)d.exits.array)[i].values);
-    }
-    _Py_CArray_Fini(&d.exits);
     PyMem_Free(d.stores);
     PyMem_Free(d.bodies);
     PyMem_Free(d.facts_live);
     PyMem_Free(d.values_live);
-    PyMem_Free(d.reachable);
-    PyMem_Free(d.predecessors);
-    PyMem_Free(d.first_exit);
-    PyMem_Free(d.inlined);
-    if (d.entry_layouts) {
+    if (d.blocks) {
         for (int i = 0; i < d.nnodes; i++) {
-            PyMem_Free(d.entry_layouts[i]);
+            PyMem_Free(d.blocks[i].entry.values);
+            dag_failure *failure = d.blocks[i].failures;
+            while (failure) {
+                dag_failure *next = failure->next;
+                PyMem_Free(failure);
+                failure = next;
+            }
         }
-        PyMem_Free(d.entry_layouts);
+        PyMem_Free(d.blocks);
     }
-    PyMem_Free(d.labels);
     if (d.constants) {
         for (int i = 0; i < d.nvalues; i++) {
             Py_XDECREF(d.constants[i]);

@@ -1,13 +1,7 @@
-/* Experimental sparse operand-stack placement for the same ordered DAG.
- * Node entries contain only live values, in virtual-value order. Edges drop
- * dead values and reconcile permutations. This deliberately shares the graph
- * and liveness calculation with the fixed-slot experiment for comparison.
+/* Emit the ordered DAG with only live values on the operand stack.
+ * The first incoming edge chooses each block's stack layout. Later edges
+ * reconcile their values with that layout.
  */
-typedef struct {
-    int *values;
-    int size;
-} dag_stack;
-
 static int
 stack_swap(match_dag *d, dag_stack *stack, int index, location loc)
 {
@@ -70,27 +64,24 @@ stack_edge(match_dag *d, dag_stack *stack, int target, location loc)
             stack->size--;
         }
     }
-    int *layout = NULL;
-    if (d->entry_layouts) {
-        layout = d->entry_layouts[target];
-        if (layout == NULL) {
-            layout = PyMem_Malloc((stack->size + 1) * sizeof(int));
-            if (layout == NULL) {
-                PyErr_NoMemory();
-                return ERROR;
+    dag_stack *entry = &d->blocks[target].entry;
+    if (entry->values == NULL) {
+        entry->values = PyMem_Malloc(stack->size * sizeof(int));
+        if (entry->values == NULL) {
+            PyErr_NoMemory();
+            return ERROR;
+        }
+        unsigned char *needed = d->values_live + (size_t)target * d->nvalues;
+        for (int i = 0; i < stack->size; i++) {
+            int value = stack->values[i];
+            if (value >= 0 && needed[value]) {
+                entry->values[entry->size++] = value;
             }
-            layout[0] = stack->size;
-            memcpy(layout + 1, stack->values, stack->size * sizeof(int));
-            d->entry_layouts[target] = layout;
         }
-        assert(layout[0] == stack->size);
     }
-    int dest = 0;
-    for (int v = 0; v < (layout ? layout[0] : d->nvalues); v++) {
-        int value = layout ? layout[v + 1] : v;
-        if (!live[value]) {
-            continue;
-        }
+    assert(entry->size == stack->size);
+    for (int dest = 0; dest < stack->size; dest++) {
+        int value = entry->values[dest];
         int source = dest;
         while (source < stack->size && stack->values[source] != value) {
             source++;
@@ -106,53 +97,38 @@ stack_edge(match_dag *d, dag_stack *stack, int target, location loc)
                 RETURN_IF_ERROR(stack_swap(d, stack, source, loc));
             }
         }
-        dest++;
     }
-    assert(dest == stack->size);
-    ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[target]);
+    ADDOP_JUMP(c, NO_LOCATION, JUMP, d->blocks[target].label);
     return SUCCESS;
 }
 
-typedef struct {
-    jump_target_label label;
-    int target, size, optional, next;
-    int *values;
-    location loc;
-} dag_pending_edge;
-
 static int
 stack_queue_failure(match_dag *d, dag_stack *stack, int target,
-                    jump_target_label label, int optional, location loc)
+                    jump_target_label label, int pop_none, location loc)
 {
-    int *values = PyMem_Malloc((stack->size + 1) * sizeof(int));
-    if (values == NULL) {
+    dag_failure *failure = PyMem_Malloc(sizeof(*failure) + stack->size * sizeof(int));
+    if (failure == NULL) {
         PyErr_NoMemory();
         return ERROR;
     }
-    memcpy(values, stack->values, stack->size * sizeof(int));
-    if (_Py_CArray_EnsureCapacity(&d->exits, d->nexits) < 0) {
-        PyMem_Free(values);
-        return ERROR;
-    }
-    dag_pending_edge edge = {label, target, stack->size, optional,
-                             d->first_exit[target], values, loc};
-    d->first_exit[target] = d->nexits;
-    ((dag_pending_edge *)d->exits.array)[d->nexits++] = edge;
-    if (d->entry_layouts[target] == NULL) {
-        int *layout = PyMem_Malloc((stack->size + 1) * sizeof(int));
-        if (layout == NULL) {
+    *failure = (dag_failure){.next = d->blocks[target].failures,
+        .label = label, .loc = loc, .size = stack->size, .pop_none = pop_none};
+    memcpy(failure->values, stack->values, stack->size * sizeof(int));
+    d->blocks[target].failures = failure;
+    dag_stack *entry = &d->blocks[target].entry;
+    if (entry->values == NULL) {
+        entry->values = PyMem_Malloc(stack->size * sizeof(int));
+        if (entry->values == NULL) {
             PyErr_NoMemory();
             return ERROR;
         }
-        int count = 0;
-        unsigned char *live = d->values_live + (size_t)target * d->nvalues;
+        unsigned char *needed = d->values_live + (size_t)target * d->nvalues;
         for (int i = 0; i < stack->size; i++) {
-            if (stack->values[i] >= 0 && live[stack->values[i]]) {
-                layout[++count] = stack->values[i];
+            int value = stack->values[i];
+            if (value >= 0 && needed[value]) {
+                entry->values[entry->size++] = value;
             }
         }
-        layout[0] = count;
-        d->entry_layouts[target] = layout;
     }
     return SUCCESS;
 }
@@ -166,21 +142,11 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
     location loc = node.loc;
     dag_stack stack = {.values = workspace};
     dag_stack failed = {.values = workspace + capacity};
-    unsigned char *live = d->values_live + (size_t)index * d->nvalues;
-    if (d->entry_layouts) {
-        int *layout = d->entry_layouts[index];
-        assert(layout != NULL);
-        stack.size = layout[0];
-        memcpy(stack.values, layout + 1, stack.size * sizeof(int));
-    }
-    else {
-        for (int value = 0; value < d->nvalues; value++) {
-            if (live[value]) {
-                stack.values[stack.size++] = value;
-            }
-        }
-    }
-    USE_LABEL(c, d->labels[index]);
+    dag_stack *entry = &d->blocks[index].entry;
+    assert(entry->values != NULL);
+    stack.size = entry->size;
+    memcpy(stack.values, entry->values, stack.size * sizeof(int));
+    USE_LABEL(c, d->blocks[index].label);
     if ((op.kind == DAG_LOAD || op.kind == DAG_TUPLE) && d->constants[op.output]) {
         return stack_edge(d, &stack, node.yes, loc);
     }
@@ -199,14 +165,10 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
         match_case_ty m = asdl_seq_GET(s->v.Match.cases, op.arg);
         RETURN_IF_ERROR(codegen_jump_if(c, loc, m->guard, fail, 0));
         RETURN_IF_ERROR(stack_edge(d, &stack, node.yes, loc));
-        if (d->ordered_stack) {
-            return stack_queue_failure(d, &failed, node.no, fail, 0, loc);
-        }
-        USE_LABEL(c, fail);
-        return stack_edge(d, &failed, node.no, loc);
+        return stack_queue_failure(d, &failed, node.no, fail, 0, loc);
     }
     int inline_equal = -1;
-    if (d->ordered_stack && op.kind == DAG_ATTRIBUTE && d->predecessors[node.yes] == 1) {
+    if (op.kind == DAG_ATTRIBUTE && d->blocks[node.yes].single_predecessor) {
         dag_node next = DAG_NODE(d, node.yes);
         dag_operation comparison = DAG_OP(d, next.op);
         if (comparison.kind == DAG_EQUAL && comparison.b == op.output &&
@@ -223,10 +185,10 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
                     stack_live_after(d, next, comparison.a) || comparison.a == op.a, loc));
             }
             inline_equal = node.yes;
-            d->inlined[inline_equal] = 1;
+            d->blocks[inline_equal].inlined = true;
         }
     }
-    if (d->ordered_stack && op.kind == DAG_BIND &&
+    if (op.kind == DAG_BIND &&
         !d->constants[op.a] && !stack_live_after(d, node, op.a)) {
         for (int i = 0; i < stack.size; i++) {
             if (stack.values[i] == op.a) {
@@ -259,8 +221,8 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
     }
     else {
         int inputs = 0;
-        int pair_ready = d->ordered_stack && op.a >= 0 && op.b >= 0 &&
-            (op.kind != DAG_INDEX || op.arg < 0) && stack.size >= 2 &&
+        int pair_ready = op.a >= 0 && op.b >= 0 &&
+            stack.size >= 2 &&
             stack.values[stack.size - 2] == op.a && stack.values[stack.size - 1] == op.b &&
             !stack_live_after(d, node, op.a) && !stack_live_after(d, node, op.b);
         if (pair_ready) {
@@ -271,7 +233,7 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
                                       stack_live_after(d, node, op.a) || op.a == op.b, loc));
             inputs++;
         }
-        if (op.b >= 0 && op.kind != DAG_INDEX && !pair_ready) {
+        if (op.b >= 0 && !pair_ready) {
             RETURN_IF_ERROR(stack_use(d, &stack, op.b,
                                       stack_live_after(d, node, op.b), loc));
             inputs++;
@@ -305,11 +267,6 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
                 break;
             case DAG_INDEX:
                 if (op.arg < 0) {
-                    if (!pair_ready) {
-                        RETURN_IF_ERROR(stack_use(d, &stack, op.b,
-                                                  stack_live_after(d, node, op.b), loc));
-                        inputs++;
-                    }
                     ADDOP_LOAD_CONST_NEW(c, loc, PyLong_FromLong(-op.arg));
                     ADDOP_BINARY(c, loc, Sub);
                 }
@@ -369,9 +326,9 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
         stack.size--;
     }
     NEW_JUMP_TARGET_LABEL(c, fail);
-    int optional = op.kind == DAG_CLASS || op.kind == DAG_KEYS;
+    int pop_none = op.kind == DAG_CLASS || op.kind == DAG_KEYS;
     if (node.no >= 0) {
-        if (optional) {
+        if (pop_none) {
             ADDOP_I(c, loc, COPY, 1);
             ADDOP_JUMP(c, loc, POP_JUMP_IF_NONE, fail);
         }
@@ -388,28 +345,21 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
                               dag_destination_location(d, s, node.yes)));
     if (node.no >= 0) {
         loc = dag_destination_location(d, s, node.no);
-        if (d->ordered_stack) {
-            return stack_queue_failure(d, &failed, node.no, fail, optional, loc);
-        }
-        USE_LABEL(c, fail);
-        if (optional) {
-            ADDOP(c, loc, POP_TOP);
-        }
-        RETURN_IF_ERROR(stack_edge(d, &failed, node.no, loc));
+        return stack_queue_failure(d, &failed, node.no, fail, pop_none, loc);
     }
     return SUCCESS;
 }
 
 static int
-stack_emit_failure(match_dag *d, dag_pending_edge *edge)
+stack_emit_failure(match_dag *d, dag_failure *failure, int target)
 {
     compiler *c = d->c;
-    dag_stack stack = {edge->values, edge->size};
-    USE_LABEL(c, edge->label);
-    if (edge->optional) {
-        ADDOP(c, edge->loc, POP_TOP);
+    dag_stack stack = {failure->values, failure->size};
+    USE_LABEL(c, failure->label);
+    if (failure->pop_none) {
+        ADDOP(c, failure->loc, POP_TOP);
     }
-    return stack_edge(d, &stack, edge->target, edge->loc);
+    return stack_edge(d, &stack, target, failure->loc);
 }
 
 /* A topological order keeps all graph edges forward. Prefer a success edge
@@ -419,36 +369,41 @@ static int
 stack_codegen_graph(match_dag *d, stmt_ty s, int root, int *workspace, int capacity)
 {
     int *pending = PyMem_Malloc(d->nnodes * sizeof(int));
-    int *incoming = PyMem_Malloc(d->nnodes * sizeof(int));
-    if (pending == NULL || incoming == NULL) {
-        PyMem_Free(pending);
-        PyMem_Free(incoming);
+    if (pending == NULL) {
         PyErr_NoMemory();
         return ERROR;
     }
-    memcpy(incoming, d->predecessors, d->nnodes * sizeof(int));
     int count = 1, result = SUCCESS;
     pending[0] = root;
     while (count) {
         int index = pending[--count];
-        for (int i = d->first_exit[index]; i >= 0;) {
-            dag_pending_edge *edge = &((dag_pending_edge *)d->exits.array)[i];
-            i = edge->next;
-            result = stack_emit_failure(d, edge);
-            PyMem_Free(edge->values);
-            edge->values = NULL;
-            if (result < 0) break;
+        dag_block *block = &d->blocks[index];
+        while (block->failures) {
+            dag_failure *failure = block->failures;
+            block->failures = failure->next;
+            result = stack_emit_failure(d, failure, index);
+            PyMem_Free(failure);
+            if (result < 0) {
+                break;
+            }
         }
-        if (result < 0) break;
-        if (!d->inlined[index] && stack_codegen_node(d, s, index, workspace, capacity) < 0) {
-            result = ERROR;
+        if (result < 0) {
             break;
         }
+        if (!block->inlined) {
+            result = stack_codegen_node(d, s, index, workspace, capacity);
+            if (result < 0) {
+                break;
+            }
+        }
         dag_node node = DAG_NODE(d, index);
-        if (node.no >= 0 && --incoming[node.no] == 0) pending[count++] = node.no;
-        if (node.yes >= 0 && --incoming[node.yes] == 0) pending[count++] = node.yes;
+        if (node.no >= 0 && --d->blocks[node.no].pending == 0) {
+            pending[count++] = node.no;
+        }
+        if (node.yes >= 0 && --d->blocks[node.yes].pending == 0) {
+            pending[count++] = node.yes;
+        }
     }
     PyMem_Free(pending);
-    PyMem_Free(incoming);
     return result;
 }
