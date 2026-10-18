@@ -405,5 +405,83 @@ dag_pattern(match_dag *d, pattern_ty p, int value, int yes, int no)
     return result;
 }
 
+/* The source is acyclic and each node is created after its successors. Facts
+ * irrelevant to the remaining tests are removed before memoizing a state. */
+static int
+dag_specialize(match_dag *d, int source, const unsigned char *context)
+{
+    dag_node node = DAG_NODE(d, source);
+    if (node.yes < 0 || d->states >= 4 * d->original) {
+        return source;
+    }
+    if (Py_EnterRecursiveCall(" during match DAG specialization")) {
+        return ERROR;
+    }
+    PyObject *key = PyBytes_FromStringAndSize(NULL, sizeof(int) + d->nops);
+    if (key == NULL) {
+        Py_LeaveRecursiveCall();
+        return ERROR;
+    }
+    char *bytes = PyBytes_AS_STRING(key);
+    memcpy(bytes, &source, sizeof(int));
+    unsigned char *facts = (unsigned char *)bytes + sizeof(int);
+    for (int i = 0; i < d->nops; i++) {
+        facts[i] = d->facts_live[(size_t)source * d->nops + i] ? context[i] : 0;
+    }
+    PyObject *found = PyDict_GetItemWithError(d->state_ids, key);
+    int result = ERROR;
+    if (found) {
+        result = (int)PyLong_AsLong(found);
+    }
+    else if (!PyErr_Occurred()) {
+        d->states++;
+        dag_operation op = DAG_OP(d, node.op);
+        int known = op.reusable ? facts[node.op] : 0;
+        if (known) {
+            d->removed++;
+            result = dag_specialize(d, known == 1 ? node.yes : node.no, facts);
+        }
+        else {
+            unsigned char *after = PyMem_Malloc(d->nops);
+            if (after == NULL) {
+                PyErr_NoMemory();
+            }
+            else {
+                if (op.kind == DAG_GUARD) {
+                    memset(after, 0, d->nops);
+                }
+                else {
+                    memcpy(after, facts, d->nops);
+                }
+                if (op.reusable) {
+                    after[node.op] = 1;
+                }
+                int yes = dag_specialize(d, node.yes, after);
+                int no = -1;
+                if (yes >= 0 && node.no >= 0) {
+                    if (op.reusable) {
+                        after[node.op] = 2;
+                    }
+                    no = dag_specialize(d, node.no, after);
+                }
+                PyMem_Free(after);
+                if (yes >= 0 && !PyErr_Occurred()) {
+                    result = dag_node_new(d, node.op, yes, no, node.loc);
+                }
+            }
+        }
+        if (result >= 0) {
+            PyObject *number = PyLong_FromLong(result);
+            if (number == NULL || PyDict_SetItem(d->state_ids, key, number) < 0) {
+                result = ERROR;
+            }
+            Py_XDECREF(number);
+        }
+    }
+    Py_DECREF(key);
+    Py_LeaveRecursiveCall();
+    return result;
+}
+
 #undef DAG_OP
 #undef DAG_NODE
