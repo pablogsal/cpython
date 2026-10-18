@@ -6765,9 +6765,18 @@ codegen_match_inner(compiler *c, stmt_ty s, pattern_context *pc)
     return SUCCESS;
 }
 
+#include "codegen_match_dag.h"
+
 static int
 codegen_match(compiler *c, stmt_ty s)
 {
+    /* Development switch: compare both compilers in the same executable. */
+    if (Py_GETENV("PYTHON_MATCH_DAG") != NULL) {
+        int result = codegen_match_dag(c, s);
+        if (result <= 0) {
+            return result;
+        }
+    }
     pattern_context pc;
     pc.fail_pop = NULL;
     int result = codegen_match_inner(c, s, &pc);

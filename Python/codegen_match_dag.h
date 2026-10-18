@@ -889,5 +889,165 @@ dag_codegen_node(match_dag *d, stmt_ty s, int index)
     return SUCCESS;
 }
 
+static int
+dag_build(match_dag *d, stmt_ty s)
+{
+    compiler *c = d->c;
+    int ncases = asdl_seq_LEN(s->v.Match.cases);
+    /* Keep CPython's existing diagnostics and capture-order validation. The
+     * temporary instructions are discarded before graph construction. */
+    for (int i = 0; i < ncases; i++) {
+        match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
+        pattern_context pc = {.stores = PyList_New(0),
+                             .allow_irrefutable = m->guard != NULL || i == ncases - 1};
+        if (pc.stores == NULL) {
+            return ERROR;
+        }
+        int start = INSTR_SEQUENCE(c)->s_used;
+        int labels = INSTR_SEQUENCE(c)->s_next_free_label;
+        int result = codegen_pattern(c, m->pattern, &pc);
+        INSTR_SEQUENCE(c)->s_used = start;
+        INSTR_SEQUENCE(c)->s_next_free_label = labels;
+        PyMem_Free(pc.fail_pop);
+        if (result < 0) {
+            Py_DECREF(pc.stores);
+            return ERROR;
+        }
+        d->stores[i] = pc.stores;
+        for (int j = 0; j < PyList_GET_SIZE(pc.stores); j++) {
+            RETURN_IF_ERROR(dag_capture(d, PyList_GET_ITEM(pc.stores, j)));
+        }
+    }
+    int tail = dag_emit(d, DAG_END, -1, -1, 0, NULL, NULL, 0, 0,
+                        -1, -1, NO_LOCATION);
+    for (int i = ncases; i--;) {
+        match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
+        int yes = dag_emit(d, DAG_ACCEPT, -1, -1, i, NULL, NULL, 0, 0,
+                           -1, -1, NO_LOCATION);
+        if (m->guard) {
+            yes = dag_emit(d, DAG_GUARD, -1, -1, i, NULL, NULL, 0, 0,
+                           yes, tail, LOC(m->pattern));
+        }
+        yes = dag_emit(d, DAG_COMMIT, -1, -1, i, NULL, NULL, 0, 0,
+                       yes, -1, LOC(m->pattern));
+        yes = dag_pattern(d, m->pattern, 0, yes, tail);
+        tail = dag_emit(d, DAG_ENTER, -1, -1, i, NULL, NULL, 0, 0,
+                        yes, -1, LOC(m->pattern));
+        RETURN_IF_ERROR(tail);
+    }
+    d->original = d->nnodes;
+    d->facts_live = PyMem_Calloc(d->original, d->nops);
+    unsigned char *context = PyMem_Calloc(d->nops, 1);
+    if (d->facts_live == NULL || context == NULL) {
+        PyMem_Free(context);
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    for (int i = 0; i < d->original; i++) {
+        dag_node node = DAG_NODE(d, i);
+        dag_operation op = DAG_OP(d, node.op);
+        unsigned char *live = d->facts_live + (size_t)i * d->nops;
+        if (op.kind != DAG_GUARD) {
+            for (int j = 0; j < d->nops; j++) {
+                live[j] = (node.yes >= 0 && d->facts_live[(size_t)node.yes * d->nops + j]) ||
+                          (node.no >= 0 && d->facts_live[(size_t)node.no * d->nops + j]);
+            }
+        }
+        if (op.reusable) {
+            live[node.op] = 1;
+        }
+    }
+    int root = dag_specialize(d, tail, context);
+    PyMem_Free(context);
+    RETURN_IF_ERROR(root);
+    if (!d->removed) {
+        /* Nothing was shared. Preserve the ordinary compiler's stack layout
+         * instead of paying for graph temporaries with no possible saving. */
+        return 1;
+    }
+    RETURN_IF_ERROR(dag_allocate(d, root));
+    d->labels = PyMem_Malloc(d->nnodes * sizeof(jump_target_label));
+    if (d->labels == NULL) {
+        PyErr_NoMemory();
+        return ERROR;
+    }
+    for (int i = 0; i < d->nnodes; i++) {
+        d->labels[i] = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+    }
+    for (int i = 0; i < ncases; i++) {
+        d->bodies[i] = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+    }
+    d->end = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
+    VISIT(c, expr, s->v.Match.subject);
+    for (int i = 1; i < d->slots; i++) {
+        ADDOP_LOAD_CONST(c, NO_LOCATION, Py_None);
+    }
+    assert(d->colors[0] == 0);
+    ADDOP_JUMP(c, NO_LOCATION, JUMP, d->labels[root]);
+    for (int i = d->nnodes; i--;) {
+        if (d->reachable[i]) {
+            RETURN_IF_ERROR(dag_codegen_node(d, s, i));
+        }
+    }
+    for (int i = 0; i < ncases; i++) {
+        match_case_ty m = asdl_seq_GET(s->v.Match.cases, i);
+        USE_LABEL(c, d->bodies[i]);
+        VISIT_SEQ(c, stmt, m->body);
+        ADDOP_JUMP(c, NO_LOCATION, JUMP, d->end);
+    }
+    USE_LABEL(c, d->end);
+    return SUCCESS;
+}
+
+static int
+codegen_match_dag(compiler *c, stmt_ty s)
+{
+    match_dag d = {.c = c, .nvalues = 1};
+    _Py_CArray_Init(&d.operations, sizeof(dag_operation), 32);
+    _Py_CArray_Init(&d.nodes, sizeof(dag_node), 64);
+    d.op_ids = PyDict_New();
+    d.node_ids = PyDict_New();
+    d.state_ids = PyDict_New();
+    d.captures = PyDict_New();
+    int ncases = asdl_seq_LEN(s->v.Match.cases);
+    d.stores = PyMem_Calloc(ncases, sizeof(PyObject *));
+    d.bodies = PyMem_Malloc(ncases * sizeof(jump_target_label));
+    int result = ERROR;
+    if (d.op_ids && d.node_ids && d.state_ids && d.captures && d.stores && d.bodies) {
+        result = dag_build(&d, s);
+    }
+    else {
+        PyErr_NoMemory();
+    }
+    for (int i = 0; i < d.nops; i++) {
+        Py_XDECREF(DAG_OP(&d, i).data);
+    }
+    if (d.stores) {
+        for (int i = 0; i < ncases; i++) {
+            Py_XDECREF(d.stores[i]);
+        }
+    }
+    Py_XDECREF(d.op_ids);
+    Py_XDECREF(d.node_ids);
+    Py_XDECREF(d.state_ids);
+    Py_XDECREF(d.captures);
+    _Py_CArray_Fini(&d.operations);
+    _Py_CArray_Fini(&d.nodes);
+    PyMem_Free(d.stores);
+    PyMem_Free(d.bodies);
+    PyMem_Free(d.facts_live);
+    PyMem_Free(d.values_live);
+    PyMem_Free(d.reachable);
+    PyMem_Free(d.colors);
+    PyMem_Free(d.labels);
+    if (d.constants) {
+        for (int i = 0; i < d.nvalues; i++) {
+            Py_XDECREF(d.constants[i]);
+        }
+    }
+    PyMem_Free(d.constants);
+    return result;
+}
+
 #undef DAG_OP
 #undef DAG_NODE

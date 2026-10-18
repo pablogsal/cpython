@@ -1914,6 +1914,8 @@ Modules/_interpchannelsmodule.o: $(srcdir)/Modules/_interpchannelsmodule.c $(src
 
 Python/crossinterp.o: $(srcdir)/Python/crossinterp.c $(srcdir)/Python/crossinterp_data_lookup.h $(srcdir)/Python/crossinterp_exceptions.h
 
+Python/codegen.o: $(srcdir)/Python/codegen_match_dag.h
+
 Python/initconfig.o: $(srcdir)/Python/initconfig.c $(srcdir)/Python/config_common.h
 
 Python/interpconfig.o: $(srcdir)/Python/interpconfig.c $(srcdir)/Python/config_common.h
