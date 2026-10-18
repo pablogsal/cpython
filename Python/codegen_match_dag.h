@@ -32,6 +32,10 @@ typedef struct {
     PyObject **constants;
     unsigned char *facts_live, *values_live, *reachable;
     int *colors, *local_slots;
+    int **entry_layouts;
+    int ordered_stack;
+    int *predecessors;
+    unsigned char *inlined;
     jump_target_label *labels, *bodies;
     jump_target_label end;
 } match_dag;
@@ -615,7 +619,7 @@ dag_allocate(match_dag *d, int root)
     }
     d->reachable = PyMem_Calloc(d->nnodes, 1);
     d->values_live = PyMem_Calloc(d->nnodes, nv);
-    d->colors = PyMem_Malloc(nv * sizeof(int));
+    d->colors = PyMem_Calloc(nv, sizeof(int));
     unsigned char *interference = PyMem_Calloc(nv, nv);
     unsigned char *after = PyMem_Calloc(nv, 1);
     int *active = PyMem_Malloc(nv * sizeof(int));
@@ -664,6 +668,9 @@ dag_allocate(match_dag *d, int root)
             memset(live + op->output, 0, op->count);
         }
         dag_inputs(d, op, live);
+        if (d->ordered_stack) {
+            continue;
+        }
         int count = 0;
         for (size_t v = 0; v < nv; v++) {
             if (live[v]) {
@@ -687,7 +694,10 @@ dag_allocate(match_dag *d, int root)
             }
         }
     }
-    for (size_t a = 0; a < nv; a++) {
+    if (d->ordered_stack) {
+        d->slots = 1;
+    }
+    for (size_t a = 0; !d->ordered_stack && a < nv; a++) {
         memset(after, 0, nv);
         for (size_t b = 0; b < a; b++) {
             if (interference[a * nv + b]) {
@@ -1098,6 +1108,33 @@ dag_build(match_dag *d, stmt_ty s)
     }
     d->end = _PyInstructionSequence_NewLabel(INSTR_SEQUENCE(c));
     int sparse = Py_GETENV("PYTHON_MATCH_STACK") != NULL;
+    if (sparse && Py_GETENV("PYTHON_MATCH_LOCALS") != NULL) {
+        PyErr_SetString(PyExc_ValueError, "choose stack or local match placement");
+        return ERROR;
+    }
+    if (d->ordered_stack) {
+        d->entry_layouts = PyMem_Calloc(d->nnodes, sizeof(int *));
+        d->predecessors = PyMem_Calloc(d->nnodes, sizeof(int));
+        d->inlined = PyMem_Calloc(d->nnodes, 1);
+        if (!d->entry_layouts || !d->predecessors || !d->inlined) {
+            PyErr_NoMemory();
+            return ERROR;
+        }
+        d->entry_layouts[root] = PyMem_Malloc(2 * sizeof(int));
+        if (d->entry_layouts[root] == NULL) {
+            PyErr_NoMemory();
+            return ERROR;
+        }
+        d->entry_layouts[root][0] = 1;
+        d->entry_layouts[root][1] = 0;
+        for (int i = 0; i < d->nnodes; i++) {
+            if (d->reachable[i]) {
+                dag_node node = DAG_NODE(d, i);
+                if (node.yes >= 0) d->predecessors[node.yes]++;
+                if (node.no >= 0) d->predecessors[node.no]++;
+            }
+        }
+    }
     if (Py_GETENV("PYTHON_MATCH_LOCALS") != NULL) {
         d->local_slots = PyMem_Malloc(d->slots * sizeof(int));
         if (d->local_slots == NULL) {
@@ -1142,7 +1179,7 @@ dag_build(match_dag *d, stmt_ty s)
         return ERROR;
     }
     for (int i = d->nnodes; i--;) {
-        if (d->reachable[i]) {
+        if (d->reachable[i] && (!d->inlined || !d->inlined[i])) {
             int result = sparse ? stack_codegen_node(d, s, i, workspace, capacity)
                                 : dag_codegen_node(d, s, i);
             if (result < 0) {
@@ -1165,7 +1202,9 @@ dag_build(match_dag *d, stmt_ty s)
 static int
 codegen_match_dag(compiler *c, stmt_ty s)
 {
-    match_dag d = {.c = c, .nvalues = 1};
+    const char *placement = Py_GETENV("PYTHON_MATCH_STACK");
+    match_dag d = {.c = c, .nvalues = 1,
+                   .ordered_stack = placement && strcmp(placement, "2") == 0};
     _Py_CArray_Init(&d.operations, sizeof(dag_operation), 32);
     _Py_CArray_Init(&d.nodes, sizeof(dag_node), 64);
     d.op_ids = PyDict_New();
@@ -1203,6 +1242,14 @@ codegen_match_dag(compiler *c, stmt_ty s)
     PyMem_Free(d.reachable);
     PyMem_Free(d.colors);
     PyMem_Free(d.local_slots);
+    PyMem_Free(d.predecessors);
+    PyMem_Free(d.inlined);
+    if (d.entry_layouts) {
+        for (int i = 0; i < d.nnodes; i++) {
+            PyMem_Free(d.entry_layouts[i]);
+        }
+        PyMem_Free(d.entry_layouts);
+    }
     PyMem_Free(d.labels);
     if (d.constants) {
         for (int i = 0; i < d.nvalues; i++) {

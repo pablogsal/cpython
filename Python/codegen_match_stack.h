@@ -70,8 +70,24 @@ stack_edge(match_dag *d, dag_stack *stack, int target, location loc)
             stack->size--;
         }
     }
+    int *layout = NULL;
+    if (d->entry_layouts) {
+        layout = d->entry_layouts[target];
+        if (layout == NULL) {
+            layout = PyMem_Malloc((stack->size + 1) * sizeof(int));
+            if (layout == NULL) {
+                PyErr_NoMemory();
+                return ERROR;
+            }
+            layout[0] = stack->size;
+            memcpy(layout + 1, stack->values, stack->size * sizeof(int));
+            d->entry_layouts[target] = layout;
+        }
+        assert(layout[0] == stack->size);
+    }
     int dest = 0;
-    for (int value = 0; value < d->nvalues; value++) {
+    for (int v = 0; v < (layout ? layout[0] : d->nvalues); v++) {
+        int value = layout ? layout[v + 1] : v;
         if (!live[value]) {
             continue;
         }
@@ -107,9 +123,17 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
     dag_stack stack = {.values = workspace};
     dag_stack failed = {.values = workspace + capacity};
     unsigned char *live = d->values_live + (size_t)index * d->nvalues;
-    for (int value = 0; value < d->nvalues; value++) {
-        if (live[value]) {
-            stack.values[stack.size++] = value;
+    if (d->entry_layouts) {
+        int *layout = d->entry_layouts[index];
+        assert(layout != NULL);
+        stack.size = layout[0];
+        memcpy(stack.values, layout + 1, stack.size * sizeof(int));
+    }
+    else {
+        for (int value = 0; value < d->nvalues; value++) {
+            if (live[value]) {
+                stack.values[stack.size++] = value;
+            }
         }
     }
     USE_LABEL(c, d->labels[index]);
@@ -134,6 +158,37 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
         USE_LABEL(c, fail);
         return stack_edge(d, &failed, node.no, loc);
     }
+    int inline_equal = -1;
+    if (d->ordered_stack && op.kind == DAG_ATTRIBUTE && d->predecessors[node.yes] == 1) {
+        dag_node next = DAG_NODE(d, node.yes);
+        dag_operation comparison = DAG_OP(d, next.op);
+        if (comparison.kind == DAG_EQUAL && comparison.b == op.output &&
+            !stack_live_after(d, next, op.output)) {
+            /* Prepare the other operand before the single-use attribute read.
+             * The existing order is already ideal when both operands die. */
+            int ready = stack.size >= 2 &&
+                stack.values[stack.size - 2] == comparison.a &&
+                stack.values[stack.size - 1] == op.a &&
+                !stack_live_after(d, next, comparison.a) &&
+                !stack_live_after(d, next, op.a);
+            if (!ready) {
+                RETURN_IF_ERROR(stack_use(d, &stack, comparison.a,
+                    stack_live_after(d, next, comparison.a) || comparison.a == op.a, loc));
+            }
+            inline_equal = node.yes;
+            d->inlined[inline_equal] = 1;
+        }
+    }
+    if (d->ordered_stack && op.kind == DAG_BIND &&
+        !d->constants[op.a] && !stack_live_after(d, node, op.a)) {
+        for (int i = 0; i < stack.size; i++) {
+            if (stack.values[i] == op.a) {
+                stack.values[i] = op.output;
+                return stack_edge(d, &stack, node.yes, loc);
+            }
+        }
+        Py_UNREACHABLE();
+    }
     if (op.kind == DAG_COMMIT) {
         PyObject *stores = d->stores[op.arg];
         for (int i = 0; i < PyList_GET_SIZE(stores); i++) {
@@ -157,12 +212,19 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
     }
     else {
         int inputs = 0;
-        if (op.a >= 0) {
+        int pair_ready = d->ordered_stack && op.a >= 0 && op.b >= 0 &&
+            (op.kind != DAG_INDEX || op.arg < 0) && stack.size >= 2 &&
+            stack.values[stack.size - 2] == op.a && stack.values[stack.size - 1] == op.b &&
+            !stack_live_after(d, node, op.a) && !stack_live_after(d, node, op.b);
+        if (pair_ready) {
+            inputs = 2;
+        }
+        if (op.a >= 0 && !pair_ready) {
             RETURN_IF_ERROR(stack_use(d, &stack, op.a,
                                       stack_live_after(d, node, op.a) || op.a == op.b, loc));
             inputs++;
         }
-        if (op.b >= 0 && op.kind != DAG_INDEX) {
+        if (op.b >= 0 && op.kind != DAG_INDEX && !pair_ready) {
             RETURN_IF_ERROR(stack_use(d, &stack, op.b,
                                       stack_live_after(d, node, op.b), loc));
             inputs++;
@@ -170,9 +232,14 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
         switch (op.kind) {
             case DAG_BIND:
                 break;
-            case DAG_LOAD:
+            case DAG_LOAD: {
+                int start = INSTR_SEQUENCE(c)->s_used;
                 VISIT(c, expr, op.expr);
+                for (int i = start; i < INSTR_SEQUENCE(c)->s_used; i++) {
+                    INSTR_SEQUENCE(c)->s_instrs[i].i_loc = loc;
+                }
                 break;
+            }
             case DAG_ATTRIBUTE:
                 ADDOP_NAME(c, loc, LOAD_ATTR, op.data, names);
                 break;
@@ -191,9 +258,11 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
                 break;
             case DAG_INDEX:
                 if (op.arg < 0) {
-                    RETURN_IF_ERROR(stack_use(d, &stack, op.b,
-                                              stack_live_after(d, node, op.b), loc));
-                    inputs++;
+                    if (!pair_ready) {
+                        RETURN_IF_ERROR(stack_use(d, &stack, op.b,
+                                                  stack_live_after(d, node, op.b), loc));
+                        inputs++;
+                    }
                     ADDOP_LOAD_CONST_NEW(c, loc, PyLong_FromLong(-op.arg));
                     ADDOP_BINARY(c, loc, Sub);
                 }
@@ -243,6 +312,14 @@ stack_codegen_node(match_dag *d, stmt_ty s, int index, int *workspace, int capac
                 Py_UNREACHABLE();
         }
         stack.size -= inputs;
+    }
+    if (inline_equal >= 0) {
+        node = DAG_NODE(d, inline_equal);
+        op = DAG_OP(d, node.op);
+        loc = node.loc;
+        ADDOP_COMPARE(c, loc, Eq);
+        ADDOP(c, loc, TO_BOOL);
+        stack.size--;
     }
     NEW_JUMP_TARGET_LABEL(c, fail);
     int optional = op.kind == DAG_CLASS || op.kind == DAG_KEYS;
