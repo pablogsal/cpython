@@ -615,6 +615,14 @@ Miscellaneous options
 
      .. versionadded:: 3.10
 
+   * ``-X assert_details`` enables native assertion capture for
+     :mod:`assertionlib`. ``-X assert_details=events`` also enables callbacks
+     for successful assertions.
+
+   * ``-X keep_asserts`` retains assertions at optimization levels 1 and 2.
+     Other optimization behavior remains unchanged. Each assertion mode
+     uses a separate bytecode cache tag.
+
    * ``-X no_debug_ranges`` disables the inclusion of the tables mapping extra
      location information (end line, start column offset and end column offset)
      to every instruction in code objects. This is useful when smaller code

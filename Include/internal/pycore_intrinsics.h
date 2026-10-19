@@ -33,7 +33,9 @@
 #define INTRINSIC_ADD_CONDITIONAL_ANNOTATION     6
 #define INTRINSIC_MATCH_CLASS_ISINSTANCE         7
 
-#define MAX_INTRINSIC_2                          7
+#define INTRINSIC_ASSERT_DETAILS                 8
+
+#define MAX_INTRINSIC_2                          8
 
 typedef PyObject *(*intrinsic_func1)(PyThreadState* tstate, PyObject *value);
 typedef PyObject *(*intrinsic_func2)(PyThreadState* tstate, PyObject *value1, PyObject *value2);

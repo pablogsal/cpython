@@ -65,6 +65,9 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOAD_SMALL_INT_2] = 0,
     [_LOAD_SMALL_INT_3] = 0,
     [_LOAD_SMALL_INT] = HAS_ARG_FLAG,
+    [_COPY_TO_FAST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG,
+    [_STORE_FAST_BORROW] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG,
+    [_CLEAR_FAST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG,
     [_SWAP_FAST_0] = HAS_LOCAL_FLAG,
     [_SWAP_FAST_1] = HAS_LOCAL_FLAG,
     [_SWAP_FAST_2] = HAS_LOCAL_FLAG,
@@ -714,6 +717,33 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 1, 0, _LOAD_SMALL_INT_r01 },
             { 2, 1, _LOAD_SMALL_INT_r12 },
             { 3, 2, _LOAD_SMALL_INT_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COPY_TO_FAST] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 1, 1, _COPY_TO_FAST_r11 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_STORE_FAST_BORROW] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 1, 1, _STORE_FAST_BORROW_r11 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CLEAR_FAST] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _CLEAR_FAST_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
             { -1, -1, -1 },
         },
     },
@@ -4003,6 +4033,9 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_LOAD_SMALL_INT_r01] = _LOAD_SMALL_INT,
     [_LOAD_SMALL_INT_r12] = _LOAD_SMALL_INT,
     [_LOAD_SMALL_INT_r23] = _LOAD_SMALL_INT,
+    [_COPY_TO_FAST_r11] = _COPY_TO_FAST,
+    [_STORE_FAST_BORROW_r11] = _STORE_FAST_BORROW,
+    [_CLEAR_FAST_r00] = _CLEAR_FAST,
     [_SWAP_FAST_0_r01] = _SWAP_FAST_0,
     [_SWAP_FAST_0_r11] = _SWAP_FAST_0,
     [_SWAP_FAST_0_r22] = _SWAP_FAST_0,
@@ -5135,6 +5168,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CHECK_VALIDITY_r11] = "_CHECK_VALIDITY_r11",
     [_CHECK_VALIDITY_r22] = "_CHECK_VALIDITY_r22",
     [_CHECK_VALIDITY_r33] = "_CHECK_VALIDITY_r33",
+    [_CLEAR_FAST] = "_CLEAR_FAST",
+    [_CLEAR_FAST_r00] = "_CLEAR_FAST_r00",
     [_COLD_DYNAMIC_EXIT] = "_COLD_DYNAMIC_EXIT",
     [_COLD_DYNAMIC_EXIT_r00] = "_COLD_DYNAMIC_EXIT_r00",
     [_COLD_EXIT] = "_COLD_EXIT",
@@ -5177,6 +5212,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_COPY_FREE_VARS_r11] = "_COPY_FREE_VARS_r11",
     [_COPY_FREE_VARS_r22] = "_COPY_FREE_VARS_r22",
     [_COPY_FREE_VARS_r33] = "_COPY_FREE_VARS_r33",
+    [_COPY_TO_FAST] = "_COPY_TO_FAST",
+    [_COPY_TO_FAST_r11] = "_COPY_TO_FAST_r11",
     [_CREATE_INIT_FRAME] = "_CREATE_INIT_FRAME",
     [_CREATE_INIT_FRAME_r01] = "_CREATE_INIT_FRAME_r01",
     [_DELETE_DEREF] = "_DELETE_DEREF",
@@ -6058,6 +6095,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_STORE_ATTR_WITH_HINT_r21] = "_STORE_ATTR_WITH_HINT_r21",
     [_STORE_DEREF] = "_STORE_DEREF",
     [_STORE_DEREF_r10] = "_STORE_DEREF_r10",
+    [_STORE_FAST_BORROW] = "_STORE_FAST_BORROW",
+    [_STORE_FAST_BORROW_r11] = "_STORE_FAST_BORROW_r11",
     [_STORE_GLOBAL] = "_STORE_GLOBAL",
     [_STORE_GLOBAL_r10] = "_STORE_GLOBAL_r10",
     [_STORE_NAME] = "_STORE_NAME",
@@ -6257,6 +6296,12 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _LOAD_SMALL_INT_3:
             return 0;
         case _LOAD_SMALL_INT:
+            return 0;
+        case _COPY_TO_FAST:
+            return 0;
+        case _STORE_FAST_BORROW:
+            return 1;
+        case _CLEAR_FAST:
             return 0;
         case _SWAP_FAST_0:
             return 1;

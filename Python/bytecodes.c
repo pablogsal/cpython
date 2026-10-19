@@ -324,6 +324,26 @@ dummy_func(
 
         macro(STORE_FAST) = _SWAP_FAST + POP_TOP;
 
+        inst(COPY_TO_FAST, (value -- value)) {
+            _PyStackRef old = GETLOCAL(oparg);
+            GETLOCAL(oparg) = PyStackRef_MakeHeapSafe(PyStackRef_DUP(value));
+            PyStackRef_XCLOSE(old);
+        }
+
+        inst(STORE_FAST_BORROW, (value -- borrowed)) {
+            _PyStackRef old = GETLOCAL(oparg);
+            GETLOCAL(oparg) = PyStackRef_MakeHeapSafe(value);
+            DEAD(value);
+            borrowed = PyStackRef_Borrow(GETLOCAL(oparg));
+            PyStackRef_XCLOSE(old);
+        }
+
+        inst(CLEAR_FAST, (--)) {
+            _PyStackRef old = GETLOCAL(oparg);
+            GETLOCAL(oparg) = PyStackRef_NULL;
+            PyStackRef_XCLOSE(old);
+        }
+
         replicate(8) op(_SWAP_FAST, (value -- trash)) {
             _PyStackRef tmp = GETLOCAL(oparg);
             GETLOCAL(oparg) = value;

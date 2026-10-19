@@ -252,6 +252,7 @@ _PyStaticObjects_CheckAll(PyInterpreterState *interp) {
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_bootstrap), "_bootstrap", 10);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_check_retval_), "_check_retval_", 14);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_dealloc_warn), "_dealloc_warn", 13);
+    _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_dispatch), "_dispatch", 9);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_feature_version), "_feature_version", 16);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_field_types), "_field_types", 12);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_fields_), "_fields_", 8);
@@ -263,6 +264,7 @@ _PyStaticObjects_CheckAll(PyInterpreterState *interp) {
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_flags_), "_flags_", 7);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_get_sourcefile), "_get_sourcefile", 15);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_handle_fromlist), "_handle_fromlist", 16);
+    _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_handlers), "_handlers", 9);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_initializing), "_initializing", 13);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_internal_use), "_internal_use", 13);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_io), "_io", 3);
@@ -310,6 +312,7 @@ _PyStaticObjects_CheckAll(PyInterpreterState *interp) {
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(argv), "argv", 4);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(as_integer_ratio), "as_integer_ratio", 16);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(asend), "asend", 5);
+    _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(assertionlib), "assertionlib", 12);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(assoclen), "assoclen", 8);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(ast), "ast", 3);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(athrow), "athrow", 6);

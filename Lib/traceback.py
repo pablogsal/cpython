@@ -1155,6 +1155,16 @@ class TracebackException:
         # Capture now to permit freeing resources: only complication is in the
         # unofficial API _format_final_exc_line
         self._str = _safe_string(exc_value, 'exception')
+        self._assertion_lines = ()
+        if isinstance(exc_value, AssertionError):
+            try:
+                attributes = exc_value.__dict__
+                details = attributes.get('_assertion')
+                if details is not None and not attributes.get('_assertion_explained', False):
+                    from _assertion import format_details
+                    self._assertion_lines = tuple(format_details(details))
+            except Exception:
+                self._assertion_lines = ('  <assertion details unavailable>\n',)
         try:
             self.__notes__ = getattr(exc_value, '__notes__', None)
         except Exception as e:
@@ -1397,6 +1407,8 @@ class TracebackException:
                 yield _format_final_exc_line(stype, self._str, colorize=colorize)
         else:
             yield from [indent + l for l in self._format_syntax_error(stype, colorize=colorize)]
+
+        yield from (indent + line for line in self._assertion_lines)
 
         if (
             isinstance(self.__notes__, collections.abc.Sequence)

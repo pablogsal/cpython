@@ -1539,6 +1539,7 @@ extern "C" {
     INIT_ID(_bootstrap), \
     INIT_ID(_check_retval_), \
     INIT_ID(_dealloc_warn), \
+    INIT_ID(_dispatch), \
     INIT_ID(_feature_version), \
     INIT_ID(_field_types), \
     INIT_ID(_fields_), \
@@ -1550,6 +1551,7 @@ extern "C" {
     INIT_ID(_flags_), \
     INIT_ID(_get_sourcefile), \
     INIT_ID(_handle_fromlist), \
+    INIT_ID(_handlers), \
     INIT_ID(_initializing), \
     INIT_ID(_internal_use), \
     INIT_ID(_io), \
@@ -1597,6 +1599,7 @@ extern "C" {
     INIT_ID(argv), \
     INIT_ID(as_integer_ratio), \
     INIT_ID(asend), \
+    INIT_ID(assertionlib), \
     INIT_ID(assoclen), \
     INIT_ID(ast), \
     INIT_ID(athrow), \

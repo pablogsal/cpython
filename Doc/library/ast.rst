@@ -2585,6 +2585,25 @@ effects on the compilation of a program:
 
    .. versionadded:: 3.8
 
+.. data:: PyCF_ASSERT_DETAILS
+
+   Capture assertion values for :mod:`assertionlib` diagnostics.
+
+   .. versionadded:: 3.16
+
+.. data:: PyCF_ASSERT_EVENTS
+
+   Enable assertion capture and successful-assertion callbacks.
+
+   .. versionadded:: 3.16
+
+.. data:: PyCF_KEEP_ASSERTS
+
+   Retain assertions at optimization levels 1 and 2. Other optimization
+   behavior remains unchanged.
+
+   .. versionadded:: 3.16
+
 .. data:: PyCF_ONLY_AST
 
    Generates and returns an abstract syntax tree instead of returning a

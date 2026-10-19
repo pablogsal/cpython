@@ -72,6 +72,9 @@ typedef struct {
     PyObject *u_fasthidden; /* set of names that are fast-locals only
                                temporarily within an inlined comprehension. */
 
+    PyObject *u_internal;  /* compiler-only fast locals */
+    void *u_assert;        /* active assertion capture context, borrowed */
+
     Py_ssize_t u_argcount;        /* number of arguments for block */
     Py_ssize_t u_posonlyargcount;        /* number of positional only arguments for block */
     Py_ssize_t u_kwonlyargcount; /* number of keyword only arguments for block */
@@ -157,6 +160,10 @@ int _PyCompile_ResolveNameop(struct _PyCompiler *c, PyObject *mangled,
 int _PyCompile_IsInteractiveTopLevel(struct _PyCompiler *c);
 int _PyCompile_ScopeType(struct _PyCompiler *c);
 int _PyCompile_OptimizationLevel(struct _PyCompiler *c);
+int _PyCompile_AssertionFlags(void);
+int _PyCompile_AssertDetails(struct _PyCompiler *c);
+int _PyCompile_KeepAsserts(struct _PyCompiler *c);
+int _PyCompile_AssertEvents(struct _PyCompiler *c);
 int _PyCompile_LookupArg(struct _PyCompiler *c, PyCodeObject *co, PyObject *name);
 PyObject *_PyCompile_Qualname(struct _PyCompiler *c);
 _PyCompile_CodeUnitMetadata *_PyCompile_Metadata(struct _PyCompiler *c);

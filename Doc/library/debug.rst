@@ -11,6 +11,7 @@ intrusive debugging or patching.
 
 .. toctree::
 
+   assertionlib.rst
    audit_events.rst
    bdb.rst
    faulthandler.rst

@@ -2766,12 +2766,12 @@ PyImport_GetMagicNumber(void)
     return PYC_MAGIC_NUMBER_TOKEN;
 }
 
-extern const char * _PySys_ImplCacheTag;
+extern const char *_PySys_ImplCacheTag(void);
 
 const char *
 PyImport_GetMagicTag(void)
 {
-    return _PySys_ImplCacheTag;
+    return _PySys_ImplCacheTag();
 }
 
 

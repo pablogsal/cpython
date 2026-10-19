@@ -48,6 +48,9 @@ framelocalsproxy_getval(_PyInterpreterFrame *frame, PyCodeObject *co, int i)
     _PyStackRef *fast = _PyFrame_GetLocalsArray(frame);
     _PyLocals_Kind kind = _PyLocals_GetKind(co->co_localspluskinds, i);
 
+    if (kind & CO_FAST_INTERNAL) {
+        return NULL;
+    }
     PyObject *value = PyStackRef_AsPyObjectBorrow(fast[i]);
     PyObject *cell = NULL;
 

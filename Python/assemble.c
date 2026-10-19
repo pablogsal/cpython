@@ -537,6 +537,15 @@ compute_localsplus_info(_PyCompile_CodeUnitMetadata *umd, int nlocalsplus,
 
             _PyLocals_Kind kind = CO_FAST_LOCAL | argvarkinds[i].kind;
 
+            if (umd->u_internal != NULL) {
+                int internal = PySet_Contains(umd->u_internal, k);
+                if (internal < 0) {
+                    return -1;
+                }
+                if (internal) {
+                    kind |= CO_FAST_INTERNAL | CO_FAST_HIDDEN;
+                }
+            }
             if (umd->u_fasthidden != NULL) {
                 int hidden = PySet_Contains(umd->u_fasthidden, k);
                 RETURN_IF_ERROR(hidden);

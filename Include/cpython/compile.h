@@ -11,7 +11,8 @@
 
 /* bpo-39562: CO_FUTURE_ and PyCF_ constants must be kept unique.
    PyCF_ constants can use bits from 0x0100 to 0x10000.
-   CO_FUTURE_ constants use bits starting at 0x20000. */
+   CO_FUTURE_ constants use bits starting at 0x20000.
+   Experimental assertion controls also use 0x10000000 and 0x20000000. */
 #define PyCF_SOURCE_IS_UTF8  0x0100
 #define PyCF_DONT_IMPLY_DEDENT 0x0200
 #define PyCF_ONLY_AST 0x0400
@@ -20,9 +21,15 @@
 #define PyCF_ALLOW_TOP_LEVEL_AWAIT 0x2000
 #define PyCF_ALLOW_INCOMPLETE_INPUT 0x4000
 #define PyCF_OPTIMIZED_AST (0x8000 | PyCF_ONLY_AST)
+#define PyCF_ASSERT_DETAILS 0x10000
+/* Experimental assertion controls occupy bits above the existing code flags. */
+#define PyCF_KEEP_ASSERTS 0x10000000
+#define PyCF_ASSERT_EVENTS 0x20000000
 #define PyCF_COMPILE_MASK (PyCF_ONLY_AST | PyCF_ALLOW_TOP_LEVEL_AWAIT | \
                            PyCF_TYPE_COMMENTS | PyCF_DONT_IMPLY_DEDENT | \
-                           PyCF_ALLOW_INCOMPLETE_INPUT | PyCF_OPTIMIZED_AST)
+                           PyCF_ALLOW_INCOMPLETE_INPUT | PyCF_OPTIMIZED_AST | \
+                           PyCF_ASSERT_DETAILS | PyCF_KEEP_ASSERTS | \
+                           PyCF_ASSERT_EVENTS)
 
 typedef struct {
     int cf_flags;  /* bitmask of CO_xxx flags relevant to future */

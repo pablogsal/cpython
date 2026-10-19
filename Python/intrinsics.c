@@ -306,6 +306,134 @@ match_class_isinstance(PyThreadState* tstate, PyObject *subject, PyObject *type)
     return res ? Py_True : Py_False;
 }
 
+/* Look up callbacks only if a consumer imported assertionlib. Failures keep
+ * their private payload even when no Python callback is installed. */
+static PyObject *
+assertion_dispatcher(int passed)
+{
+    PyObject *module = PyImport_GetModule(&_Py_ID(assertionlib));
+    if (module == NULL) {
+        return PyErr_Occurred() ? NULL : Py_NewRef(Py_None);
+    }
+    PyObject *var = NULL, *handlers = NULL, *dispatch = NULL;
+    int found = PyObject_GetOptionalAttr(module, &_Py_ID(_handlers), &var);
+    if (found == 0) {
+        dispatch = Py_NewRef(Py_None);
+    }
+    else if (found > 0 && PyContextVar_CheckExact(var) &&
+             PyContextVar_Get(var, Py_None, &handlers) == 0) {
+        if (handlers == Py_None) {
+            dispatch = Py_NewRef(Py_None);
+        }
+        else if (PyTuple_CheckExact(handlers) && PyTuple_GET_SIZE(handlers) == 2) {
+            if (PyTuple_GET_ITEM(handlers, passed) == Py_None) {
+                dispatch = Py_NewRef(Py_None);
+            }
+            else {
+                dispatch = PyObject_GetAttr(module, &_Py_ID(_dispatch));
+            }
+        }
+    }
+    if (dispatch == NULL && !PyErr_Occurred()) {
+        PyErr_SetString(PyExc_TypeError, "invalid assertion callback state");
+    }
+    Py_XDECREF(var);
+    Py_XDECREF(handlers);
+    Py_DECREF(module);
+    return dispatch;
+}
+
+static PyObject *
+assert_details(PyThreadState *tstate, PyObject *exc, PyObject *plan)
+{
+    int passed = exc == Py_None;
+    _PyInterpreterFrame *frame = tstate->current_frame;
+    if ((!passed && !PyExceptionInstance_Check(exc)) ||
+        !PyTuple_CheckExact(plan) || PyTuple_GET_SIZE(plan) != 3 ||
+        !PyTuple_CheckExact(PyTuple_GET_ITEM(plan, 1)) ||
+        !PyTuple_CheckExact(PyTuple_GET_ITEM(plan, 2))) {
+        PyErr_SetString(PyExc_SystemError, "invalid assertion plan");
+        return NULL;
+    }
+    PyObject *dispatch = assertion_dispatcher(passed);
+    if (dispatch == NULL) {
+        return NULL;
+    }
+    if (passed && dispatch == Py_None) {
+        return dispatch;
+    }
+    PyObject *records = PyTuple_GET_ITEM(plan, 1);
+    Py_ssize_t n = PyTuple_GET_SIZE(records);
+    PyObject *values = PyTuple_New(n);
+    PyObject *details = NULL, *result = NULL;
+    if (values == NULL) {
+        goto done;
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *record = PyTuple_GET_ITEM(records, i);
+        if (!PyTuple_CheckExact(record) || PyTuple_GET_SIZE(record) != 6) {
+            PyErr_SetString(PyExc_SystemError, "invalid assertion record");
+            goto done;
+        }
+        Py_ssize_t slot = PyLong_AsSsize_t(PyTuple_GET_ITEM(record, 0));
+        if (slot < 0 || slot >= _PyFrame_GetCode(frame)->co_nlocals) {
+            if (!PyErr_Occurred()) {
+                PyErr_SetString(PyExc_SystemError, "invalid assertion slot");
+            }
+            goto done;
+        }
+        if (i > 0 && slot == PyLong_AsSsize_t(
+                PyTuple_GET_ITEM(PyTuple_GET_ITEM(records, i - 1), 0))) {
+            PyTuple_SET_ITEM(values, i, Py_NewRef(PyTuple_GET_ITEM(values, i - 1)));
+            continue;
+        }
+        _PyStackRef ref = frame->localsplus[slot];
+        PyObject *value = PyStackRef_IsNull(ref)
+            ? PyTuple_New(0)
+            : PyTuple_Pack(1, PyStackRef_AsPyObjectBorrow(ref));
+        if (value == NULL) {
+            goto done;
+        }
+        PyTuple_SET_ITEM(values, i, value);
+    }
+    details = PyTuple_Pack(6, PyTuple_GET_ITEM(plan, 0), records, values,
+                          PyTuple_GET_ITEM(plan, 2),
+                          _PyFrame_GetCode(frame)->co_filename,
+                          passed ? Py_True : Py_False);
+    if (details == NULL) {
+        goto done;
+    }
+    if (!passed && PyObject_SetAttrString(exc, "_assertion", details) < 0) {
+        goto done;
+    }
+    if (dispatch != Py_None) {
+        PyObject *previous = NULL;
+        if (!passed) {
+            /* Establish ordinary exception chaining before a callback runs. */
+            _PyErr_SetObject(tstate, (PyObject *)Py_TYPE(exc), exc);
+            PyObject *raised = _PyErr_GetRaisedException(tstate);
+            Py_DECREF(raised);
+            previous = PyErr_GetHandledException();
+            PyErr_SetHandledException(exc);
+        }
+        PyObject *res = PyObject_CallFunctionObjArgs(dispatch, exc, details, NULL);
+        if (!passed) {
+            PyErr_SetHandledException(previous);
+            Py_XDECREF(previous);
+        }
+        if (res == NULL) {
+            goto done;
+        }
+        Py_DECREF(res);
+    }
+    result = Py_NewRef(exc);
+ done:
+    Py_XDECREF(details);
+    Py_XDECREF(values);
+    Py_DECREF(dispatch);
+    return result;
+}
+
 const intrinsic_func2_info
 _PyIntrinsics_BinaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_2_INVALID, no_intrinsic2)
@@ -316,6 +444,7 @@ _PyIntrinsics_BinaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_TYPEPARAM_DEFAULT, _Py_set_typeparam_default)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_ADD_CONDITIONAL_ANNOTATION, add_conditional_annotation)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_MATCH_CLASS_ISINSTANCE, match_class_isinstance)
+    INTRINSIC_FUNC_ENTRY(INTRINSIC_ASSERT_DETAILS, assert_details)
 };
 
 #undef INTRINSIC_FUNC_ENTRY

@@ -15,6 +15,7 @@ Data members:
 */
 
 #include "Python.h"
+#include "pycore_compile.h"
 #include "pycore_audit.h"         // _Py_AuditHookEntry
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
 #include "pycore_ceval.h"         // _PyEval_SetAsyncGenFinalizer()
@@ -3697,7 +3698,20 @@ const char *_PySys_ImplName = _PY_IMPL_NAME;
 #define MINOR Py_STRINGIFY(PY_MINOR_VERSION)
 #define _PY_IMPL_CACHE_TAG _PY_IMPL_NAME "-" MAJOR MINOR
 #endif
-const char *_PySys_ImplCacheTag = _PY_IMPL_CACHE_TAG;
+const char *
+_PySys_ImplCacheTag(void)
+{
+    int flags = _PyCompile_AssertionFlags();
+    if (flags & PyCF_ASSERT_EVENTS) {
+        return flags & PyCF_KEEP_ASSERTS
+            ? _PY_IMPL_CACHE_TAG "-assert-events-keep" : _PY_IMPL_CACHE_TAG "-assert-events";
+    }
+    if (flags & PyCF_ASSERT_DETAILS) {
+        return flags & PyCF_KEEP_ASSERTS
+            ? _PY_IMPL_CACHE_TAG "-assert-keep" : _PY_IMPL_CACHE_TAG "-assert";
+    }
+    return flags & PyCF_KEEP_ASSERTS ? _PY_IMPL_CACHE_TAG "-keep" : _PY_IMPL_CACHE_TAG;
+}
 #ifdef MAJOR
 #undef MAJOR
 #endif
@@ -3725,9 +3739,8 @@ make_impl_info(PyObject *version_info)
     if (res < 0)
         goto error;
 
-    value = _PySys_ImplCacheTag
-        ? PyUnicode_FromString(_PySys_ImplCacheTag)
-        : Py_NewRef(Py_None);
+    const char *cache_tag = _PySys_ImplCacheTag();
+    value = cache_tag ? PyUnicode_FromString(cache_tag) : Py_NewRef(Py_None);
     if (value == NULL) {
         goto error;
     }

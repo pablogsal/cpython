@@ -486,6 +486,8 @@ codegen_addop_j(instr_sequence *seq, location loc,
 #define VISIT_UNUSED(C, TYPE, V) \
     RETURN_IF_ERROR(codegen_visit_unused_ ## TYPE((C), (V)))
 
+#include "codegen_assert.h"
+
 static int
 codegen_call_exit_with_nones(compiler *c, location loc)
 {
@@ -1974,8 +1976,25 @@ codegen_addcompare(compiler *c, location loc, cmpop_ty op)
     return SUCCESS;
 }
 
+static int codegen_jump_if_impl(compiler *, location, expr_ty,
+                                jump_target_label, int);
+
 static int
-codegen_jump_if(compiler *c, location loc,
+codegen_jump_if(compiler *c, location loc, expr_ty e,
+                jump_target_label next, int cond)
+{
+    assertion_context *ctx = METADATA(c)->u_assert;
+    int parent = ctx ? ctx->parent : -1;
+    RETURN_IF_ERROR(codegen_assert_enter(c, e));
+    int ret = codegen_jump_if_impl(c, loc, e, next, cond);
+    if (ctx) {
+        ctx->parent = parent;
+    }
+    return ret;
+}
+
+static int
+codegen_jump_if_impl(compiler *c, location loc,
                 expr_ty e, jump_target_label next, int cond)
 {
     switch (e->kind) {
@@ -2034,12 +2053,16 @@ codegen_jump_if(compiler *c, location loc,
                 ADDOP_I(c, LOC(e), SWAP, 2);
                 ADDOP_I(c, LOC(e), COPY, 2);
                 ADDOP_COMPARE(c, LOC(e), asdl_seq_GET(e->v.Compare.ops, i));
+                RETURN_IF_ERROR(codegen_assert_capture(c, e, "comparison", (int)i));
                 ADDOP(c, LOC(e), TO_BOOL);
+                RETURN_IF_ERROR(codegen_assert_capture(c, e, "truth", (int)i));
                 ADDOP_JUMP(c, LOC(e), POP_JUMP_IF_FALSE, cleanup);
             }
             VISIT(c, expr, (expr_ty)asdl_seq_GET(e->v.Compare.comparators, n));
             ADDOP_COMPARE(c, LOC(e), asdl_seq_GET(e->v.Compare.ops, n));
+            RETURN_IF_ERROR(codegen_assert_capture(c, e, "comparison", (int)n));
             ADDOP(c, LOC(e), TO_BOOL);
+            RETURN_IF_ERROR(codegen_assert_capture(c, e, "truth", (int)n));
             ADDOP_JUMP(c, LOC(e), cond ? POP_JUMP_IF_TRUE : POP_JUMP_IF_FALSE, next);
             NEW_JUMP_TARGET_LABEL(c, end);
             ADDOP_JUMP(c, NO_LOCATION, JUMP_NO_INTERRUPT, end);
@@ -2064,6 +2087,7 @@ codegen_jump_if(compiler *c, location loc,
     /* general implementation */
     VISIT(c, expr, e);
     ADDOP(c, LOC(e), TO_BOOL);
+    RETURN_IF_ERROR(codegen_assert_capture(c, e, "truth", -1));
     ADDOP_JUMP(c, LOC(e), cond ? POP_JUMP_IF_TRUE : POP_JUMP_IF_FALSE, next);
     return SUCCESS;
 }
@@ -3074,8 +3098,11 @@ codegen_assert(compiler *c, stmt_ty s)
             _PyCompile_Warn(c, LOC(s), "assertion is always true, "
                                        "perhaps remove parentheses?"));
     }
-    if (OPTIMIZATION_LEVEL(c)) {
+    if (OPTIMIZATION_LEVEL(c) && !_PyCompile_KeepAsserts(c)) {
         return SUCCESS;
+    }
+    if (_PyCompile_AssertDetails(c)) {
+        return codegen_assert_details(c, s);
     }
     NEW_JUMP_TARGET_LABEL(c, end);
     RETURN_IF_ERROR(codegen_jump_if(c, LOC(s), s->v.Assert.test, end, 1));
@@ -3440,7 +3467,18 @@ codegen_boolop(compiler *c, expr_ty e)
     assert(n >= 0);
     for (i = 0; i < n; ++i) {
         VISIT(c, expr, (expr_ty)asdl_seq_GET(s, i));
-        ADDOP_JUMP(c, loc, jumpi, end);
+        if (METADATA(c)->u_assert) {
+            ADDOP_I(c, loc, COPY, 1);
+            ADDOP(c, loc, TO_BOOL);
+            RETURN_IF_ERROR(codegen_assert_capture(
+                c, asdl_seq_GET(s, i), "truth", -1));
+            ADDOP_JUMP(c, loc,
+                       jumpi == JUMP_IF_FALSE ? POP_JUMP_IF_FALSE : POP_JUMP_IF_TRUE,
+                       end);
+        }
+        else {
+            ADDOP_JUMP(c, loc, jumpi, end);
+        }
         ADDOP(c, loc, POP_TOP);
     }
     VISIT(c, expr, (expr_ty)asdl_seq_GET(s, n));
@@ -3724,6 +3762,7 @@ codegen_compare(compiler *c, expr_ty e)
     if (n == 0) {
         VISIT(c, expr, (expr_ty)asdl_seq_GET(e->v.Compare.comparators, 0));
         ADDOP_COMPARE(c, loc, asdl_seq_GET(e->v.Compare.ops, 0));
+        RETURN_IF_ERROR(codegen_assert_capture(c, e, "comparison", 0));
     }
     else {
         NEW_JUMP_TARGET_LABEL(c, cleanup);
@@ -3733,13 +3772,16 @@ codegen_compare(compiler *c, expr_ty e)
             ADDOP_I(c, loc, SWAP, 2);
             ADDOP_I(c, loc, COPY, 2);
             ADDOP_COMPARE(c, loc, asdl_seq_GET(e->v.Compare.ops, i));
+            RETURN_IF_ERROR(codegen_assert_capture(c, e, "comparison", (int)i));
             ADDOP_I(c, loc, COPY, 1);
             ADDOP(c, loc, TO_BOOL);
+            RETURN_IF_ERROR(codegen_assert_capture(c, e, "truth", (int)i));
             ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, cleanup);
             ADDOP(c, loc, POP_TOP);
         }
         VISIT(c, expr, (expr_ty)asdl_seq_GET(e->v.Compare.comparators, n));
         ADDOP_COMPARE(c, loc, asdl_seq_GET(e->v.Compare.ops, n));
+        RETURN_IF_ERROR(codegen_assert_capture(c, e, "comparison", (int)n));
         NEW_JUMP_TARGET_LABEL(c, end);
         ADDOP_JUMP(c, NO_LOCATION, JUMP_NO_INTERRUPT, end);
 
@@ -4249,7 +4291,7 @@ static int
 codegen_call(compiler *c, expr_ty e)
 {
     RETURN_IF_ERROR(codegen_validate_keywords(c, e->v.Call.keywords));
-    int ret = maybe_optimize_method_call(c, e);
+    int ret = METADATA(c)->u_assert ? 0 : maybe_optimize_method_call(c, e);
     if (ret < 0) {
         return ERROR;
     }
@@ -4259,7 +4301,9 @@ codegen_call(compiler *c, expr_ty e)
     NEW_JUMP_TARGET_LABEL(c, skip_normal_call);
     RETURN_IF_ERROR(check_caller(c, e->v.Call.func));
     VISIT(c, expr, e->v.Call.func);
-    RETURN_IF_ERROR(maybe_optimize_function_call(c, e, skip_normal_call));
+    if (!METADATA(c)->u_assert) {
+        RETURN_IF_ERROR(maybe_optimize_function_call(c, e, skip_normal_call));
+    }
     location loc = LOC(e->v.Call.func);
     ADDOP(c, loc, PUSH_NULL);
     loc = LOC(e);
@@ -5503,6 +5547,8 @@ codegen_visit_expr_impl(compiler *c, expr_ty e, bool result_is_unused)
         }
         else if (e->v.UnaryOp.op == Not) {
             ADDOP(c, loc, TO_BOOL);
+            RETURN_IF_ERROR(codegen_assert_capture(
+                c, e->v.UnaryOp.operand, "truth", -1));
             ADDOP(c, loc, UNARY_NOT);
         }
         else {
@@ -5574,7 +5620,7 @@ codegen_visit_expr_impl(compiler *c, expr_ty e, bool result_is_unused)
     /* The following exprs can be assignment targets. */
     case Attribute_kind:
         if (e->v.Attribute.ctx == Load) {
-            int ret = can_optimize_super_call(c, e);
+            int ret = METADATA(c)->u_assert ? 0 : can_optimize_super_call(c, e);
             RETURN_IF_ERROR(ret);
             if (ret) {
                 RETURN_IF_ERROR(load_args_for_super(c, e->v.Attribute.value));
@@ -5636,7 +5682,35 @@ codegen_visit_expr_impl(compiler *c, expr_ty e, bool result_is_unused)
 static int
 codegen_visit_expr(compiler *c, expr_ty e)
 {
-    return codegen_visit_expr_impl(c, e, false);
+    assertion_context *capture = METADATA(c)->u_assert;
+    int parent = capture ? capture->parent : -1;
+    bool borrow = capture && capture->borrow;
+    RETURN_IF_ERROR(codegen_assert_enter(c, e));
+    /* STORE_FAST requires an owned reference. A named expression can store
+       the selected child of a boolean expression, so protect the subtree. */
+    if (capture && e->kind == NamedExpr_kind) {
+        capture->borrow = false;
+    }
+    /* A comprehension has its own execution scope. Capture its result, as
+       pytest does, rather than the final iteration's local values. */
+    bool opaque = e->kind == ListComp_kind || e->kind == SetComp_kind ||
+                  e->kind == DictComp_kind || e->kind == GeneratorExp_kind;
+    if (opaque) {
+        METADATA(c)->u_assert = NULL;
+    }
+    int ret = codegen_visit_expr_impl(c, e, false);
+    METADATA(c)->u_assert = capture;
+    if (ret < 0) {
+        return ret;
+    }
+    if (capture) {
+        capture->borrow = borrow;
+    }
+    ret = codegen_assert_capture(c, e, "value", -1);
+    if (capture) {
+        capture->parent = parent;
+    }
+    return ret;
 }
 
 static int
@@ -5860,7 +5934,8 @@ codegen_subscript(compiler *c, expr_ty e)
     }
 
     VISIT(c, expr, e->v.Subscript.value);
-    if (should_apply_two_element_slice_optimization(e->v.Subscript.slice) &&
+    if (!METADATA(c)->u_assert &&
+        should_apply_two_element_slice_optimization(e->v.Subscript.slice) &&
         ctx != Del
     ) {
         RETURN_IF_ERROR(codegen_slice_two_parts(c, e->v.Subscript.slice));

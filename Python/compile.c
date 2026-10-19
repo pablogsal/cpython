@@ -15,6 +15,7 @@
  */
 
 #include "Python.h"
+#include "pycore_initconfig.h"
 #include "pycore_ast.h"           // PyAST_Check()
 #include "pycore_code.h"
 #include "pycore_compile.h"
@@ -107,6 +108,24 @@ typedef struct _PyCompiler {
     PyObject *c_module;
 } compiler;
 
+int
+_PyCompile_AssertionFlags(void)
+{
+    int flags = 0;
+    const PyWideStringList *xoptions = &_Py_GetConfig()->xoptions;
+    const wchar_t *option = _Py_get_xoption(xoptions, L"assert_details");
+    if (option != NULL) {
+        flags |= PyCF_ASSERT_DETAILS;
+        if (wcscmp(option, L"assert_details=events") == 0) {
+            flags |= PyCF_ASSERT_EVENTS;
+        }
+    }
+    if (_Py_get_xoption(xoptions, L"keep_asserts") != NULL) {
+        flags |= PyCF_KEEP_ASSERTS;
+    }
+    return flags;
+}
+
 static int
 compiler_setup(compiler *c, mod_ty mod, PyObject *filename,
                PyCompilerFlags *flags, int optimize, PyArena *arena,
@@ -136,6 +155,7 @@ compiler_setup(compiler *c, mod_ty mod, PyObject *filename,
     c->c_future.ff_features = merged;
     flags->cf_flags = merged;
     c->c_flags = *flags;
+    c->c_flags.cf_flags |= _PyCompile_AssertionFlags();
     c->c_optimize = (optimize == -1) ? _Py_GetConfig()->optimization_level : optimize;
     c->c_save_nested_seqs = false;
 
@@ -197,6 +217,7 @@ compiler_unit_free(struct compiler_unit *u)
     Py_CLEAR(u->u_metadata.u_freevars);
     Py_CLEAR(u->u_metadata.u_cellvars);
     Py_CLEAR(u->u_metadata.u_fasthidden);
+    Py_CLEAR(u->u_metadata.u_internal);
     Py_CLEAR(u->u_private);
     Py_CLEAR(u->u_static_attributes);
     Py_CLEAR(u->u_deferred_annotations);
@@ -1577,6 +1598,24 @@ intern_final_constants(PyObject *const_cache, PyObject *consts)
         Py_DECREF(item);
     }
     return SUCCESS;
+}
+
+int
+_PyCompile_AssertDetails(compiler *c)
+{
+    return (c->c_flags.cf_flags & (PyCF_ASSERT_DETAILS | PyCF_ASSERT_EVENTS)) != 0;
+}
+
+int
+_PyCompile_KeepAsserts(compiler *c)
+{
+    return (c->c_flags.cf_flags & PyCF_KEEP_ASSERTS) != 0;
+}
+
+int
+_PyCompile_AssertEvents(compiler *c)
+{
+    return (c->c_flags.cf_flags & PyCF_ASSERT_EVENTS) != 0;
 }
 
 static int
