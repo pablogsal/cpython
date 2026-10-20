@@ -304,11 +304,7 @@ Known values:
     Python 3.16a1 3704 (Replace DELETE_ATTR with PUSH_NULL; STORE_ATTR)
     Python 3.16a1 3705 (Add INTRINSIC_ADD_CONDITIONAL_ANNOTATION)
     Python 3.16a1 3706 (Add INTRINSIC_MATCH_CLASS_ISINSTANCE)
-    Python 3.16a1 3707 (Experimental native assertion diagnostics)
-    Python 3.16a1 3708 (Assertion captures, cleanup and expression plans)
-    Python 3.16a1 3709 (Borrowed assertion captures and internal-local bit)
-    Python 3.16a1 3710 (Assertion captures with existing instructions)
-    Python 3.16a1 3711 (Simplified assertion plans and failure callbacks)
+    Python 3.16a1 3711 (Native assertion diagnostics; 3707-3710 used by earlier prototypes)
 
     Python 3.17 will start with 3750
 

@@ -9,14 +9,8 @@ import difflib
 import reprlib
 
 
-_repr = reprlib.Repr()
-_repr.maxstring = 240
-_repr.maxother = 240
-_repr.maxlist = 12
-_repr.maxtuple = 12
-_repr.maxdict = 12
-_repr.maxset = 12
-_repr.maxlevel = 4
+_repr = reprlib.Repr(maxstring=240, maxother=240, maxlist=12, maxtuple=12,
+                    maxdict=12, maxset=12, maxlevel=4)
 
 
 def _safe_repr(value):

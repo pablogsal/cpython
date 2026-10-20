@@ -1988,7 +1988,7 @@ codegen_jump_if(compiler *c, location loc, expr_ty e,
         return codegen_jump_if_impl(c, loc, e, next, cond);
     }
     int parent = ctx->parent;
-    RETURN_IF_ERROR(codegen_assert_enter(c, e));
+    RETURN_IF_ERROR(codegen_assert_enter(ctx, e));
     int ret = codegen_jump_if_impl(c, loc, e, next, cond);
     ctx->parent = parent;
     return ret;
@@ -5688,7 +5688,7 @@ codegen_visit_expr(compiler *c, expr_ty e)
         return codegen_visit_expr_impl(c, e, false);
     }
     int parent = capture->parent;
-    RETURN_IF_ERROR(codegen_assert_enter(c, e));
+    RETURN_IF_ERROR(codegen_assert_enter(capture, e));
     /* A comprehension has its own execution scope. Capture its result, as
        pytest does, rather than the final iteration's local values. */
     bool opaque = e->kind == ListComp_kind || e->kind == SetComp_kind ||

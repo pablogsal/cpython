@@ -23,7 +23,6 @@ all capture data. This includes skipped nodes and recorded truth results.
 Capture is off by default. ``-O`` and ``-OO`` remove assertions.
 Capture uses a separate bytecode cache tag.
 
-``Tools/assert_details/run.py`` still provides capture for one selected file.
 The compiler flags apply to source and AST input. Flags do not affect code
 that already exists. Frozen modules retain their original behavior.
 

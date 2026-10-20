@@ -17,23 +17,17 @@ assertion_node_id(assertion_context *ctx, expr_ty e)
     if (key == NULL) {
         return -1;
     }
-    PyObject *value = PyDict_GetItemWithError(ctx->node_ids, key);
+    Py_ssize_t id = _PyCompile_DictAddObj(ctx->node_ids, key);
     Py_DECREF(key);
-    return value == NULL ? -1 : (int)PyLong_AsLong(value);
+    return (int)id;
 }
 
 static int
-codegen_assert_enter(compiler *c, expr_ty e)
+codegen_assert_enter(assertion_context *ctx, expr_ty e)
 {
-    assertion_context *ctx = METADATA(c)->u_assert;
-    if (ctx == NULL) {
-        return SUCCESS;
-    }
     int id = assertion_node_id(ctx, e);
-    if (id < 0) {
-        if (PyErr_Occurred()) {
-            return ERROR;
-        }
+    RETURN_IF_ERROR(id);
+    if (id == PyList_GET_SIZE(ctx->nodes)) {
         const char *kind = "expression";
         switch (e->kind) {
             case BoolOp_kind: kind = e->v.BoolOp.op == And ? "and" : "or"; break;
@@ -48,27 +42,15 @@ codegen_assert_enter(compiler *c, expr_ty e)
             case BinOp_kind: kind = "binary"; break;
             default: break;
         }
-        PyObject *text = _PyAST_ExprAsUnicode(e);
-        PyObject *children = PyList_New(0);
-        PyObject *key = PyLong_FromVoidPtr(e);
-        PyObject *node = NULL;
-        id = (int)PyList_GET_SIZE(ctx->nodes);
-        if (text && children && key) {
-            node = Py_BuildValue("(Os(iiii)O)", text, kind,
-                                 e->lineno, e->col_offset,
-                                 e->end_lineno, e->end_col_offset, children);
+        PyObject *node = Py_BuildValue(
+            "(Ns(iiii)N)", _PyAST_ExprAsUnicode(e), kind,
+            e->lineno, e->col_offset, e->end_lineno, e->end_col_offset,
+            PyList_New(0));
+        if (node == NULL) {
+            return ERROR;
         }
-        PyObject *index = PyLong_FromLong(id);
-        int res = ERROR;
-        if (node && index && PyList_Append(ctx->nodes, node) == 0 &&
-            PyDict_SetItem(ctx->node_ids, key, index) == 0) {
-            res = SUCCESS;
-        }
-        Py_XDECREF(text);
-        Py_XDECREF(children);
-        Py_XDECREF(key);
-        Py_XDECREF(node);
-        Py_XDECREF(index);
+        int res = PyList_Append(ctx->nodes, node);
+        Py_DECREF(node);
         RETURN_IF_ERROR(res);
     }
     if (ctx->parent >= 0 && ctx->parent != id) {
@@ -205,36 +187,17 @@ codegen_assert_details_body(compiler *c, stmt_ty s, assertion_context *ctx)
     }
     ADDOP_I(c, loc, CALL, 0);
 
-    PyObject *records = PyList_AsTuple(ctx->records);
-    PyObject *nodes = PyTuple_New(PyList_GET_SIZE(ctx->nodes));
-    if (nodes != NULL) {
-        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(nodes); i++) {
-            PyObject *node = PyList_GET_ITEM(ctx->nodes, i);
-            PyObject *children = PyList_AsTuple(PyTuple_GET_ITEM(node, 3));
-            PyObject *frozen = children == NULL ? NULL : PyTuple_Pack(
-                4, PyTuple_GET_ITEM(node, 0), PyTuple_GET_ITEM(node, 1),
-                PyTuple_GET_ITEM(node, 2), children);
-            Py_XDECREF(children);
-            if (frozen == NULL) {
-                Py_CLEAR(nodes);
-                break;
-            }
-            PyTuple_SET_ITEM(nodes, i, frozen);
+    for (Py_ssize_t i = 0; i < PyList_GET_SIZE(ctx->nodes); i++) {
+        PyObject *node = PyList_GET_ITEM(ctx->nodes, i);
+        PyObject *children = PyList_AsTuple(PyTuple_GET_ITEM(node, 3));
+        if (children == NULL) {
+            return ERROR;
         }
+        /* ctx->nodes is the sole owner until the plan enters constants. */
+        RETURN_IF_ERROR(PyTuple_SetItem(node, 3, children));
     }
-    PyObject *plan = NULL;
-    if (records && nodes) {
-        plan = PyTuple_Pack(2, records, nodes);
-    }
-    Py_XDECREF(records);
-    Py_XDECREF(nodes);
-    if (plan == NULL) {
-        return ERROR;
-    }
-    Py_ssize_t plan_index = _PyCompile_AddConst(c, plan);
-    Py_DECREF(plan);
-    RETURN_IF_ERROR(plan_index);
-    ADDOP_I(c, NO_LOCATION, LOAD_CONST, plan_index);
+    ADDOP_LOAD_CONST_NEW(c, NO_LOCATION, Py_BuildValue(
+        "(NN)", PyList_AsTuple(ctx->records), PyList_AsTuple(ctx->nodes)));
     ADDOP_I(c, NO_LOCATION, CALL_INTRINSIC_2, INTRINSIC_ASSERT_DETAILS);
     ADDOP_I(c, LOC(s->v.Assert.test), RAISE_VARARGS, 1);
 

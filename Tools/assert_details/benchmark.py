@@ -7,7 +7,6 @@ so all modes share the same executable, library, CPU, and optimization level.
 import argparse
 import ast
 import dis
-import gc
 import io
 import json
 import marshal
@@ -58,10 +57,7 @@ def build(expression, mode, rewrite=None, iterations=1):
 
 
 def sizes(code):
-    codes = [code]
-    for constant in code.co_consts:
-        if isinstance(constant, types.CodeType):
-            codes.extend(walk_codes(constant))
+    codes = list(walk_codes(code))
     return {
         'bytecode_bytes': sum(len(c.co_code) for c in codes),
         'instructions': sum(len(list(dis.get_instructions(c))) for c in codes),
