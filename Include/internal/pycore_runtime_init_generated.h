@@ -1551,7 +1551,6 @@ extern "C" {
     INIT_ID(_flags_), \
     INIT_ID(_get_sourcefile), \
     INIT_ID(_handle_fromlist), \
-    INIT_ID(_handlers), \
     INIT_ID(_initializing), \
     INIT_ID(_internal_use), \
     INIT_ID(_io), \

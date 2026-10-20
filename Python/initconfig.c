@@ -441,9 +441,7 @@ static const char usage_help[] =
 
 static const char usage_xoptions[] =
 "#h{The following implementation-specific options are available:}\n"
-"#s{-X} #L{assert_details}#b{[=events]}: capture assertion values; events also enables\n"
-"         callbacks for successful assertions.\n"
-"#s{-X} #L{keep_asserts}: retain assertions at optimization levels 1 and 2.\n"
+"#s{-X} #L{assert_details}: capture assertion values for failure diagnostics.\n"
 "#s{-X} #L{context_aware_warnings}#b{=[0|1]}: if true (#B{1}) then the warnings module will\n"
 "         use a context variables; if false (#B{0}) then the warnings module will\n"
 "         use module globals, which is not concurrent-safe; set to true for\n"
@@ -2406,13 +2404,8 @@ config_read_complex_options(PyConfig *config)
     /* More complex options configured by env var and -X option */
     const wchar_t *assertion_option = config_get_xoption(config, L"assert_details");
     if (assertion_option != NULL &&
-        wcscmp(assertion_option, L"assert_details") != 0 &&
-        wcscmp(assertion_option, L"assert_details=events") != 0) {
-        return _PyStatus_ERR("-X assert_details: expected no value or 'events'");
-    }
-    assertion_option = config_get_xoption(config, L"keep_asserts");
-    if (assertion_option != NULL && wcscmp(assertion_option, L"keep_asserts") != 0) {
-        return _PyStatus_ERR("-X keep_asserts does not accept a value");
+        wcscmp(assertion_option, L"assert_details") != 0) {
+        return _PyStatus_ERR("-X assert_details does not accept a value");
     }
 
     if (config->faulthandler < 0) {

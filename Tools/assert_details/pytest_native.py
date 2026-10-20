@@ -19,21 +19,18 @@ _original_tail = rewrite.PYC_TAIL
 
 def _compile_test(path, config):
     source = path.read_bytes()
-    flags = ast.PyCF_ASSERT_DETAILS | ast.PyCF_KEEP_ASSERTS
-    if config.getini('enable_assertion_pass_hook'):
-        flags |= ast.PyCF_ASSERT_EVENTS
-    code = compile(source, str(path), 'exec', flags=flags, dont_inherit=True)
+    code = compile(source, str(path), 'exec', flags=ast.PyCF_ASSERT_DETAILS,
+                   dont_inherit=True, optimize=0)
     return importlib.util.source_hash(source), code
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_load_initial_conftests(early_config):
-    events = early_config.getini('enable_assertion_pass_hook')
-    mode = 'events' if events else 'details'
+    if early_config.getini('enable_assertion_pass_hook'):
+        raise pytest.UsageError('native assertion capture supports failure callbacks only')
     rewrite._rewrite_test = _compile_test
     rewrite.PYC_TAIL = (
-        f'.{sys.implementation.cache_tag}-pytest-native-v1-{mode}'
-        f'-opt{sys.flags.optimize}{rewrite.PYC_EXT}'
+        f'.{sys.implementation.cache_tag}-pytest-native-v2{rewrite.PYC_EXT}'
     )
 
 
@@ -74,16 +71,5 @@ def pytest_runtest_protocol(item):
     def failure(error, details):
         _message(error, details, compare)
 
-    def passed(details):
-        explanation = ''.join(assertionlib.format_details(details, compare=compare)).strip()
-        item.ihook.pytest_assertion_pass(
-            item=item, lineno=details.location.lineno,
-            orig=details.expression, expl=explanation,
-        )
-
-    on_pass = None
-    if (item.config.getini('enable_assertion_pass_hook') and
-            item.ihook.pytest_assertion_pass.get_hookimpls()):
-        on_pass = passed
-    with assertionlib.handlers(on_failure=failure, on_pass=on_pass):
+    with assertionlib.handlers(on_failure=failure):
         return (yield)

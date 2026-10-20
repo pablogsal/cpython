@@ -1159,10 +1159,10 @@ class TracebackException:
         if isinstance(exc_value, AssertionError):
             try:
                 attributes = exc_value.__dict__
-                details = attributes.get('_assertion')
-                if details is not None and not attributes.get('_assertion_explained', False):
-                    from _assertion import format_details
-                    self._assertion_lines = tuple(format_details(details))
+                if ('_assertion' in attributes and
+                        not attributes.get('_assertion_explained', False)):
+                    from assertionlib import get_details, format_details
+                    self._assertion_lines = tuple(format_details(get_details(exc_value)))
             except Exception:
                 self._assertion_lines = ('  <assertion details unavailable>\n',)
         try:

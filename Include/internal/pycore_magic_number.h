@@ -307,6 +307,8 @@ Known values:
     Python 3.16a1 3707 (Experimental native assertion diagnostics)
     Python 3.16a1 3708 (Assertion captures, cleanup and expression plans)
     Python 3.16a1 3709 (Borrowed assertion captures and internal-local bit)
+    Python 3.16a1 3710 (Assertion captures with existing instructions)
+    Python 3.16a1 3711 (Simplified assertion plans and failure callbacks)
 
     Python 3.17 will start with 3750
 
@@ -316,7 +318,7 @@ Known values:
 
 */
 
-#define PYC_MAGIC_NUMBER 3709
+#define PYC_MAGIC_NUMBER 3711
 /* This is equivalent to converting PYC_MAGIC_NUMBER to 2 bytes
    (little-endian) and then appending b'\r\n'. */
 #define PYC_MAGIC_NUMBER_TOKEN \

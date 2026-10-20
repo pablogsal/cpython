@@ -1,8 +1,7 @@
 """Structured diagnostics and callbacks for native assertions.
 
-Compile with ast.PyCF_ASSERT_DETAILS to capture values on failure. Add
-ast.PyCF_ASSERT_EVENTS for successful-assertion callbacks. Values are live
-references; capture does not copy mutable objects.
+Compile with ast.PyCF_ASSERT_DETAILS to retain values on failure.
+Values are live references; capture does not copy mutable objects.
 """
 
 from contextlib import contextmanager
@@ -71,12 +70,11 @@ class AssertionDetails:
     root: Expression
     nodes: tuple[Expression, ...]
     comparisons: tuple[Comparison, ...]
-    passed: bool
     _payload: tuple = field(repr=False)
 
 
 def _from_payload(payload):
-    text, records, values, plan, filename, passed = payload
+    records, values, plan, filename = payload
     nodes = tuple(Expression(i, label, kind, SourceLocation(filename, *span))
                   for i, (label, kind, span, children) in enumerate(plan))
     set_attr = object.__setattr__
@@ -84,20 +82,23 @@ def _from_payload(payload):
         set_attr(node, 'children', tuple(nodes[i] for i in descriptor[3]))
     comparisons = []
     by_link = {}
-    by_node = {}
+    last_comparison = {}
     for record, captured in zip(records, values):
-        slot, label, kind, span, extra, node_id = record
+        slot, kind, node_id, extra = record
         node = nodes[node_id]
         if kind == 'value':
             set_attr(node, '_capture', captured)
             set_attr(node, 'evaluated', bool(captured))
         elif kind == 'comparison':
-            left_slot, right_slot, op, left_id, right_id = extra
-            comparison = Comparison(op, nodes[left_id], nodes[right_id],
-                                    node, label, bool(captured), _capture=captured)
+            op, left_id, right_id = extra
+            left, right = nodes[left_id], nodes[right_id]
+            comparison = Comparison(op, left, right, node,
+                                    f'{left.text} {op} {right.text}',
+                                    bool(captured), _capture=captured)
             comparisons.append(comparison)
             by_link[node_id, extra] = comparison
-            by_node.setdefault(node_id, []).append(comparison)
+            if captured:
+                last_comparison[node_id] = comparison
         elif captured:
             if extra is None:
                 set_attr(node, 'truth', captured[0])
@@ -127,10 +128,8 @@ def _from_payload(payload):
             set_attr(node, 'truth', result)
             set_attr(node, 'evaluated', True)
         elif node.kind == 'compare':
-            links = by_node.get(node.id, ())
-            evaluated = [link for link in links if link.evaluated]
-            if evaluated:
-                selected = evaluated[-1]
+            selected = last_comparison.get(node.id)
+            if selected is not None:
                 if node.truth is not None and selected.truth is None:
                     set_attr(selected, 'truth', node.truth)
         if selected is not None:
@@ -140,10 +139,10 @@ def _from_payload(payload):
             if node.truth is None:
                 set_attr(node, 'truth', selected.truth)
     root = nodes[0]
-    set_attr(root, 'truth', passed)
+    set_attr(root, 'truth', False)
     set_attr(root, 'evaluated', True)
-    return AssertionDetails(text, root.location, root, nodes,
-                            tuple(comparisons), passed, payload)
+    return AssertionDetails(root.text, root.location, root, nodes,
+                            tuple(comparisons), payload)
 
 
 def get_details(error):
@@ -165,8 +164,9 @@ def clear_details(error):
 
     A separately retained AssertionDetails object still owns its values.
     """
-    from _assertion import clear_details as clear_payload
-    clear_payload(error)
+    error.__dict__.pop('_assertion', None)
+    error.__dict__.pop('_assertion_details', None)
+    error.__dict__.pop('_assertion_explained', None)
 
 
 def format_details(details, *, compare=None):
@@ -177,41 +177,38 @@ def format_details(details, *, compare=None):
     """
     if not isinstance(details, AssertionDetails):
         raise TypeError('expected AssertionDetails')
-    from _assertion import _format_details
-    return _format_details(details, compare=compare)
+    from _assertion import format_details
+    return format_details(details, compare=compare)
 
 
 @contextmanager
-def handlers(*, on_failure=None, on_pass=None):
+def handlers(*, on_failure=None):
     """Install synchronous callbacks in the current execution context.
 
     Nested scopes restore their previous callbacks. Context copies, including
     new asyncio tasks, inherit these callbacks. Thread context rules apply.
     """
-    for callback in (on_failure, on_pass):
-        if callback is not None and not callable(callback):
-            raise TypeError('assertion callbacks must be callable or None')
-    token = _handlers.set((on_failure, on_pass))
+    if on_failure is not None and not callable(on_failure):
+        raise TypeError('assertion callback must be callable or None')
+    token = _handlers.set(on_failure)
     try:
         yield
     finally:
         _handlers.reset(token)
 
 
-def _dispatch(error, payload):
+def _dispatch(error):
+    callback = _handlers.get()
+    if callback is None:
+        return
     active = _dispatching.get()
     if active is not None and active[0]:
         return
-    callbacks = _handlers.get()
-    callback = callbacks[error is None]
+    # Context copies share this marker until the callback returns.
     active = [True]
     token = _dispatching.set(active)
     try:
-        details = _from_payload(payload) if error is None else get_details(error)
-        if error is None:
-            callback(details)
-        else:
-            callback(error, details)
+        callback(error, get_details(error))
     finally:
         active[0] = False
         _dispatching.reset(token)

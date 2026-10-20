@@ -5245,23 +5245,6 @@
             DISPATCH();
         }
 
-        TARGET(CLEAR_FAST) {
-            #if _Py_TAIL_CALL_INTERP
-            int opcode = CLEAR_FAST;
-            (void)(opcode);
-            #endif
-            frame->instr_ptr = next_instr;
-            next_instr += 1;
-            INSTRUCTION_STATS(CLEAR_FAST);
-            _PyStackRef old = GETLOCAL(oparg);
-            GETLOCAL(oparg) = PyStackRef_NULL;
-            _PyFrame_SetStackPointer(frame, stack_pointer);
-            _PyFrame_StackPointerValidate(frame);
-            PyStackRef_XCLOSE(old);
-            _PyFrame_StackPointerInvalidate(frame);
-            DISPATCH();
-        }
-
         TARGET(COMPARE_OP) {
             #if _Py_TAIL_CALL_INTERP
             int opcode = COMPARE_OP;
@@ -5848,25 +5831,6 @@
                 PyObject *o = PyTuple_GET_ITEM(closure, i);
                 frame->localsplus[offset + i] = PyStackRef_FromPyObjectNew(o);
             }
-            DISPATCH();
-        }
-
-        TARGET(COPY_TO_FAST) {
-            #if _Py_TAIL_CALL_INTERP
-            int opcode = COPY_TO_FAST;
-            (void)(opcode);
-            #endif
-            frame->instr_ptr = next_instr;
-            next_instr += 1;
-            INSTRUCTION_STATS(COPY_TO_FAST);
-            _PyStackRef value;
-            value = stack_pointer[-1];
-            _PyStackRef old = GETLOCAL(oparg);
-            GETLOCAL(oparg) = PyStackRef_MakeHeapSafe(PyStackRef_DUP(value));
-            _PyFrame_SetStackPointer(frame, stack_pointer);
-            _PyFrame_StackPointerValidate(frame);
-            PyStackRef_XCLOSE(old);
-            _PyFrame_StackPointerInvalidate(frame);
             DISPATCH();
         }
 
@@ -12353,28 +12317,6 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
-            DISPATCH();
-        }
-
-        TARGET(STORE_FAST_BORROW) {
-            #if _Py_TAIL_CALL_INTERP
-            int opcode = STORE_FAST_BORROW;
-            (void)(opcode);
-            #endif
-            frame->instr_ptr = next_instr;
-            next_instr += 1;
-            INSTRUCTION_STATS(STORE_FAST_BORROW);
-            _PyStackRef value;
-            _PyStackRef borrowed;
-            value = stack_pointer[-1];
-            _PyStackRef old = GETLOCAL(oparg);
-            GETLOCAL(oparg) = PyStackRef_MakeHeapSafe(value);
-            borrowed = PyStackRef_Borrow(GETLOCAL(oparg));
-            stack_pointer[-1] = borrowed;
-            _PyFrame_SetStackPointer(frame, stack_pointer);
-            _PyFrame_StackPointerValidate(frame);
-            PyStackRef_XCLOSE(old);
-            _PyFrame_StackPointerInvalidate(frame);
             DISPATCH();
         }
 

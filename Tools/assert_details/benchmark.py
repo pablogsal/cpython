@@ -50,9 +50,7 @@ def build(expression, mode, rewrite=None, iterations=1):
     tree = ast.parse(source)
     if mode == 'pytest':
         rewrite(tree, source.encode())
-    flags = ast.PyCF_ASSERT_DETAILS if mode.startswith('native') else 0
-    if mode == 'native_events':
-        flags |= ast.PyCF_ASSERT_EVENTS
+    flags = ast.PyCF_ASSERT_DETAILS if mode == 'native' else 0
     code = compile(tree, '<benchmark>', 'exec', flags=flags, dont_inherit=True)
     ns = {}
     exec(code, ns)
@@ -125,16 +123,13 @@ def main():
     parser.add_argument('--pytest-deps', type=Path)
     parser.add_argument('--iterations', type=int, default=1)
     parser.add_argument('--cpu', type=int)
-    parser.add_argument('--events', action='store_true')
+    parser.add_argument('--callbacks', action='store_true')
     parser.add_argument('--cases', nargs='+', choices=CASES)
     parser.add_argument('--rounds', type=int, default=9)
     parser.add_argument('--sample-seconds', type=float, default=0.15)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     modes = ['plain', 'native']
-    if args.events:
-        import assertionlib
-        modes.append('native_events')
     rewrite = None
     if args.pytest_source:
         sys.path.insert(0, str(args.pytest_source / 'src'))
@@ -210,24 +205,25 @@ def main():
                 traceback.format_exception(exc)
         failure[mode] = {}
         for label, action in [('raise_catch', catch), ('raise_format', display)]:
+            module_loaded = 'assertionlib' in sys.modules
             timer = timeit.Timer(action)
             loops = calibrate(timer, args.sample_seconds)
             samples = [timer.timeit(loops) * 1e9 / loops for _ in range(args.rounds)]
-            failure[mode][label] = {'samples_ns': samples, 'median_ns': statistics.median(samples)}
-    if args.events:
+            failure[mode][label] = {
+                'assertionlib_loaded_before': module_loaded,
+                'samples_ns': samples, 'median_ns': statistics.median(samples),
+            }
+    if args.callbacks:
+        import assertionlib
         callback_results = results['callbacks'] = {}
-        passed_fn = build('a == b', 'native_events')
         failed_fn = build('a == b', 'native')
-        def passed():
-            passed_fn(1, 1)
         def failed():
             try:
                 failed_fn(1, 2)
             except AssertionError:
                 pass
         cases = [
-            ('pass_no_handler', passed, {}),
-            ('pass_handler', passed, {'on_pass': lambda details: None}),
+            ('failure_no_handler', failed, {}),
             ('failure_handler', failed, {'on_failure': lambda error, details: None}),
             ('failure_format_handler', failed,
              {'on_failure': lambda error, details: assertionlib.format_details(details)}),

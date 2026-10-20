@@ -3701,16 +3701,8 @@ const char *_PySys_ImplName = _PY_IMPL_NAME;
 const char *
 _PySys_ImplCacheTag(void)
 {
-    int flags = _PyCompile_AssertionFlags();
-    if (flags & PyCF_ASSERT_EVENTS) {
-        return flags & PyCF_KEEP_ASSERTS
-            ? _PY_IMPL_CACHE_TAG "-assert-events-keep" : _PY_IMPL_CACHE_TAG "-assert-events";
-    }
-    if (flags & PyCF_ASSERT_DETAILS) {
-        return flags & PyCF_KEEP_ASSERTS
-            ? _PY_IMPL_CACHE_TAG "-assert-keep" : _PY_IMPL_CACHE_TAG "-assert";
-    }
-    return flags & PyCF_KEEP_ASSERTS ? _PY_IMPL_CACHE_TAG "-keep" : _PY_IMPL_CACHE_TAG;
+    return _PyCompile_AssertionFlags()
+        ? _PY_IMPL_CACHE_TAG "-assert" : _PY_IMPL_CACHE_TAG;
 }
 #ifdef MAJOR
 #undef MAJOR

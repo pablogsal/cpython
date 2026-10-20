@@ -174,20 +174,6 @@ dummy_func(void) {
         o = owner;
     }
 
-    op(_COPY_TO_FAST, (value -- value)) {
-        value = PyJitRef_RemoveUnique(value);
-        GETLOCAL(oparg) = PyJitRef_StripReferenceInfo(value);
-    }
-
-    op(_STORE_FAST_BORROW, (value -- borrowed)) {
-        GETLOCAL(oparg) = PyJitRef_StripReferenceInfo(value);
-        borrowed = PyJitRef_Borrow(value);
-    }
-
-    op(_CLEAR_FAST, (--)) {
-        GETLOCAL(oparg) = sym_new_null(ctx);
-    }
-
     op(_SWAP_FAST, (value -- trash)) {
         JitOptRef tmp = GETLOCAL(oparg);
         GETLOCAL(oparg) = PyJitRef_RemoveUnique(value);

@@ -2,12 +2,9 @@
 
 typedef struct {
     PyObject *records;
-    PyObject *slots;
     PyObject *nodes;
     PyObject *node_ids;
     int parent;
-    int next_slot;
-    bool borrow;
 } assertion_context;
 
 static int codegen_jump_if(compiler *, location, expr_ty,
@@ -92,31 +89,6 @@ codegen_assert_enter(compiler *c, expr_ty e)
 }
 
 static int
-assertion_value_slot(assertion_context *ctx, expr_ty e)
-{
-    PyObject *key = PyLong_FromVoidPtr(e);
-    if (key == NULL) {
-        return -1;
-    }
-    PyObject *value = PyDict_GetItemWithError(ctx->slots, key);
-    Py_DECREF(key);
-    if (value == NULL) {
-        return -1;
-    }
-    return (int)PyLong_AsLong(value);
-}
-
-static PyObject *
-assertion_node_text(assertion_context *ctx, expr_ty e)
-{
-    int id = assertion_node_id(ctx, e);
-    if (id < 0) {
-        return NULL;
-    }
-    return Py_NewRef(PyTuple_GET_ITEM(PyList_GET_ITEM(ctx->nodes, id), 0));
-}
-
-static int
 codegen_assert_capture(compiler *c, expr_ty e, const char *kind, int link)
 {
     assertion_context *ctx = METADATA(c)->u_assert;
@@ -130,7 +102,11 @@ codegen_assert_capture(compiler *c, expr_ty e, const char *kind, int link)
         (e->kind == Tuple_kind && e->v.Tuple.ctx != Load)) {
         return SUCCESS;
     }
-    PyObject *label = NULL, *extra = NULL, *name = NULL, *record = NULL;
+    /* Comparison nodes use their last evaluated link as their value. */
+    if (e->kind == Compare_kind && strcmp(kind, "value") == 0) {
+        return SUCCESS;
+    }
+    PyObject *extra = NULL, *name = NULL, *record = NULL;
     int ret = ERROR;
     if (link >= 0) {
         static const char *operators[] = {
@@ -140,50 +116,26 @@ codegen_assert_capture(compiler *c, expr_ty e, const char *kind, int link)
             asdl_seq_GET(e->v.Compare.comparators, link - 1);
         expr_ty right = asdl_seq_GET(e->v.Compare.comparators, link);
         const char *op = operators[asdl_seq_GET(e->v.Compare.ops, link)];
-        PyObject *l = assertion_node_text(ctx, left);
-        PyObject *r = assertion_node_text(ctx, right);
-        if (l != NULL && r != NULL) {
-            label = PyUnicode_FromFormat("%U %s %U", l, op, r);
-        }
-        Py_XDECREF(l);
-        Py_XDECREF(r);
-        if (label == NULL) {
+        int left_id = assertion_node_id(ctx, left);
+        int right_id = assertion_node_id(ctx, right);
+        if (left_id < 0 || right_id < 0) {
             goto done;
         }
-        int left_slot = assertion_value_slot(ctx, left);
-        int right_slot = assertion_value_slot(ctx, right);
-        if (PyErr_Occurred()) {
-            goto done;
-        }
-        extra = Py_BuildValue("(iisii)", left_slot, right_slot, op,
-                              assertion_node_id(ctx, left),
-                              assertion_node_id(ctx, right));
+        extra = Py_BuildValue("(sii)", op, left_id, right_id);
     }
     else {
-        label = assertion_node_text(ctx, e);
         extra = Py_NewRef(Py_None);
     }
-    if (label == NULL || extra == NULL) {
+    if (extra == NULL) {
         goto done;
     }
-    Py_ssize_t slot = -1;
-    /* A single comparison and its expression result are the same value. */
-    bool alias = strcmp(kind, "value") == 0 && e->kind == Compare_kind &&
-                 asdl_seq_LEN(e->v.Compare.ops) == 1;
-    if (alias) {
-        PyObject *previous = PyList_GET_ITEM(ctx->records,
-                                           PyList_GET_SIZE(ctx->records) - 1);
-        slot = PyLong_AsSsize_t(PyTuple_GET_ITEM(previous, 0));
+    name = PyUnicode_FromFormat(".assertion.%zd", PyList_GET_SIZE(ctx->records));
+    if (name == NULL) {
+        goto done;
     }
-    else {
-        name = PyUnicode_FromFormat(".assertion.%d", ctx->next_slot++);
-        if (name == NULL) {
-            goto done;
-        }
-        slot = _PyCompile_DictAddObj(METADATA(c)->u_varnames, name);
-        if (slot < 0) {
-            goto done;
-        }
+    Py_ssize_t slot = _PyCompile_DictAddObj(METADATA(c)->u_varnames, name);
+    if (slot < 0) {
+        goto done;
     }
     if (METADATA(c)->u_internal == NULL) {
         METADATA(c)->u_internal = PySet_New(NULL);
@@ -191,35 +143,23 @@ codegen_assert_capture(compiler *c, expr_ty e, const char *kind, int link)
             goto done;
         }
     }
-    if (name != NULL && PySet_Add(METADATA(c)->u_internal, name) < 0) {
+    if (PySet_Add(METADATA(c)->u_internal, name) < 0) {
         goto done;
     }
-    record = Py_BuildValue("(nOs(iiii)Oi)", slot, label, kind,
-                          e->lineno, e->col_offset,
-                          e->end_lineno, e->end_col_offset, extra, assertion_node_id(ctx, e));
+    int node_id = assertion_node_id(ctx, e);
+    if (node_id < 0) {
+        goto done;
+    }
+    record = Py_BuildValue("(nsiO)", slot, kind, node_id, extra);
     if (record == NULL || PyList_Append(ctx->records, record) < 0) {
         goto done;
     }
-    if (strcmp(kind, "value") == 0) {
-        PyObject *key = PyLong_FromVoidPtr(e);
-        if (key == NULL) {
-            goto done;
-        }
-        int res = PyDict_SetItem(ctx->slots, key, PyTuple_GET_ITEM(record, 0));
-        Py_DECREF(key);
-        if (res < 0) {
-            goto done;
-        }
-    }
-    if (!alias &&
-        codegen_addop_i(INSTR_SEQUENCE(c),
-                        ctx->borrow ? STORE_FAST_BORROW : COPY_TO_FAST,
-                        slot, NO_LOCATION) < 0) {
+    if (codegen_addop_i(INSTR_SEQUENCE(c), STORE_FAST, slot, NO_LOCATION) < 0 ||
+        codegen_addop_i(INSTR_SEQUENCE(c), LOAD_FAST, slot, NO_LOCATION) < 0) {
         goto done;
     }
     ret = SUCCESS;
 done:
-    Py_XDECREF(label);
     Py_XDECREF(extra);
     Py_XDECREF(name);
     Py_XDECREF(record);
@@ -229,17 +169,12 @@ done:
 static int
 codegen_assert_clear(compiler *c, assertion_context *ctx)
 {
-    for (int i = 0; i < ctx->next_slot; i++) {
-        PyObject *name = PyUnicode_FromFormat(".assertion.%d", i);
-        if (name == NULL) {
-            return ERROR;
-        }
-        PyObject *index = PyDict_GetItemWithError(METADATA(c)->u_varnames, name);
-        Py_DECREF(name);
-        if (index == NULL) {
-            return ERROR;
-        }
-        ADDOP_I(c, NO_LOCATION, CLEAR_FAST, PyLong_AsLong(index));
+    for (Py_ssize_t i = 0; i < PyList_GET_SIZE(ctx->records); i++) {
+        PyObject *record = PyList_GET_ITEM(ctx->records, i);
+        Py_ssize_t slot = PyLong_AsSsize_t(PyTuple_GET_ITEM(record, 0));
+        RETURN_IF_ERROR(slot);
+        ADDOP_I(c, NO_LOCATION, LOAD_FAST_AND_CLEAR, slot);
+        ADDOP(c, NO_LOCATION, POP_TOP);
     }
     return SUCCESS;
 }
@@ -270,7 +205,6 @@ codegen_assert_details_body(compiler *c, stmt_ty s, assertion_context *ctx)
     }
     ADDOP_I(c, loc, CALL, 0);
 
-    PyObject *text = assertion_node_text(ctx, s->v.Assert.test);
     PyObject *records = PyList_AsTuple(ctx->records);
     PyObject *nodes = PyTuple_New(PyList_GET_SIZE(ctx->nodes));
     if (nodes != NULL) {
@@ -289,10 +223,9 @@ codegen_assert_details_body(compiler *c, stmt_ty s, assertion_context *ctx)
         }
     }
     PyObject *plan = NULL;
-    if (text && records && nodes) {
-        plan = PyTuple_Pack(3, text, records, nodes);
+    if (records && nodes) {
+        plan = PyTuple_Pack(2, records, nodes);
     }
-    Py_XDECREF(text);
     Py_XDECREF(records);
     Py_XDECREF(nodes);
     if (plan == NULL) {
@@ -306,12 +239,6 @@ codegen_assert_details_body(compiler *c, stmt_ty s, assertion_context *ctx)
     ADDOP_I(c, LOC(s->v.Assert.test), RAISE_VARARGS, 1);
 
     USE_LABEL(c, passed);
-    if (_PyCompile_AssertEvents(c)) {
-        ADDOP_LOAD_CONST(c, NO_LOCATION, Py_None);
-        ADDOP_I(c, NO_LOCATION, LOAD_CONST, plan_index);
-        ADDOP_I(c, NO_LOCATION, CALL_INTRINSIC_2, INTRINSIC_ASSERT_DETAILS);
-        ADDOP(c, NO_LOCATION, POP_TOP);
-    }
     ADDOP(c, NO_LOCATION, POP_BLOCK);
     _PyCompile_PopFBlock(c, COMPILE_FBLOCK_TRY_EXCEPT, cleanup);
     RETURN_IF_ERROR(codegen_assert_clear(c, ctx));
@@ -327,23 +254,21 @@ codegen_assert_details_body(compiler *c, stmt_ty s, assertion_context *ctx)
 static int
 codegen_assert_details(compiler *c, stmt_ty s)
 {
-    if (!_PyCompile_AssertEvents(c) && s->v.Assert.test->kind == Constant_kind &&
+    if (s->v.Assert.test->kind == Constant_kind &&
         PyObject_IsTrue(s->v.Assert.test->v.Constant.value) == 1) {
         ADDOP(c, LOC(s), NOP);
         return SUCCESS;
     }
     assertion_context ctx = {
-        .records = PyList_New(0), .slots = PyDict_New(),
+        .records = PyList_New(0),
         .nodes = PyList_New(0), .node_ids = PyDict_New(), .parent = -1,
-        .borrow = true,
     };
     int ret = ERROR;
-    if (ctx.records && ctx.slots && ctx.nodes && ctx.node_ids) {
+    if (ctx.records && ctx.nodes && ctx.node_ids) {
         ret = codegen_assert_details_body(c, s, &ctx);
     }
     METADATA(c)->u_assert = NULL;
     Py_XDECREF(ctx.records);
-    Py_XDECREF(ctx.slots);
     Py_XDECREF(ctx.nodes);
     Py_XDECREF(ctx.node_ids);
     return ret;

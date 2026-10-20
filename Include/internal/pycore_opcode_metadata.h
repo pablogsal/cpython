@@ -158,8 +158,6 @@ int _PyOpcode_num_popped(int opcode, int oparg)  {
             return 2;
         case CLEANUP_THROW:
             return 4;
-        case CLEAR_FAST:
-            return 0;
         case COMPARE_OP:
             return 2;
         case COMPARE_OP_FLOAT:
@@ -180,8 +178,6 @@ int _PyOpcode_num_popped(int opcode, int oparg)  {
             return 1 + (oparg-1);
         case COPY_FREE_VARS:
             return 0;
-        case COPY_TO_FAST:
-            return 1;
         case DELETE_DEREF:
             return 0;
         case DELETE_FAST:
@@ -468,8 +464,6 @@ int _PyOpcode_num_popped(int opcode, int oparg)  {
             return 1;
         case STORE_FAST:
             return 1;
-        case STORE_FAST_BORROW:
-            return 1;
         case STORE_FAST_LOAD_FAST:
             return 1;
         case STORE_FAST_MAYBE_NULL:
@@ -659,8 +653,6 @@ int _PyOpcode_num_pushed(int opcode, int oparg)  {
             return 2;
         case CLEANUP_THROW:
             return 3;
-        case CLEAR_FAST:
-            return 0;
         case COMPARE_OP:
             return 1;
         case COMPARE_OP_FLOAT:
@@ -681,8 +673,6 @@ int _PyOpcode_num_pushed(int opcode, int oparg)  {
             return 2 + (oparg-1);
         case COPY_FREE_VARS:
             return 0;
-        case COPY_TO_FAST:
-            return 1;
         case DELETE_DEREF:
             return 0;
         case DELETE_FAST:
@@ -969,8 +959,6 @@ int _PyOpcode_num_pushed(int opcode, int oparg)  {
             return 0;
         case STORE_FAST:
             return 0;
-        case STORE_FAST_BORROW:
-            return 1;
         case STORE_FAST_LOAD_FAST:
             return 1;
         case STORE_FAST_MAYBE_NULL:
@@ -1172,7 +1160,6 @@ const struct opcode_metadata _PyOpcode_opcode_metadata[267] = {
     [CHECK_EG_MATCH] = { true, INSTR_FMT_IX, HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [CHECK_EXC_MATCH] = { true, INSTR_FMT_IX, HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG },
     [CLEANUP_THROW] = { true, INSTR_FMT_IX, HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG },
-    [CLEAR_FAST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG },
     [COMPARE_OP] = { true, INSTR_FMT_IBC, HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [COMPARE_OP_FLOAT] = { true, INSTR_FMT_IBC, HAS_ARG_FLAG | HAS_EXIT_FLAG },
     [COMPARE_OP_INT] = { true, INSTR_FMT_IBC, HAS_ARG_FLAG | HAS_EXIT_FLAG },
@@ -1183,7 +1170,6 @@ const struct opcode_metadata _PyOpcode_opcode_metadata[267] = {
     [CONVERT_VALUE] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [COPY] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_PURE_FLAG },
     [COPY_FREE_VARS] = { true, INSTR_FMT_IB, HAS_ARG_FLAG },
-    [COPY_TO_FAST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG },
     [DELETE_DEREF] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG },
     [DELETE_FAST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [DELETE_SUBSCR] = { true, INSTR_FMT_IX, HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
@@ -1318,7 +1304,6 @@ const struct opcode_metadata _PyOpcode_opcode_metadata[267] = {
     [STORE_ATTR_WITH_HINT] = { true, INSTR_FMT_IBC000, HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_DEOPT_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG | HAS_RECORDS_VALUE_FLAG },
     [STORE_DEREF] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ESCAPES_FLAG },
     [STORE_FAST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG },
-    [STORE_FAST_BORROW] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG },
     [STORE_FAST_LOAD_FAST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG },
     [STORE_FAST_STORE_FAST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG },
     [STORE_GLOBAL] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
@@ -1425,7 +1410,6 @@ _PyOpcode_macro_expansion[256] = {
     [CALL_TYPE_1] = { .nuops = 4, .uops = { { _GUARD_NOS_NULL, OPARG_SIMPLE, 3 }, { _GUARD_CALLABLE_TYPE_1, OPARG_SIMPLE, 3 }, { _CALL_TYPE_1, OPARG_SIMPLE, 3 }, { _POP_TOP, OPARG_SIMPLE, 3 } } },
     [CHECK_EG_MATCH] = { .nuops = 1, .uops = { { _CHECK_EG_MATCH, OPARG_SIMPLE, 0 } } },
     [CHECK_EXC_MATCH] = { .nuops = 1, .uops = { { _CHECK_EXC_MATCH, OPARG_SIMPLE, 0 } } },
-    [CLEAR_FAST] = { .nuops = 1, .uops = { { _CLEAR_FAST, OPARG_SIMPLE, 0 } } },
     [COMPARE_OP] = { .nuops = 1, .uops = { { _COMPARE_OP, OPARG_SIMPLE, 0 } } },
     [COMPARE_OP_FLOAT] = { .nuops = 5, .uops = { { _GUARD_TOS_FLOAT, OPARG_SIMPLE, 0 }, { _GUARD_NOS_FLOAT, OPARG_SIMPLE, 0 }, { _COMPARE_OP_FLOAT, OPARG_SIMPLE, 1 }, { _POP_TOP_FLOAT, OPARG_SIMPLE, 1 }, { _POP_TOP_FLOAT, OPARG_SIMPLE, 1 } } },
     [COMPARE_OP_INT] = { .nuops = 5, .uops = { { _GUARD_TOS_INT, OPARG_SIMPLE, 0 }, { _GUARD_NOS_INT, OPARG_SIMPLE, 0 }, { _COMPARE_OP_INT, OPARG_SIMPLE, 1 }, { _POP_TOP_INT, OPARG_SIMPLE, 1 }, { _POP_TOP_INT, OPARG_SIMPLE, 1 } } },
@@ -1436,7 +1420,6 @@ _PyOpcode_macro_expansion[256] = {
     [CONVERT_VALUE] = { .nuops = 1, .uops = { { _CONVERT_VALUE, OPARG_SIMPLE, 0 } } },
     [COPY] = { .nuops = 1, .uops = { { _COPY, OPARG_SIMPLE, 0 } } },
     [COPY_FREE_VARS] = { .nuops = 1, .uops = { { _COPY_FREE_VARS, OPARG_SIMPLE, 0 } } },
-    [COPY_TO_FAST] = { .nuops = 1, .uops = { { _COPY_TO_FAST, OPARG_SIMPLE, 0 } } },
     [DELETE_DEREF] = { .nuops = 1, .uops = { { _DELETE_DEREF, OPARG_SIMPLE, 0 } } },
     [DELETE_FAST] = { .nuops = 1, .uops = { { _DELETE_FAST, OPARG_SIMPLE, 0 } } },
     [DELETE_SUBSCR] = { .nuops = 1, .uops = { { _DELETE_SUBSCR, OPARG_SIMPLE, 0 } } },
@@ -1537,7 +1520,6 @@ _PyOpcode_macro_expansion[256] = {
     [STORE_ATTR_WITH_HINT] = { .nuops = 4, .uops = { { _RECORD_TOS_TYPE, OPARG_SIMPLE, 1 }, { _GUARD_TYPE_VERSION, 2, 1 }, { _STORE_ATTR_WITH_HINT, 1, 3 }, { _POP_TOP, OPARG_SIMPLE, 4 } } },
     [STORE_DEREF] = { .nuops = 1, .uops = { { _STORE_DEREF, OPARG_SIMPLE, 0 } } },
     [STORE_FAST] = { .nuops = 2, .uops = { { _SWAP_FAST, OPARG_SIMPLE, 0 }, { _POP_TOP, OPARG_SIMPLE, 0 } } },
-    [STORE_FAST_BORROW] = { .nuops = 1, .uops = { { _STORE_FAST_BORROW, OPARG_SIMPLE, 0 } } },
     [STORE_FAST_LOAD_FAST] = { .nuops = 3, .uops = { { _SWAP_FAST, OPARG_TOP, 0 }, { _POP_TOP, OPARG_TOP, 0 }, { _LOAD_FAST, OPARG_BOTTOM, 0 } } },
     [STORE_FAST_STORE_FAST] = { .nuops = 4, .uops = { { _SWAP_FAST, OPARG_TOP, 0 }, { _POP_TOP, OPARG_TOP, 0 }, { _SWAP_FAST, OPARG_BOTTOM, 0 }, { _POP_TOP, OPARG_BOTTOM, 0 } } },
     [STORE_GLOBAL] = { .nuops = 1, .uops = { { _STORE_GLOBAL, OPARG_SIMPLE, 0 } } },
@@ -1631,7 +1613,6 @@ const char *_PyOpcode_OpName[267] = {
     [CHECK_EG_MATCH] = "CHECK_EG_MATCH",
     [CHECK_EXC_MATCH] = "CHECK_EXC_MATCH",
     [CLEANUP_THROW] = "CLEANUP_THROW",
-    [CLEAR_FAST] = "CLEAR_FAST",
     [COMPARE_OP] = "COMPARE_OP",
     [COMPARE_OP_FLOAT] = "COMPARE_OP_FLOAT",
     [COMPARE_OP_INT] = "COMPARE_OP_INT",
@@ -1642,7 +1623,6 @@ const char *_PyOpcode_OpName[267] = {
     [CONVERT_VALUE] = "CONVERT_VALUE",
     [COPY] = "COPY",
     [COPY_FREE_VARS] = "COPY_FREE_VARS",
-    [COPY_TO_FAST] = "COPY_TO_FAST",
     [DELETE_DEREF] = "DELETE_DEREF",
     [DELETE_FAST] = "DELETE_FAST",
     [DELETE_SUBSCR] = "DELETE_SUBSCR",
@@ -1786,7 +1766,6 @@ const char *_PyOpcode_OpName[267] = {
     [STORE_ATTR_WITH_HINT] = "STORE_ATTR_WITH_HINT",
     [STORE_DEREF] = "STORE_DEREF",
     [STORE_FAST] = "STORE_FAST",
-    [STORE_FAST_BORROW] = "STORE_FAST_BORROW",
     [STORE_FAST_LOAD_FAST] = "STORE_FAST_LOAD_FAST",
     [STORE_FAST_MAYBE_NULL] = "STORE_FAST_MAYBE_NULL",
     [STORE_FAST_STORE_FAST] = "STORE_FAST_STORE_FAST",
@@ -1849,6 +1828,9 @@ const uint8_t _PyOpcode_Caches[256] = {
 PyAPI_DATA(const uint8_t) _PyOpcode_Deopt[256];
 #ifdef NEED_OPCODE_METADATA
 const uint8_t _PyOpcode_Deopt[256] = {
+    [117] = 117,
+    [118] = 118,
+    [119] = 119,
     [120] = 120,
     [121] = 121,
     [122] = 122,
@@ -1931,7 +1913,6 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [CHECK_EG_MATCH] = CHECK_EG_MATCH,
     [CHECK_EXC_MATCH] = CHECK_EXC_MATCH,
     [CLEANUP_THROW] = CLEANUP_THROW,
-    [CLEAR_FAST] = CLEAR_FAST,
     [COMPARE_OP] = COMPARE_OP,
     [COMPARE_OP_FLOAT] = COMPARE_OP,
     [COMPARE_OP_INT] = COMPARE_OP,
@@ -1942,7 +1923,6 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [CONVERT_VALUE] = CONVERT_VALUE,
     [COPY] = COPY,
     [COPY_FREE_VARS] = COPY_FREE_VARS,
-    [COPY_TO_FAST] = COPY_TO_FAST,
     [DELETE_DEREF] = DELETE_DEREF,
     [DELETE_FAST] = DELETE_FAST,
     [DELETE_SUBSCR] = DELETE_SUBSCR,
@@ -2077,7 +2057,6 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [STORE_ATTR_WITH_HINT] = STORE_ATTR,
     [STORE_DEREF] = STORE_DEREF,
     [STORE_FAST] = STORE_FAST,
-    [STORE_FAST_BORROW] = STORE_FAST_BORROW,
     [STORE_FAST_LOAD_FAST] = STORE_FAST_LOAD_FAST,
     [STORE_FAST_STORE_FAST] = STORE_FAST_STORE_FAST,
     [STORE_GLOBAL] = STORE_GLOBAL,
@@ -2110,6 +2089,9 @@ const uint8_t _PyOpcode_Deopt[256] = {
 #endif // NEED_OPCODE_METADATA
 
 #define EXTRA_CASES \
+    case 117: \
+    case 118: \
+    case 119: \
     case 120: \
     case 121: \
     case 122: \

@@ -5,10 +5,7 @@ The CPython compiler captures assertion values. The public ``assertionlib`` modu
 provides expression graphs, formatters, and context-local callbacks.
 See ``Doc/library/assertionlib.rst`` for the API contract and compiler flags.
 
-This prototype includes earlier experiments for successful-assertion callbacks
-and assertion retention under optimization. The current PEP excludes those
-controls. The proposed exception pickle policy and exception context for
-internal diagnostic failures still need implementation work.
+The proposed exception pickle policy still needs implementation work.
 
 Build and run
 -------------
@@ -17,15 +14,14 @@ Build CPython with the normal configure and make commands. Use the release
 build for latency measurements::
 
     ./python -X assert_details Tools/assert_details/demo.py
-    ./python -O -X assert_details -X keep_asserts Tools/assert_details/demo.py
 
 The example exits with an AssertionError and a detailed traceback.
 The default explanation substitutes captured operands into the assertion.
 Calls and attributes add nested ``where`` lines. The structured API retains
 all capture data. This includes skipped nodes and recorded truth results.
 
-Use ``-X assert_details=events`` to enable successful-assertion callbacks.
-Each command-line mode has a separate bytecode cache tag.
+Capture is off by default. ``-O`` and ``-OO`` remove assertions.
+Capture uses a separate bytecode cache tag.
 
 ``Tools/assert_details/run.py`` still provides capture for one selected file.
 The compiler flags apply to source and AST input. Flags do not affect code
@@ -36,14 +32,17 @@ Capture and cleanup
 
 Each capture uses a compiler-only fast local. Frames initialize these slots
 to NULL. A slot remains NULL when short circuit evaluation skips its expression.
-The compiler reuses slots between assertions and aliases duplicate comparison
-results. Constant true assertions emit no capture code without event mode.
+The compiler reuses slots between assertions. Comparison nodes use the result
+of their last evaluated link. Constant true assertions emit no capture code.
 
-``STORE_FAST_BORROW`` transfers an owned result to a hidden local and returns
-a borrowed stack reference. For borrowed inputs, it creates an owned reference.
-Assignment-expression subtrees use ``COPY_TO_FAST`` because ordinary local
-stores require owned values. ``CLEAR_FAST`` clears initialized or NULL slots
-on success and on exceptions. Hidden slots do not appear in ``locals()``.
+Capture uses ``STORE_FAST slot; LOAD_FAST slot``. Cleanup uses
+``LOAD_FAST_AND_CLEAR slot; POP_TOP`` on success and on exceptions.
+These existing instructions also handle unset slots.
+Hidden slots do not appear in ``locals()``.
+
+The constant plan stores expression text, source spans, and child nodes once.
+Each capture record identifies a slot, a kind, and a node.
+Comparison records also identify the operator and operand nodes.
 
 The compiler captures actual truth results. It does not repeat truth conversion.
 Calls, attributes, slices, arithmetic, conditional expressions, assignment
@@ -52,18 +51,13 @@ generator expressions expose their result as one value.
 
 Method-call and builtin-call shortcuts can bypass expression values.
 Capture disables those shortcuts where necessary. This still contributes to
-the measured overhead. The three new instructions include tier-2 abstract
-ownership updates. Build-specific execution checks remain necessary.
+the measured overhead. The implementation adds no opcodes or optimizer rules.
 
 An intrinsic builds the payload on failure. The public details object is lazy.
 Failure callbacks can replace the exception message before the caller catches it.
 With no callback, ``AssertionError.args`` and ``str(error)`` retain their
 normal behavior. Successful assertions in ordinary diagnostic mode create no
 diagnostic containers and perform no callback lookup.
-
-Event mode performs callback lookup on successful assertions. It constructs
-public details only when a successful-assertion callback exists. Its cost is
-separate from ordinary diagnostic capture.
 
 Captured references extend object lifetimes and do not freeze mutable state.
 Use ``assertionlib.clear_details(error)`` to detach them from an exception.
@@ -75,8 +69,8 @@ Pytest adapter
 
 The experimental adapter keeps pytest's import selection, module registration,
 comparison hooks, and report code. It replaces its source-to-code entry point.
-It enables assertion retention under optimization and partitions caches by
-capture mode. It does not promise exact pytest explanation text.
+It compiles selected modules with ``optimize=0`` and uses a separate cache tag.
+It supports failure callbacks. It does not promise exact pytest explanation text.
 
 Add this directory, the pytest source directory, and its dependencies to
 ``PYTHONPATH``. Then run::
@@ -99,7 +93,7 @@ Run the microbenchmarks::
         --output /tmp/assert-results --iterations 1000 --cpu 17
 
 For a pytest comparison, pass ``--pytest-source`` and ``--pytest-deps``.
-Add ``--events`` to measure the separate event mode.
+Add ``--callbacks`` to measure failure callback latency.
 The benchmark uses one executable for all modes. It warms each function,
 randomizes mode order, and reports raw samples, medians, and median absolute
 deviations. Runtime includes loop and harness overhead.

@@ -2945,7 +2945,6 @@ optimize_load_fast(cfg_builder *g)
             assert(opcode != EXTENDED_ARG);
             switch (opcode) {
                 // Opcodes that load and store locals
-                case CLEAR_FAST:
                 case DELETE_FAST: {
                     kill_local(instr_flags, &refs, oparg);
                     break;
@@ -2965,20 +2964,6 @@ optimize_load_fast(cfg_builder *g)
                 case LOAD_FAST_LOAD_FAST: {
                     PUSH_REF(i, oparg >> 4);
                     PUSH_REF(i, oparg & 15);
-                    break;
-                }
-
-                case STORE_FAST_BORROW: {
-                    ref_stack_pop(&refs);
-                    kill_local(instr_flags, &refs, oparg);
-                    PUSH_REF(i, NOT_LOCAL);
-                    break;
-                }
-
-                case COPY_TO_FAST: {
-                    ref r = ref_stack_pop(&refs);
-                    kill_local(instr_flags, &refs, oparg);
-                    PUSH_REF(r.instr, r.local);
                     break;
                 }
 
@@ -3230,14 +3215,11 @@ scan_block_for_locals(basicblock *b, basicblock ***sp)
         assert(instr->i_oparg >= 0);
         uint64_t bit = (uint64_t)1 << instr->i_oparg;
         switch (instr->i_opcode) {
-            case CLEAR_FAST:
             case DELETE_FAST:
             case LOAD_FAST_AND_CLEAR:
             case STORE_FAST_MAYBE_NULL:
                 unsafe_mask |= bit;
                 break;
-            case STORE_FAST_BORROW:
-            case COPY_TO_FAST:
             case STORE_FAST:
                 unsafe_mask &= ~bit;
                 break;
@@ -3288,14 +3270,11 @@ fast_scan_many_locals(basicblock *entryblock, int nlocals)
             }
             assert(arg >= 0);
             switch (instr->i_opcode) {
-                case CLEAR_FAST:
                 case DELETE_FAST:
                 case LOAD_FAST_AND_CLEAR:
                 case STORE_FAST_MAYBE_NULL:
                     states[arg - 64] = blocknum - 1;
                     break;
-                case STORE_FAST_BORROW:
-                case COPY_TO_FAST:
                 case STORE_FAST:
                     states[arg - 64] = blocknum;
                     break;

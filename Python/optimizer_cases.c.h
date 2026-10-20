@@ -101,30 +101,6 @@
             break;
         }
 
-        case _COPY_TO_FAST: {
-            JitOptRef value;
-            value = stack_pointer[-1];
-            value = PyJitRef_RemoveUnique(value);
-            GETLOCAL(oparg) = PyJitRef_StripReferenceInfo(value);
-            stack_pointer[-1] = value;
-            break;
-        }
-
-        case _STORE_FAST_BORROW: {
-            JitOptRef value;
-            JitOptRef borrowed;
-            value = stack_pointer[-1];
-            GETLOCAL(oparg) = PyJitRef_StripReferenceInfo(value);
-            borrowed = PyJitRef_Borrow(value);
-            stack_pointer[-1] = borrowed;
-            break;
-        }
-
-        case _CLEAR_FAST: {
-            GETLOCAL(oparg) = sym_new_null(ctx);
-            break;
-        }
-
         case _SWAP_FAST: {
             JitOptRef value;
             JitOptRef trash;

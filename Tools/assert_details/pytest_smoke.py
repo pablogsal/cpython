@@ -22,21 +22,10 @@ CONFTEST = '''
 import pytest
 pytest.register_assert_rewrite('native_helper')
 from native_helper import Box
-passes = []
 
 def pytest_assertrepr_compare(config, op, left, right):
     if isinstance(left, Box) and isinstance(right, Box):
         return [f'custom boxes: {left.value} {op} {right.value}']
-
-def pytest_assertion_pass(item, lineno, orig, expl):
-    passes.append((orig, expl))
-
-def pytest_sessionfinish(session):
-    enabled = session.config.getini('enable_assertion_pass_hook')
-    if enabled and not any(orig == '2 == 2' for orig, expl in passes):
-        raise RuntimeError('native pass callback did not run')
-    if not enabled and passes:
-        raise RuntimeError('pass callbacks ran without opt-in')
 '''
 
 TESTS = '''
@@ -57,13 +46,13 @@ def test_registered_helper():
 
 def test_compiler_backend():
     names = {i.opname for i in dis.get_instructions(check)}
-    assert 'STORE_FAST_BORROW' in names
-    assert check.__doc__ == ('helper docstring' if sys.flags.optimize < 2 else None)
+    assert 'CALL_INTRINSIC_2' in names
+    assert check.__doc__ == 'helper docstring'
     assert not any(name.startswith('@pytest') for name in check.__globals__)
 
 def test_pass_and_debug():
     assert 2 == 2
-    assert __debug__ == (sys.flags.optimize == 0)
+    assert __debug__
 
 def test_evaluation_once():
     events = []
@@ -97,13 +86,11 @@ def main():
         for name, source in [('native_helper.py', HELPER), ('conftest.py', CONFTEST),
                              ('test_native.py', TESTS)]:
             (directory / name).write_text(source)
-        for index, (optimize, events) in enumerate([('', False), ('', True),
-                                                  ('-O', True), ('-OO', True), ('', False)]):
+        for index, optimize in enumerate(('', '-O', '-OO', '')):
             command = [sys.executable]
             if optimize:
                 command.append(optimize)
-            command += ['-m', 'pytest', '-p', 'pytest_native', '-q',
-                        '-o', f'enable_assertion_pass_hook={events}']
+            command += ['-m', 'pytest', '-p', 'pytest_native', '-q']
             result = subprocess.run(command, cwd=directory, env=env,
                                     text=True, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT)
@@ -112,7 +99,7 @@ def main():
                     'custom boxes: 10 == 20' not in result.stdout or
                     '<native_helper.Box object' in result.stdout):
                 raise RuntimeError(f'pytest integration failed: {command}\n{result.stdout}')
-            print(f'{optimize or "normal"}, events={events}: expected report and hooks passed', flush=True)
+            print(f'{optimize or "normal"}: expected report and hooks passed', flush=True)
 
 
 if __name__ == '__main__':

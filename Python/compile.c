@@ -111,19 +111,9 @@ typedef struct _PyCompiler {
 int
 _PyCompile_AssertionFlags(void)
 {
-    int flags = 0;
     const PyWideStringList *xoptions = &_Py_GetConfig()->xoptions;
-    const wchar_t *option = _Py_get_xoption(xoptions, L"assert_details");
-    if (option != NULL) {
-        flags |= PyCF_ASSERT_DETAILS;
-        if (wcscmp(option, L"assert_details=events") == 0) {
-            flags |= PyCF_ASSERT_EVENTS;
-        }
-    }
-    if (_Py_get_xoption(xoptions, L"keep_asserts") != NULL) {
-        flags |= PyCF_KEEP_ASSERTS;
-    }
-    return flags;
+    return _Py_get_xoption(xoptions, L"assert_details") != NULL
+        ? PyCF_ASSERT_DETAILS : 0;
 }
 
 static int
@@ -1603,19 +1593,7 @@ intern_final_constants(PyObject *const_cache, PyObject *consts)
 int
 _PyCompile_AssertDetails(compiler *c)
 {
-    return (c->c_flags.cf_flags & (PyCF_ASSERT_DETAILS | PyCF_ASSERT_EVENTS)) != 0;
-}
-
-int
-_PyCompile_KeepAsserts(compiler *c)
-{
-    return (c->c_flags.cf_flags & PyCF_KEEP_ASSERTS) != 0;
-}
-
-int
-_PyCompile_AssertEvents(compiler *c)
-{
-    return (c->c_flags.cf_flags & PyCF_ASSERT_EVENTS) != 0;
+    return (c->c_flags.cf_flags & PyCF_ASSERT_DETAILS) != 0;
 }
 
 static int

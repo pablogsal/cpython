@@ -25,17 +25,10 @@ Use ``python -X assert_details`` to enable capture for source compilation
 throughout the process. Frozen modules and previously compiled code objects retain
 their original behavior.
 
-Two additional flags control separate features:
-
-* ``ast.PyCF_ASSERT_EVENTS`` enables capture and successful-assertion events.
-  The command-line equivalent is ``-X assert_details=events``.
-* ``ast.PyCF_KEEP_ASSERTS`` retains assertions at optimization levels 1 and 2.
-  The command-line equivalent is ``-X keep_asserts``.
-  Other optimization behavior remains unchanged. This includes ``__debug__``.
-
-The same names without the ``ast.`` prefix are C compiler flags for
-``PyCompilerFlags.cf_flags``. The compiler does not inherit these flags
-through function calls. The command-line modes use distinct bytecode cache
+Optimization levels 1 and 2 remove assertions, including their diagnostics.
+The C compiler flag is ``PyCF_ASSERT_DETAILS`` in ``PyCompilerFlags.cf_flags``.
+The compiler does not inherit this flag through function calls.
+The command-line modes use distinct bytecode cache
 tags. A custom loader must also distinguish its compiler flags in its cache.
 
 Read and format details
@@ -76,11 +69,11 @@ Read and format details
 
 .. class:: AssertionDetails
 
-   An immutable description of one assertion event. Its attributes are:
+   An immutable description of one failed assertion. Its attributes are:
 
    * ``expression`` and ``location``
    * ``root`` and ``nodes``
-   * ``comparisons`` and ``passed``
+   * ``comparisons``
 
    ``nodes`` and ``comparisons`` are tuples. ``root`` identifies
    the expression at the top of the graph.
@@ -114,7 +107,7 @@ Read and format details
 Callbacks
 ---------
 
-.. function:: handlers(*, on_failure=None, on_pass=None)
+.. function:: handlers(*, on_failure=None)
 
    Return a context manager that installs synchronous callbacks in the
    current execution context. Nested scopes restore their previous callbacks.
@@ -125,12 +118,8 @@ Callbacks
    before the exception reaches the caller. The callback can change
    ``error.args`` to supply a library-specific explanation.
 
-   ``on_pass(details)`` requires the ``PyCF_ASSERT_EVENTS`` compiler flag.
-   It runs before capture cleanup. Ordinary diagnostic mode does not check
-   for successful-assertion callbacks on its success path.
-
    Recursive assertions inside a callback do not invoke another callback.
-   If a failure callback raises, its error has the assertion error as its context.
+   If a callback or diagnostic support raises, its error has the assertion as its context.
    The assertion error retains any earlier exception context.
 
 Example::

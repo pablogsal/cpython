@@ -9,7 +9,7 @@ import unittest
 import weakref
 from test.support import requires_jit_enabled
 
-from _assertion import clear_details, format_details
+from assertionlib import clear_details, format_details, get_details
 
 
 FLAGS = ast.PyCF_ASSERT_DETAILS
@@ -37,7 +37,7 @@ class AssertionDetailsTests(unittest.TestCase):
         exc = fail('left = 4\nright = 7\nassert left == right')
         self.assertEqual(exc.args, ())
         self.assertEqual(str(exc), '')
-        text = ''.join(format_details(exc._assertion))
+        text = ''.join(format_details(get_details(exc)))
         self.assertEqual(text, '  assert 4 == 7\n')
 
     def test_full_expression(self):
@@ -50,7 +50,7 @@ user = User()
 expected = 'bob'
 ''')
         exc = fail('assert normalize(user.name) == expected and user.missing', ns)
-        text = ''.join(format_details(exc._assertion))
+        text = ''.join(format_details(get_details(exc)))
         self.assertIn("assert ('alice' == 'bob')", text)
         self.assertIn("+ where 'alice' = normalize('ALICE')", text)
         self.assertIn("+ where 'ALICE' = ", text)
@@ -118,7 +118,7 @@ b = Value()
 ''')
         exc = fail('assert a < b < 0', ns)
         self.assertEqual(ns['events'], ['lt', 'bool'])
-        format_details(exc._assertion)
+        format_details(get_details(exc))
         self.assertEqual(ns['events'], ['lt', 'bool'])
 
     def test_message_identity_and_order(self):
@@ -138,8 +138,8 @@ b = Value()
 
     def test_named_expression_capture(self):
         exc = fail('x = 2\nassert x + (x := 3) == 6')
-        values = {r[1]: v[0] for r, v in zip(exc._assertion[1], exc._assertion[2])
-                  if r[2] == 'value' and v}
+        values = {node.text: node.value for node in get_details(exc).nodes
+                  if node.evaluated}
         self.assertEqual(values['x'], 2)
         self.assertEqual(values['(x := 3)'], 3)
         self.assertEqual(values['x + (x := 3)'], 5)
@@ -150,7 +150,7 @@ def f(*args, **kwargs): return args[0] + kwargs['n']
 data = [10, 20]
 assert f(*data[:1], **{'n': 2}) * 2 == data[1]
 ''')
-        text = ''.join(format_details(exc._assertion))
+        text = ''.join(format_details(get_details(exc)))
         self.assertIn('assert (12 * 2) == 20', text)
         self.assertIn("+ where 12 = f(*[10], **{'n': 2})", text)
         self.assertIn('+ and 20 = [10, 20][1]', text)
@@ -177,7 +177,7 @@ def outer(x):
     return inner
 outer(2)()
 ''')
-        self.assertIn('assert (2 + 1) == 0', ''.join(format_details(exc._assertion)))
+        self.assertIn('assert (2 + 1) == 0', ''.join(format_details(get_details(exc))))
 
     def test_comprehension_and_lambda(self):
         for expression in ('[x + 1 for x in range(3)] == []',
@@ -187,7 +187,7 @@ outer(2)()
                            'all(x < 2 for x in range(3))'):
             with self.subTest(expression=expression):
                 exc = fail('assert ' + expression)
-                self.assertTrue(format_details(exc._assertion))
+                self.assertTrue(format_details(get_details(exc)))
 
     def test_repeated_assert_no_stale_captures(self):
         ns = execute('''
@@ -198,11 +198,13 @@ for value in [True, False]:
     except AssertionError as exc:
         errors.append(exc)
 ''')
-        text = ''.join(format_details(ns['errors'][0]._assertion))
+        text = ''.join(format_details(get_details(ns['errors'][0])))
         self.assertEqual(text, '  assert (False)\n')
-        captures = dict((record[1], value) for record, value in
-                        zip(ns['errors'][0]._assertion[1], ns['errors'][0]._assertion[2]))
-        self.assertEqual(captures['(other := True)'], ())
+        details = get_details(ns['errors'][0])
+        skipped, = [node for node in details.nodes if node.text == '(other := True)']
+        self.assertFalse(skipped.evaluated)
+        with self.assertRaises(ValueError):
+            skipped.value
 
     def test_release_on_success_and_expression_error(self):
         class Value:
@@ -228,7 +230,7 @@ for value in [True, False]:
         self.assertEqual(next(g), 1)
         with self.assertRaises(AssertionError) as caught:
             g.send(2)
-        self.assertIn('assert 2 == 3', ''.join(format_details(caught.exception._assertion)))
+        self.assertIn('assert 2 == 3', ''.join(format_details(get_details(caught.exception))))
         g = ns['g']()
         next(g)
         g.close()
@@ -241,7 +243,7 @@ async def f():
 ''')
         with self.assertRaises(AssertionError) as caught:
             asyncio.run(ns['f']())
-        self.assertIn('assert 4 == 5', ''.join(format_details(caught.exception._assertion)))
+        self.assertIn('assert 4 == 5', ''.join(format_details(get_details(caught.exception))))
 
     def test_repr_only_at_display(self):
         class Value:
@@ -268,7 +270,7 @@ async def f():
         ):
             with self.subTest(source=source):
                 exc = fail(source)
-                self.assertTrue(format_details(exc._assertion))
+                self.assertTrue(format_details(get_details(exc)))
 
     def test_builtin_differences(self):
         for source, message in (
@@ -279,7 +281,7 @@ async def f():
         ):
             with self.subTest(source=source):
                 exc = fail(source)
-                self.assertIn(message, ''.join(format_details(exc._assertion)))
+                self.assertIn(message, ''.join(format_details(get_details(exc))))
 
     def test_ast_and_marshal(self):
         tree = ast.parse('assert 2 == 3')
@@ -311,7 +313,7 @@ async def f():
 
 class AssertionRenderingTests(unittest.TestCase):
     def explanation(self, source, namespace=None):
-        return ''.join(format_details(fail(source, namespace)._assertion))
+        return ''.join(format_details(get_details(fail(source, namespace))))
 
     def test_arithmetic(self):
         self.assertEqual(self.explanation(
@@ -441,7 +443,7 @@ class PublicAssertionAPITests(unittest.TestCase):
         def handler(error, details):
             events.append('callback')
             self.assertEqual(error.args, ('original',))
-            self.assertFalse(details.passed)
+            self.assertFalse(details.root.truth)
             error.args = ('custom explanation',)
         with assertionlib.handlers(on_failure=handler):
             exc = fail('assert events.append("condition"), '
@@ -478,18 +480,66 @@ class PublicAssertionAPITests(unittest.TestCase):
         self.assertIsInstance(caught.exception.__context__, AssertionError)
         self.assertIsNotNone(assertionlib.get_details(caught.exception.__context__))
 
-    def test_pass_event_opt_in(self):
+    def test_dispatch_lookup_exception_context(self):
+        import sys
+        import types
+        from unittest.mock import patch
+
+        def broken(name):
+            raise RuntimeError('dispatcher lookup failed')
+
+        module = types.ModuleType('assertionlib')
+        module.__getattr__ = broken
+        with patch.dict(sys.modules, assertionlib=module):
+            with self.assertRaisesRegex(RuntimeError, 'dispatcher lookup failed') as caught:
+                fail('assert 1 == 2')
+        self.assertIsInstance(caught.exception.__context__, AssertionError)
+        self.assertIsNotNone(get_details(caught.exception.__context__))
+
+    def test_traceback_uses_cached_details(self):
+        import assertionlib
+        from unittest.mock import patch
+
+        error = fail('assert 1 == 2')
+        details = get_details(error)
+        with patch.object(assertionlib, '_from_payload',
+                          side_effect=RuntimeError('graph rebuilt')):
+            self.assertIn('assert 1 == 2', ''.join(traceback.format_exception(error)))
+            self.assertIs(get_details(error), details)
+
+    def test_comparison_values_without_duplicate_captures(self):
+        cases = (
+            ('(a < b) == True', {'a': 2, 'b': 1}, 'a < b', False),
+            ('(a < b < c) == True', {'a': 2, 'b': 1, 'c': 3}, 'a < b < c', False),
+            ('(a < b < c) == False', {'a': 1, 'b': 2, 'c': 3}, 'a < b < c', True),
+            ('a == (a := 2)', {'a': 1}, 'a', 1),
+        )
+        for expression, namespace, text, value in cases:
+            with self.subTest(expression=expression):
+                details = get_details(fail('assert ' + expression, namespace))
+                node = next(node for node in details.nodes if node.text == text)
+                self.assertTrue(node.evaluated)
+                self.assertEqual(node.value, value)
+
+    def test_capture_slots_after_many_parameters(self):
+        for count in (2, 14, 16, 260):
+            with self.subTest(parameters=count):
+                parameters = ', '.join(f'a{i}' for i in range(count))
+                namespace = execute(
+                    f'def check({parameters}):\n'
+                    '    assert (value := a0 + a1) == -1\n')
+                with self.assertRaises(AssertionError) as caught:
+                    namespace['check'](*range(count))
+                comparison, = get_details(caught.exception).comparisons
+                self.assertEqual(comparison.left.value, 1)
+                self.assertEqual(comparison.right.value, -1)
+
+    def test_success_does_not_dispatch(self):
         import assertionlib
         events = []
-        with assertionlib.handlers(on_pass=events.append):
-            execute('assert 1 == 1')
-            self.assertEqual(events, [])
-            execute('assert 1 == 1\nassert True', flags=ast.PyCF_ASSERT_EVENTS)
-        self.assertEqual(len(events), 2)
-        for details in events:
-            self.assertTrue(details.passed)
-            self.assertTrue(details.root.truth)
-            self.assertTrue(details.root.value)
+        with assertionlib.handlers(on_failure=lambda *args: events.append(args)):
+            execute('assert 1 == 1\nassert True')
+        self.assertEqual(events, [])
 
     def test_async_contexts(self):
         import assertionlib
@@ -540,20 +590,6 @@ class PublicAssertionAPITests(unittest.TestCase):
         del details
         gc.collect()
         self.assertIsNone(ref())
-
-    def test_keep_asserts_with_optimization(self):
-        import assertionlib
-        for optimize in (1, 2):
-            ns = {}
-            execute('debug = __debug__\nassert True', flags=ast.PyCF_KEEP_ASSERTS,
-                    optimize=optimize, namespace=ns)
-            self.assertFalse(ns['debug'])
-            with self.assertRaises(AssertionError) as caught:
-                execute('assert False', flags=FLAGS | ast.PyCF_KEEP_ASSERTS, optimize=optimize)
-            self.assertIsNotNone(assertionlib.get_details(caught.exception))
-            with self.assertRaises(AssertionError) as caught:
-                execute('assert False', flags=ast.PyCF_KEEP_ASSERTS, optimize=optimize)
-            self.assertIsNone(assertionlib.get_details(caught.exception))
 
     def test_callback_context_copy_recovers(self):
         import assertionlib
@@ -638,7 +674,7 @@ class PublicAssertionAPITests(unittest.TestCase):
     @requires_jit_enabled
     def test_tier2_preserves_captured_floats(self):
         import assertionlib
-        from test.test_capi.test_opt import get_all_executors, get_opnames
+        from test.test_capi.test_opt import get_all_executors
         for expression in ('(a + b) * c', '(value := (a + b) * c)'):
             with self.subTest(expression=expression):
                 ns = execute('def check(a, b, c, expected, n):\n'
@@ -647,10 +683,7 @@ class PublicAssertionAPITests(unittest.TestCase):
                 check = ns['check']
                 for _ in range(20):
                     check(2.0, 3.0, 4.0, 20.0, 1000)
-                uops = [name for executor in get_all_executors(check)
-                        for name in get_opnames(executor)]
-                self.assertTrue(any('FAST_BORROW' in name or 'COPY_TO_FAST' in name
-                                    for name in uops), uops)
+                self.assertTrue(list(get_all_executors(check)))
                 with self.assertRaises(AssertionError) as caught:
                     check(2.0, 3.0, 4.0, 99.0, 1000)
                 details = assertionlib.get_details(caught.exception)
@@ -701,10 +734,8 @@ class AssertionCLITests(unittest.TestCase):
                 ([], 'False'),
                 (['-X', 'assert_details'], 'True'),
                 ([], 'False'),
-                (['-X', 'assert_details=events'], 'True'),
                 (['-O', '-X', 'assert_details'], 'removed'),
-                (['-OO', '-X', 'assert_details', '-X', 'keep_asserts'], 'True'),
-                (['-O', '-X', 'keep_asserts'], 'False'),
+                (['-OO', '-X', 'assert_details'], 'removed'),
             ]
             tags = set()
             for flags, expected in cases:
@@ -714,11 +745,11 @@ class AssertionCLITests(unittest.TestCase):
                     tags.add(tag)
                     self.assertEqual(roundtrip, 'True')
                     self.assertEqual(result, expected)
-            self.assertEqual(len(tags), 5)
+            self.assertEqual(len(tags), 2)
 
     def test_invalid_cli_options(self):
         from test.support.script_helper import assert_python_failure
-        for option in ('assert_details=bad', 'keep_asserts=bad'):
+        for option in ('assert_details=bad', 'assert_details=events'):
             with self.subTest(option=option):
                 _, _, err = assert_python_failure('-X', option, '-c', 'pass')
                 self.assertIn(option.split('=')[0].encode(), err)

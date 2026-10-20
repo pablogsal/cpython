@@ -1984,12 +1984,13 @@ codegen_jump_if(compiler *c, location loc, expr_ty e,
                 jump_target_label next, int cond)
 {
     assertion_context *ctx = METADATA(c)->u_assert;
-    int parent = ctx ? ctx->parent : -1;
+    if (ctx == NULL) {
+        return codegen_jump_if_impl(c, loc, e, next, cond);
+    }
+    int parent = ctx->parent;
     RETURN_IF_ERROR(codegen_assert_enter(c, e));
     int ret = codegen_jump_if_impl(c, loc, e, next, cond);
-    if (ctx) {
-        ctx->parent = parent;
-    }
+    ctx->parent = parent;
     return ret;
 }
 
@@ -3098,7 +3099,7 @@ codegen_assert(compiler *c, stmt_ty s)
             _PyCompile_Warn(c, LOC(s), "assertion is always true, "
                                        "perhaps remove parentheses?"));
     }
-    if (OPTIMIZATION_LEVEL(c) && !_PyCompile_KeepAsserts(c)) {
+    if (OPTIMIZATION_LEVEL(c)) {
         return SUCCESS;
     }
     if (_PyCompile_AssertDetails(c)) {
@@ -5683,14 +5684,11 @@ static int
 codegen_visit_expr(compiler *c, expr_ty e)
 {
     assertion_context *capture = METADATA(c)->u_assert;
-    int parent = capture ? capture->parent : -1;
-    bool borrow = capture && capture->borrow;
-    RETURN_IF_ERROR(codegen_assert_enter(c, e));
-    /* STORE_FAST requires an owned reference. A named expression can store
-       the selected child of a boolean expression, so protect the subtree. */
-    if (capture && e->kind == NamedExpr_kind) {
-        capture->borrow = false;
+    if (capture == NULL) {
+        return codegen_visit_expr_impl(c, e, false);
     }
+    int parent = capture->parent;
+    RETURN_IF_ERROR(codegen_assert_enter(c, e));
     /* A comprehension has its own execution scope. Capture its result, as
        pytest does, rather than the final iteration's local values. */
     bool opaque = e->kind == ListComp_kind || e->kind == SetComp_kind ||
@@ -5703,13 +5701,8 @@ codegen_visit_expr(compiler *c, expr_ty e)
     if (ret < 0) {
         return ret;
     }
-    if (capture) {
-        capture->borrow = borrow;
-    }
     ret = codegen_assert_capture(c, e, "value", -1);
-    if (capture) {
-        capture->parent = parent;
-    }
+    capture->parent = parent;
     return ret;
 }
 

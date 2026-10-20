@@ -212,18 +212,6 @@ def _format_bindings(bindings, depth=0):
 
 def format_details(details, *, compare=None):
     """Return a compact explanation from captured values, without evaluation."""
-    from assertionlib import _from_payload
-    return _format_details(_from_payload(details), compare=compare)
-
-
-def _format_details(details, *, compare=None):
     explanation = _Explanation(details, compare)
     text, bindings = explanation.render(details.root)
     return [f'  assert {text}\n', *_format_bindings(bindings), *explanation.differences]
-
-
-def clear_details(exc):
-    """Release captured references after a consumer stores formatted text."""
-    exc.__dict__.pop('_assertion', None)
-    exc.__dict__.pop('_assertion_details', None)
-    exc.__dict__.pop('_assertion_explained', None)

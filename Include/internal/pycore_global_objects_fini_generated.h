@@ -264,7 +264,6 @@ _PyStaticObjects_CheckAll(PyInterpreterState *interp) {
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_flags_), "_flags_", 7);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_get_sourcefile), "_get_sourcefile", 15);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_handle_fromlist), "_handle_fromlist", 16);
-    _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_handlers), "_handlers", 9);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_initializing), "_initializing", 13);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_internal_use), "_internal_use", 13);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(_io), "_io", 3);

@@ -276,7 +276,6 @@ struct _Py_global_strings {
         STRUCT_FOR_ID(_flags_)
         STRUCT_FOR_ID(_get_sourcefile)
         STRUCT_FOR_ID(_handle_fromlist)
-        STRUCT_FOR_ID(_handlers)
         STRUCT_FOR_ID(_initializing)
         STRUCT_FOR_ID(_internal_use)
         STRUCT_FOR_ID(_io)
