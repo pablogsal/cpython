@@ -77,19 +77,19 @@ class _Explanation:
     def __init__(self, details, compare):
         self.representations = {}
         self.comparisons = {}
-        self.overrides = {}
         self.differences = []
         for comparison in details.comparisons:
             if comparison.evaluated:
-                links = self.comparisons.setdefault(comparison.expression.id, [])
-                links.append(comparison)
+                override = None
                 if compare is not None:
                     result = compare(comparison.operator, comparison.left.value,
                                      comparison.right.value)
                     if result is not None:
                         if not isinstance(result, str):
                             raise TypeError('comparison formatter must return str or None')
-                        self.overrides[comparison] = result.splitlines()
+                        override = result.splitlines()
+                # A chain stops at its first false link.
+                self.comparisons[comparison.expression.id] = comparison, override
 
     def represent(self, value):
         key = id(value)
@@ -98,13 +98,7 @@ class _Explanation:
         return self.representations[key]
 
     def comparison(self, node):
-        links = self.comparisons[node.id]
-        chosen = links[-1]
-        for link in links:
-            if link.truth is False:
-                chosen = link
-                break
-        override = self.overrides.get(chosen)
+        chosen, override = self.comparisons[node.id]
         if override:
             self.differences.extend('    ' + line + '\n' for line in override[1:])
             return override[0], []

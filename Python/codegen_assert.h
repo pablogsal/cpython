@@ -77,11 +77,8 @@ codegen_assert_capture(compiler *c, expr_ty e, const char *kind, int link)
     if (ctx == NULL) {
         return SUCCESS;
     }
-    if ((e->kind == Name_kind && e->v.Name.ctx != Load) ||
-        (e->kind == Attribute_kind && e->v.Attribute.ctx != Load) ||
-        (e->kind == Subscript_kind && e->v.Subscript.ctx != Load) ||
-        (e->kind == List_kind && e->v.List.ctx != Load) ||
-        (e->kind == Tuple_kind && e->v.Tuple.ctx != Load)) {
+    /* Only named expressions can assign within an assertion expression. */
+    if (e->kind == Name_kind && e->v.Name.ctx != Load) {
         return SUCCESS;
     }
     /* Comparison nodes use their last evaluated link as their value. */

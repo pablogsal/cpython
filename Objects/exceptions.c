@@ -4099,12 +4099,14 @@ AssertionError_details_get(PyObject *self, void *Py_UNUSED(context))
         Py_RETURN_NONE;
     }
     PyObject *details = NULL, *payload = NULL;
-    if (PyDict_GetItemStringRef(dict, "_assertion_details", &details) != 0) {
-        goto done;
-    }
     int captured = PyDict_GetItemStringRef(dict, "_assertion", &payload);
     if (captured <= 0) {
         details = captured == 0 ? Py_NewRef(Py_None) : NULL;
+        goto done;
+    }
+    /* Replace the raw tuple with its graph on the first access. */
+    if (!PyTuple_CheckExact(payload)) {
+        details = Py_NewRef(payload);
         goto done;
     }
     PyObject *build = PyImport_ImportModuleAttrString(
@@ -4115,23 +4117,17 @@ AssertionError_details_get(PyObject *self, void *Py_UNUSED(context))
     details = PyObject_CallOneArg(build, payload);
     Py_DECREF(build);
     if (details != NULL) {
-        PyObject *current = NULL, *cached = NULL;
+        PyObject *current = NULL;
         int res;
         Py_BEGIN_CRITICAL_SECTION(dict);
         res = PyDict_GetItemStringRef(dict, "_assertion", &current);
         if (res >= 0) {
-            /* Import hooks can detach captures while the graph is built. */
-            if (current != payload) {
-                Py_SETREF(details, Py_NewRef(Py_None));
+            if (current == payload) {
+                res = PyDict_SetItemString(dict, "_assertion", details);
             }
             else {
-                res = PyDict_GetItemStringRef(dict, "_assertion_details", &cached);
-                if (res > 0) {
-                    Py_SETREF(details, cached);
-                }
-                else if (res == 0) {
-                    res = PyDict_SetItemString(dict, "_assertion_details", details);
-                }
+                /* An import hook or another reader can finish or detach it. */
+                Py_SETREF(details, Py_NewRef(current ? current : Py_None));
             }
         }
         Py_END_CRITICAL_SECTION();
@@ -4150,7 +4146,7 @@ static int
 assertion_clear_details(PyObject *dict)
 {
     const char *keys[] = {
-        "_assertion", "_assertion_details", "_assertion_explained", NULL
+        "_assertion", "_assertion_explained", NULL
     };
     for (const char **key = keys; *key != NULL; key++) {
         if (PyDict_PopString(dict, *key, NULL) < 0) {

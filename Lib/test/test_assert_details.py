@@ -447,7 +447,7 @@ except AssertionError as error:
         with patch.object(builtins, '__import__', detach):
             self.assertIsNone(error.details)
         self.assertIsNone(error.details)
-        self.assertNotIn('_assertion_details', error.__dict__)
+        self.assertNotIn('_assertion', error.__dict__)
 
     def test_details_reentrant_construction(self):
         from unittest.mock import patch

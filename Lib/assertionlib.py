@@ -89,7 +89,6 @@ def _from_payload(payload):
     for node, descriptor in zip(nodes, plan):
         set_attr(node, 'children', tuple(nodes[i] for i in descriptor[3]))
     comparisons = []
-    by_link = {}
     last_comparison = {}
     for record, captured in zip(records, values):
         slot, kind, node_id, extra = record
@@ -104,14 +103,13 @@ def _from_payload(payload):
                                     f'{left.text} {op} {right.text}',
                                     bool(captured), _capture=captured)
             comparisons.append(comparison)
-            by_link[node_id, extra] = comparison
             if captured:
                 last_comparison[node_id] = comparison
         elif captured:
             if extra is None:
                 set_attr(node, 'truth', captured[0])
             else:
-                set_attr(by_link[node_id, extra], 'truth', captured[0])
+                set_attr(last_comparison[node_id], 'truth', captured[0])
 
     # Control-flow expressions need not materialize their result in bytecode.
     # Recover their selected result from captured children, without user calls.
