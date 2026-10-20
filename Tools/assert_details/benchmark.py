@@ -219,13 +219,12 @@ def main():
             except AssertionError:
                 pass
         cases = [
-            ('failure_no_handler', failed, {}),
-            ('failure_handler', failed, {'on_failure': lambda error, details: None}),
-            ('failure_format_handler', failed,
-             {'on_failure': lambda error, details: assertionlib.format_details(details)}),
+            ('failure_no_formatter', failed, None),
+            ('failure_default_formatter', failed, lambda details: None),
+            ('failure_custom_formatter', failed, lambda details: details.format()),
         ]
-        for name, action, handlers in cases:
-            with assertionlib.handlers(**handlers):
+        for name, action, callback in cases:
+            with assertionlib.formatter(callback):
                 timer = timeit.Timer(action)
                 count = calibrate(timer, args.sample_seconds)
                 samples = [timer.timeit(count) * 1e9 / count for _ in range(args.rounds)]

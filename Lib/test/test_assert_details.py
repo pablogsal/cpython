@@ -4,12 +4,14 @@ import ast
 import asyncio
 import gc
 import marshal
+import pickle
+import sys
 import traceback
 import unittest
 import weakref
 from test.support import requires_jit_enabled
 
-from assertionlib import clear_details, format_details, get_details
+import assertionlib
 
 
 FLAGS = ast.PyCF_ASSERT_DETAILS
@@ -37,8 +39,8 @@ class AssertionDetailsTests(unittest.TestCase):
         exc = fail('left = 4\nright = 7\nassert left == right')
         self.assertEqual(exc.args, ())
         self.assertEqual(str(exc), '')
-        text = ''.join(format_details(get_details(exc)))
-        self.assertEqual(text, '  assert 4 == 7\n')
+        text = exc.details.format()
+        self.assertEqual(text, 'assert 4 == 7')
 
     def test_full_expression(self):
         ns = execute('''
@@ -50,7 +52,7 @@ user = User()
 expected = 'bob'
 ''')
         exc = fail('assert normalize(user.name) == expected and user.missing', ns)
-        text = ''.join(format_details(get_details(exc)))
+        text = exc.details.format()
         self.assertIn("assert ('alice' == 'bob')", text)
         self.assertIn("+ where 'alice' = normalize('ALICE')", text)
         self.assertIn("+ where 'ALICE' = ", text)
@@ -118,7 +120,7 @@ b = Value()
 ''')
         exc = fail('assert a < b < 0', ns)
         self.assertEqual(ns['events'], ['lt', 'bool'])
-        format_details(get_details(exc))
+        exc.details.format()
         self.assertEqual(ns['events'], ['lt', 'bool'])
 
     def test_message_identity_and_order(self):
@@ -138,7 +140,7 @@ b = Value()
 
     def test_named_expression_capture(self):
         exc = fail('x = 2\nassert x + (x := 3) == 6')
-        values = {node.text: node.value for node in get_details(exc).nodes
+        values = {node.text: node.value for node in exc.details.nodes
                   if node.evaluated}
         self.assertEqual(values['x'], 2)
         self.assertEqual(values['(x := 3)'], 3)
@@ -150,7 +152,7 @@ def f(*args, **kwargs): return args[0] + kwargs['n']
 data = [10, 20]
 assert f(*data[:1], **{'n': 2}) * 2 == data[1]
 ''')
-        text = ''.join(format_details(get_details(exc)))
+        text = exc.details.format()
         self.assertIn('assert (12 * 2) == 20', text)
         self.assertIn("+ where 12 = f(*[10], **{'n': 2})", text)
         self.assertIn('+ and 20 = [10, 20][1]', text)
@@ -177,7 +179,7 @@ def outer(x):
     return inner
 outer(2)()
 ''')
-        self.assertIn('assert (2 + 1) == 0', ''.join(format_details(get_details(exc))))
+        self.assertIn('assert (2 + 1) == 0', exc.details.format())
 
     def test_comprehension_and_lambda(self):
         for expression in ('[x + 1 for x in range(3)] == []',
@@ -187,7 +189,7 @@ outer(2)()
                            'all(x < 2 for x in range(3))'):
             with self.subTest(expression=expression):
                 exc = fail('assert ' + expression)
-                self.assertTrue(format_details(get_details(exc)))
+                self.assertTrue(exc.details.format())
 
     def test_repeated_assert_no_stale_captures(self):
         ns = execute('''
@@ -198,9 +200,9 @@ for value in [True, False]:
     except AssertionError as exc:
         errors.append(exc)
 ''')
-        text = ''.join(format_details(get_details(ns['errors'][0])))
-        self.assertEqual(text, '  assert (False)\n')
-        details = get_details(ns['errors'][0])
+        text = ns['errors'][0].details.format()
+        self.assertEqual(text, 'assert (False)')
+        details = ns['errors'][0].details
         skipped, = [node for node in details.nodes if node.text == '(other := True)']
         self.assertFalse(skipped.evaluated)
         with self.assertRaises(ValueError):
@@ -230,7 +232,7 @@ for value in [True, False]:
         self.assertEqual(next(g), 1)
         with self.assertRaises(AssertionError) as caught:
             g.send(2)
-        self.assertIn('assert 2 == 3', ''.join(format_details(get_details(caught.exception))))
+        self.assertIn('assert 2 == 3', caught.exception.details.format())
         g = ns['g']()
         next(g)
         g.close()
@@ -243,7 +245,7 @@ async def f():
 ''')
         with self.assertRaises(AssertionError) as caught:
             asyncio.run(ns['f']())
-        self.assertIn('assert 4 == 5', ''.join(format_details(get_details(caught.exception))))
+        self.assertIn('assert 4 == 5', caught.exception.details.format())
 
     def test_repr_only_at_display(self):
         class Value:
@@ -270,18 +272,18 @@ async def f():
         ):
             with self.subTest(source=source):
                 exc = fail(source)
-                self.assertTrue(format_details(get_details(exc)))
+                self.assertTrue(exc.details.format())
 
     def test_builtin_differences(self):
         for source, message in (
-            ("assert 'abc' == 'axc'", '    - axc\n    + abc\n'),
+            ("assert 'abc' == 'axc'", '  - axc\n  + abc'),
             ('assert [1, 2] == [1, 3]', 'At index 1 diff: 2 != 3'),
             ("assert {'a': 1} == {'a': 2}", "key 'a': 1 != 2"),
             ('assert {1, 2} == {1, 3}', 'only in left'),
         ):
             with self.subTest(source=source):
                 exc = fail(source)
-                self.assertIn(message, ''.join(format_details(get_details(exc))))
+                self.assertIn(message, exc.details.format())
 
     def test_ast_and_marshal(self):
         tree = ast.parse('assert 2 == 3')
@@ -306,55 +308,55 @@ async def f():
     def test_traceback_and_clear(self):
         exc = fail('assert 1 == 2')
         summary = traceback.TracebackException.from_exception(exc)
-        clear_details(exc)
+        exc.details = None
         self.assertFalse(hasattr(exc, '_assertion'))
         self.assertIn('assert 1 == 2', ''.join(summary.format()))
 
 
 class AssertionRenderingTests(unittest.TestCase):
     def explanation(self, source, namespace=None):
-        return ''.join(format_details(get_details(fail(source, namespace))))
+        return fail(source, namespace).details.format()
 
     def test_arithmetic(self):
         self.assertEqual(self.explanation(
             'assert price * quantity == expected',
             {'price': 18, 'quantity': 3, 'expected': 60}),
-            '  assert (18 * 3) == 60\n')
+            'assert (18 * 3) == 60')
         self.assertEqual(self.explanation('x = 2\nassert x + (x := 3) == 6'),
-                         '  assert (2 + (3)) == 6\n')
+                         'assert (2 + (3)) == 6')
 
     def test_nested_calls(self):
         self.assertEqual(self.explanation(
             'assert double(len(items)) == 5',
             {'double': lambda x: x * 2, 'items': [1, 2]}),
-            '  assert 4 == 5\n'
-            '    + where 4 = double(2)\n'
-            '      + where 2 = len([1, 2])\n')
+            'assert 4 == 5\n'
+            '  + where 4 = double(2)\n'
+            '    + where 2 = len([1, 2])')
 
     def test_methods(self):
         self.assertEqual(self.explanation("assert name.strip().lower() == 'bob'",
                                           {'name': ' ALICE '}),
-            "  assert 'alice' == 'bob'\n"
-            "    + where 'alice' = 'ALICE'.lower()\n"
-            "      + where 'ALICE' = ' ALICE '.strip()\n"
-            '    - bob\n'
-            '    + alice\n')
+            "assert 'alice' == 'bob'\n"
+            "  + where 'alice' = 'ALICE'.lower()\n"
+            "    + where 'ALICE' = ' ALICE '.strip()\n"
+            '  - bob\n'
+            '  + alice')
 
     def test_literals_keywords_and_unicode(self):
         self.assertEqual(self.explanation(
             "assert f('x', *args, x=x, **kw) == 1",
             {'f': lambda *args, **kwargs: 0, 'args': (2,), 'x': 3, 'kw': {'y': 4}}),
-            '  assert 0 == 1\n'
-            "    + where 0 = f('x', *(2,), x=3, **{'y': 4})\n")
+            'assert 0 == 1\n'
+            "  + where 0 = f('x', *(2,), x=3, **{'y': 4})")
         self.assertEqual(self.explanation('assert α + β == 10', {'α': 2, 'β': 3}),
-                         '  assert (2 + 3) == 10\n')
+                         'assert (2 + 3) == 10')
 
     def test_slice(self):
         self.assertEqual(self.explanation('assert data[start:stop] == []',
                                           {'data': [1, 2], 'start': 0, 'stop': 1}),
-            '  assert [1] == []\n'
-            '    + where [1] = [1, 2][0:1]\n'
-            '    sequence lengths: 1 != 0\n')
+            'assert [1] == []\n'
+            '  + where [1] = [1, 2][0:1]\n'
+            '  sequence lengths: 1 != 0')
 
     def test_boolean_and_chained_comparisons(self):
         for expression, expected in (
@@ -366,17 +368,17 @@ class AssertionRenderingTests(unittest.TestCase):
         ):
             with self.subTest(expression=expression):
                 self.assertEqual(self.explanation('assert ' + expression),
-                                 f'  assert {expected}\n')
+                                 f'assert {expected}')
 
     def test_custom_comparison_replaces_summary(self):
-        import assertionlib
-        details = assertionlib.get_details(fail('assert 0 < 5 < 3'))
+        details = fail('assert 0 < 5 < 3').details
         calls = []
         def compare(op, left, right):
             calls.append((op, left, right))
-            return [f'custom: {left} {op} {right}', 'comparison detail']
-        self.assertEqual(''.join(assertionlib.format_details(details, compare=compare)),
-                         '  assert custom: 5 < 3\n    comparison detail\n')
+            return f'custom: {left} {op} {right}\ncomparison detail'
+        self.assertEqual(details.format(compare=compare),
+                         'assert custom: 5 < 3\n'
+                         '  comparison detail')
         self.assertEqual(calls, [('<', 0, 5), ('<', 5, 3)])
 
     def test_large_diff_is_bounded(self):
@@ -386,23 +388,127 @@ class AssertionRenderingTests(unittest.TestCase):
         self.assertLess(len(text), 1000)
 
     def test_framework_explanation_is_not_duplicated(self):
-        import assertionlib
-        error = fail('assert 1 == 2')
-        error.args = ('assert custom difference',)
-        error._assertion_explained = True
+        with assertionlib.formatter(lambda details: 'assert custom difference'):
+            error = fail('assert 1 == 2')
         self.assertEqual(''.join(traceback.format_exception_only(error)),
                          'AssertionError: assert custom difference\n')
-        self.assertIsNotNone(assertionlib.get_details(error))
-        assertionlib.clear_details(error)
+        self.assertIsNotNone(error.details)
+        error.details = None
         self.assertFalse(hasattr(error, '_assertion_explained'))
 
 
 class PublicAssertionAPITests(unittest.TestCase):
+    def test_details_are_lazy(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', '''
+import ast
+import sys
+assert AssertionError().details is None
+exec(compile('assert 1 == 1', '<test>', 'exec', flags=ast.PyCF_ASSERT_DETAILS))
+try:
+    exec(compile('assert 1 == 2', '<test>', 'exec', flags=ast.PyCF_ASSERT_DETAILS))
+except AssertionError as error:
+    assert 'assertionlib' not in sys.modules
+    details = error.details
+    assert details is error.details
+    assert 'assertionlib' in sys.modules
+    assert '_assertion' not in sys.modules
+    assert details.format() == 'assert 1 == 2'
+''')
+
+    def test_formatter_default_and_empty_results(self):
+        marker = object()
+        with assertionlib.formatter(lambda details: None):
+            error = fail('assert False, marker', {'marker': marker})
+        self.assertEqual(error.args, (marker,))
+        self.assertIn('assert False', ''.join(traceback.format_exception_only(error)))
+        with assertionlib.formatter(lambda details: ''):
+            error = fail('assert False, "message"')
+        self.assertEqual(error.args, ('message',))
+        self.assertEqual(''.join(traceback.format_exception_only(error)),
+                         'AssertionError: message\n')
+        with assertionlib.formatter(lambda details: 'outer'):
+            with assertionlib.formatter(None):
+                self.assertEqual(fail('assert False').args, ())
+            self.assertEqual(fail('assert False').args, ('outer',))
+        with assertionlib.formatter(lambda details: 'custom'):
+            self.assertEqual(fail('assert False, ""').args, ('custom',))
+
+    def test_details_detached_during_construction(self):
+        import builtins
+        from unittest.mock import patch
+
+        error = fail('assert 1 == 2')
+        original_import = builtins.__import__
+        def detach(name, *args, **kwargs):
+            if name == 'assertionlib':
+                error.details = None
+            return original_import(name, *args, **kwargs)
+        with patch.object(builtins, '__import__', detach):
+            self.assertIsNone(error.details)
+        self.assertIsNone(error.details)
+        self.assertNotIn('_assertion_details', error.__dict__)
+
+    def test_details_reentrant_construction(self):
+        from unittest.mock import patch
+
+        error = fail('assert 1 == 2')
+        build = assertionlib._from_payload
+        observed = []
+        def reenter(payload):
+            with patch.object(assertionlib, '_from_payload', build):
+                observed.append(error.details)
+            return build(payload)
+        with patch.object(assertionlib, '_from_payload', reenter):
+            details = error.details
+        self.assertIs(details, observed[0])
+        self.assertIs(details, error.details)
+
+    def test_invalid_formatter_results(self):
+        for result in (False, ['text'], 42):
+            with self.subTest(result=result):
+                with assertionlib.formatter(lambda details: result):
+                    with self.assertRaisesRegex(TypeError, 'return str or None') as caught:
+                        fail('assert 1 == 2')
+                self.assertIsInstance(caught.exception.__context__, AssertionError)
+                with self.assertRaisesRegex(TypeError, 'return str or None'):
+                    fail('assert 1 == 2').details.format(compare=lambda *args: result)
+
+    def test_empty_comparison_result(self):
+        details = fail('assert [1, 2] == [1, 3]').details
+        self.assertEqual(details.format(compare=lambda *args: ''),
+                         'assert [1, 2] == [1, 3]')
+
+    def test_details_can_only_be_cleared(self):
+        error = fail('assert False')
+        with self.assertRaisesRegex(TypeError, 'only be set to None'):
+            error.details = error.details
+        with self.assertRaisesRegex(TypeError, 'only be set to None'):
+            error.details = 42
+        error.details = None
+        error.details = None
+        self.assertIsNone(error.details)
+
+    def test_pickle_omits_captures(self):
+        for custom in (False, True):
+            for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+                with self.subTest(custom=custom, protocol=protocol):
+                    callback = (lambda details: 'custom') if custom else None
+                    with assertionlib.formatter(callback):
+                        error = fail('assert value is None, "message"',
+                                     {'value': lambda: None})
+                    details = error.details
+                    error.extra = 'user attribute'
+                    restored = pickle.loads(pickle.dumps(error, protocol))
+                    self.assertEqual(restored.args, error.args)
+                    self.assertEqual(restored.extra, error.extra)
+                    self.assertIsNone(restored.details)
+                    self.assertIs(error.details, details)
+
     def test_expression_graph_and_comparison(self):
-        import assertionlib
         exc = fail('a = 3\nb = 4\nassert a == b and missing()')
-        details = assertionlib.get_details(exc)
-        self.assertIs(details, assertionlib.get_details(exc))
+        details = exc.details
+        self.assertIs(details, exc.details)
         self.assertEqual(details.root.kind, 'and')
         self.assertFalse(details.root.truth)
         self.assertFalse(details.root.children[1].evaluated)
@@ -415,13 +521,12 @@ class PublicAssertionAPITests(unittest.TestCase):
         self.assertIs(comparison.truth, False)
         self.assertEqual(details.location.filename, '<assert-details>')
         self.assertEqual(details.location.lineno, 3)
-        self.assertIsNone(assertionlib.get_details(AssertionError()))
-        self.assertIsNone(assertionlib.get_details(ValueError()))
+        self.assertIsNone(AssertionError().details)
+        self.assertFalse(hasattr(ValueError(), 'details'))
 
     def test_distinct_occurrences_and_none(self):
-        import assertionlib
         values = iter([None, 1])
-        details = assertionlib.get_details(fail('assert f() == f()', {'f': lambda: next(values)}))
+        details = fail('assert f() == f()', {'f': lambda: next(values)}).details
         comparison, = details.comparisons
         self.assertIsNot(comparison.left, comparison.right)
         self.assertTrue(comparison.left.evaluated)
@@ -429,56 +534,52 @@ class PublicAssertionAPITests(unittest.TestCase):
         self.assertEqual(comparison.right.value, 1)
 
     def test_nested_control_flow_values(self):
-        import assertionlib
         for expression in ('(a or b) and a', 'not b', 'a if b else b', '0 < b < a < 9'):
             with self.subTest(expression=expression):
                 ns = {'a': 0, 'b': 2}
-                details = assertionlib.get_details(fail('assert ' + expression, ns))
+                details = fail('assert ' + expression, ns).details
                 self.assertFalse(details.root.truth)
                 self.assertEqual(details.root.value, eval(expression, ns))
 
     def test_callbacks_before_catch_and_message_order(self):
-        import assertionlib
         events = []
-        def handler(error, details):
+        def handler(details):
             events.append('callback')
-            self.assertEqual(error.args, ('original',))
+            self.assertEqual(sys.exception().args, ('original',))
             self.assertFalse(details.root.truth)
-            error.args = ('custom explanation',)
-        with assertionlib.handlers(on_failure=handler):
+            return 'custom explanation'
+        with assertionlib.formatter(handler):
             exc = fail('assert events.append("condition"), '
                        '(events.append("message"), "original")[1]', {'events': events})
-            self.assertEqual(str(exc), 'custom explanation')
+            self.assertEqual(str(exc), 'original\ncustom explanation')
         self.assertEqual(events, ['condition', 'message', 'callback'])
 
     def test_nested_scopes_and_recursion(self):
-        import assertionlib
         events = []
-        def outer(error, details):
+        def outer(details):
             events.append('outer')
             fail('assert False')
-        def inner(error, details):
+        def inner(details):
             events.append('inner')
-        with assertionlib.handlers(on_failure=outer):
+        with assertionlib.formatter(outer):
             fail('assert False')
-            with assertionlib.handlers(on_failure=inner):
+            with assertionlib.formatter(inner):
                 fail('assert False')
             fail('assert False')
         fail('assert False')
         self.assertEqual(events, ['outer', 'inner', 'outer'])
         with self.assertRaises(TypeError):
-            with assertionlib.handlers(on_failure=42):
+            with assertionlib.formatter(42):
                 pass
 
     def test_callback_exception_context(self):
-        import assertionlib
-        def broken(error, details):
+        def broken(details):
             raise RuntimeError('callback failed')
-        with assertionlib.handlers(on_failure=broken):
+        with assertionlib.formatter(broken):
             with self.assertRaisesRegex(RuntimeError, 'callback failed') as caught:
                 fail('assert 1 == 2')
         self.assertIsInstance(caught.exception.__context__, AssertionError)
-        self.assertIsNotNone(assertionlib.get_details(caught.exception.__context__))
+        self.assertIsNotNone(caught.exception.__context__.details)
 
     def test_dispatch_lookup_exception_context(self):
         import sys
@@ -494,18 +595,21 @@ class PublicAssertionAPITests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'dispatcher lookup failed') as caught:
                 fail('assert 1 == 2')
         self.assertIsInstance(caught.exception.__context__, AssertionError)
-        self.assertIsNotNone(get_details(caught.exception.__context__))
+        self.assertIsNotNone(caught.exception.__context__.details)
 
     def test_traceback_uses_cached_details(self):
-        import assertionlib
         from unittest.mock import patch
 
         error = fail('assert 1 == 2')
-        details = get_details(error)
+        details = error.details
+        with patch.object(assertionlib, '_from_payload',
+                          side_effect=RuntimeError('graph rebuilt')), \
+             patch('builtins.__import__', side_effect=RuntimeError('import repeated')):
+            self.assertIs(error.details, details)
         with patch.object(assertionlib, '_from_payload',
                           side_effect=RuntimeError('graph rebuilt')):
             self.assertIn('assert 1 == 2', ''.join(traceback.format_exception(error)))
-            self.assertIs(get_details(error), details)
+            self.assertIs(error.details, details)
 
     def test_comparison_values_without_duplicate_captures(self):
         cases = (
@@ -516,7 +620,7 @@ class PublicAssertionAPITests(unittest.TestCase):
         )
         for expression, namespace, text, value in cases:
             with self.subTest(expression=expression):
-                details = get_details(fail('assert ' + expression, namespace))
+                details = fail('assert ' + expression, namespace).details
                 node = next(node for node in details.nodes if node.text == text)
                 self.assertTrue(node.evaluated)
                 self.assertEqual(node.value, value)
@@ -530,24 +634,22 @@ class PublicAssertionAPITests(unittest.TestCase):
                     '    assert (value := a0 + a1) == -1\n')
                 with self.assertRaises(AssertionError) as caught:
                     namespace['check'](*range(count))
-                comparison, = get_details(caught.exception).comparisons
+                comparison, = caught.exception.details.comparisons
                 self.assertEqual(comparison.left.value, 1)
                 self.assertEqual(comparison.right.value, -1)
 
     def test_success_does_not_dispatch(self):
-        import assertionlib
         events = []
-        with assertionlib.handlers(on_failure=lambda *args: events.append(args)):
+        with assertionlib.formatter(lambda *args: events.append(args)):
             execute('assert 1 == 1\nassert True')
         self.assertEqual(events, [])
 
     def test_async_contexts(self):
-        import assertionlib
         async def worker(label):
             events = []
-            def callback(error, details):
+            def callback(details):
                 events.append(label)
-            with assertionlib.handlers(on_failure=callback):
+            with assertionlib.formatter(callback):
                 await asyncio.sleep(0)
                 fail('assert False')
                 await asyncio.sleep(0)
@@ -558,23 +660,21 @@ class PublicAssertionAPITests(unittest.TestCase):
         self.assertEqual(asyncio.run(main()), [['a', 'a'], ['b', 'b']])
 
     def test_custom_comparison_formatter(self):
-        import assertionlib
         left, right = object(), object()
-        details = assertionlib.get_details(fail('assert left == right', locals()))
+        details = fail('assert left == right', locals()).details
         calls = []
         def compare(op, a, b):
             calls.append((op, a, b))
-            return ['custom difference']
-        text = ''.join(assertionlib.format_details(details, compare=compare))
+            return 'custom difference'
+        text = details.format(compare=compare)
         self.assertIn('custom difference', text)
         self.assertEqual(len(calls), 1)
         self.assertIs(calls[0][1], left)
         self.assertIs(calls[0][2], right)
-        default = assertionlib.format_details(details, compare=lambda *args: None)
-        self.assertIn(' == ', ''.join(default))
+        default = details.format(compare=lambda *args: None)
+        self.assertIn(' == ', default)
 
     def test_clear_detaches_public_and_private_data(self):
-        import assertionlib
         class Value:
             pass
         def make():
@@ -582,51 +682,48 @@ class PublicAssertionAPITests(unittest.TestCase):
             ref = weakref.ref(value)
             return fail('assert value is None', {'value': value}), ref
         error, ref = make()
-        details = assertionlib.get_details(error)
+        details = error.details
         error.__traceback__ = None
-        assertionlib.clear_details(error)
-        self.assertIsNone(assertionlib.get_details(error))
+        error.details = None
+        self.assertIsNone(error.details)
         self.assertIsNotNone(ref())
         del details
         gc.collect()
         self.assertIsNone(ref())
 
     def test_callback_context_copy_recovers(self):
-        import assertionlib
         import contextvars
         contexts = []
-        def callback(error, details):
+        def callback(details):
             contexts.append(contextvars.copy_context())
-        with assertionlib.handlers(on_failure=callback):
+        with assertionlib.formatter(callback):
             fail('assert False')
         contexts[0].run(fail, 'assert False')
         self.assertEqual(len(contexts), 2)
 
-    def test_callback_task_inherits_handlers(self):
-        import assertionlib
+    def test_callback_task_inherits_formatter(self):
         async def main():
             events, tasks = [], []
             async def later():
                 fail('assert False')
-            def callback(error, details):
+            def callback(details):
                 events.append(details)
                 if len(events) == 1:
                     tasks.append(asyncio.create_task(later()))
-            with assertionlib.handlers(on_failure=callback):
+            with assertionlib.formatter(callback):
                 fail('assert False')
             await tasks[0]
             return len(events)
         self.assertEqual(asyncio.run(main()), 2)
 
     def test_callback_preserves_exception_chain(self):
-        import assertionlib
         original = ValueError('outer')
-        def callback(error, details):
+        def callback(details):
             raise RuntimeError('callback')
         try:
             raise original
         except ValueError:
-            with assertionlib.handlers(on_failure=callback):
+            with assertionlib.formatter(callback):
                 with self.assertRaises(RuntimeError) as caught:
                     fail('assert False')
         assertion = caught.exception.__context__
@@ -634,17 +731,14 @@ class PublicAssertionAPITests(unittest.TestCase):
         self.assertIs(assertion.__context__, original)
 
     def test_nested_not_and_slice_details(self):
-        import assertionlib
-        details = assertionlib.get_details(fail('assert (not x) == True', {'x': [1]}))
+        details = fail('assert (not x) == True', {'x': [1]}).details
         node, = [node for node in details.nodes if node.text == 'x']
         self.assertIs(node.truth, True)
-        details = assertionlib.get_details(fail('assert data[start:stop] == []',
-                                               {'data': [1, 2], 'start': 0, 'stop': 1}))
+        details = fail('assert data[start:stop] == []', {'data': [1, 2], 'start': 0, 'stop': 1}).details
         self.assertTrue(any(node.evaluated and isinstance(node.value, slice)
                             for node in details.nodes))
 
     def test_comparison_link_truth_does_not_change(self):
-        import assertionlib
         class Result:
             def __init__(self):
                 self.truths = iter((False, True))
@@ -653,27 +747,23 @@ class PublicAssertionAPITests(unittest.TestCase):
         class Value:
             def __lt__(self, other):
                 return Result()
-        details = assertionlib.get_details(fail(
-            'assert ((a < b < c) and False) == True',
-            {'a': Value(), 'b': Value(), 'c': Value()}))
+        details = fail('assert ((a < b < c) and False) == True', {'a': Value(), 'b': Value(), 'c': Value()}).details
         links = [c for c in details.comparisons if c.operator == '<']
         self.assertIs(links[0].truth, False)
         self.assertFalse(links[1].evaluated)
 
     def test_formatter_reuses_object_repr(self):
-        import assertionlib
         calls = []
         class Value:
             def __repr__(self):
                 calls.append(1)
                 return 'Value()'
-        details = assertionlib.get_details(fail('assert x == x and False', {'x': Value()}))
-        assertionlib.format_details(details)
+        details = fail('assert x == x and False', {'x': Value()}).details
+        details.format()
         self.assertEqual(calls, [1])
 
     @requires_jit_enabled
     def test_tier2_preserves_captured_floats(self):
-        import assertionlib
         from test.test_capi.test_opt import get_all_executors
         for expression in ('(a + b) * c', '(value := (a + b) * c)'):
             with self.subTest(expression=expression):
@@ -686,7 +776,7 @@ class PublicAssertionAPITests(unittest.TestCase):
                 self.assertTrue(list(get_all_executors(check)))
                 with self.assertRaises(AssertionError) as caught:
                     check(2.0, 3.0, 4.0, 99.0, 1000)
-                details = assertionlib.get_details(caught.exception)
+                details = caught.exception.details
                 intermediate, = [node for node in details.nodes if node.text == 'a + b']
                 self.assertEqual(intermediate.value, 5.0)
                 self.assertEqual(details.comparisons[0].left.value, 20.0)

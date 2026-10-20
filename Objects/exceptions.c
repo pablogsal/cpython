@@ -4088,8 +4088,132 @@ _PyUnicodeTranslateError_Create(
 /*
  *    AssertionError extends Exception
  */
-SimpleExtendsException(PyExc_Exception, AssertionError,
-                       "Assertion failed.");
+static PyObject *
+AssertionError_details_get(PyObject *self, void *Py_UNUSED(context))
+{
+    PyObject *dict;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    dict = Py_XNewRef(PyBaseExceptionObject_CAST(self)->dict);
+    Py_END_CRITICAL_SECTION();
+    if (dict == NULL) {
+        Py_RETURN_NONE;
+    }
+    PyObject *details = NULL, *payload = NULL;
+    if (PyDict_GetItemStringRef(dict, "_assertion_details", &details) != 0) {
+        goto done;
+    }
+    int captured = PyDict_GetItemStringRef(dict, "_assertion", &payload);
+    if (captured <= 0) {
+        details = captured == 0 ? Py_NewRef(Py_None) : NULL;
+        goto done;
+    }
+    PyObject *build = PyImport_ImportModuleAttrString(
+        "assertionlib", "_from_payload");
+    if (build == NULL) {
+        goto done;
+    }
+    details = PyObject_CallOneArg(build, payload);
+    Py_DECREF(build);
+    if (details != NULL) {
+        PyObject *current = NULL, *cached = NULL;
+        int res;
+        Py_BEGIN_CRITICAL_SECTION(dict);
+        res = PyDict_GetItemStringRef(dict, "_assertion", &current);
+        if (res >= 0) {
+            /* Import hooks can detach captures while the graph is built. */
+            if (current != payload) {
+                Py_SETREF(details, Py_NewRef(Py_None));
+            }
+            else {
+                res = PyDict_GetItemStringRef(dict, "_assertion_details", &cached);
+                if (res > 0) {
+                    Py_SETREF(details, cached);
+                }
+                else if (res == 0) {
+                    res = PyDict_SetItemString(dict, "_assertion_details", details);
+                }
+            }
+        }
+        Py_END_CRITICAL_SECTION();
+        Py_XDECREF(current);
+        if (res < 0) {
+            Py_CLEAR(details);
+        }
+    }
+done:
+    Py_XDECREF(payload);
+    Py_DECREF(dict);
+    return details;
+}
+
+static int
+assertion_clear_details(PyObject *dict)
+{
+    const char *keys[] = {
+        "_assertion", "_assertion_details", "_assertion_explained", NULL
+    };
+    for (const char **key = keys; *key != NULL; key++) {
+        if (PyDict_PopString(dict, *key, NULL) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int
+AssertionError_details_set(PyObject *self, PyObject *value,
+                          void *Py_UNUSED(context))
+{
+    if (value != NULL && value != Py_None) {
+        PyErr_SetString(PyExc_TypeError, "details can only be set to None");
+        return -1;
+    }
+    PyObject *dict = PyObject_GenericGetDict(self, NULL);
+    if (dict == NULL) {
+        return -1;
+    }
+    int res = assertion_clear_details(dict);
+    Py_DECREF(dict);
+    return res;
+}
+
+static PyObject *
+AssertionError_reduce(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *result;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    result = BaseException___reduce___impl(PyBaseExceptionObject_CAST(self));
+    Py_END_CRITICAL_SECTION();
+    if (result != NULL && PyTuple_GET_SIZE(result) == 3) {
+        PyObject *state = PyDict_Copy(PyTuple_GET_ITEM(result, 2));
+        if (state == NULL || assertion_clear_details(state) < 0) {
+            Py_XDECREF(state);
+            Py_DECREF(result);
+            return NULL;
+        }
+        if (PyTuple_SetItem(result, 2, state) < 0) {
+            Py_DECREF(result);
+            return NULL;
+        }
+    }
+    return result;
+}
+
+static PyMethodDef AssertionError_methods[] = {
+    {"__reduce__", AssertionError_reduce, METH_NOARGS,
+     PyDoc_STR("Return state without captured assertion values.")},
+    {NULL}
+};
+
+static PyGetSetDef AssertionError_getset[] = {
+    {"details", AssertionError_details_get, AssertionError_details_set,
+     PyDoc_STR("Captured assertion details, or None.")},
+    {NULL}
+};
+
+ComplexExtendsException(PyExc_Exception, AssertionError, BaseException, 0,
+                        AssertionError_methods, 0, AssertionError_getset, 0, 0,
+                        "Assertion failed.");
 
 
 /*

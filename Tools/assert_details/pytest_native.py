@@ -39,19 +39,9 @@ def pytest_unconfigure(config):
     rewrite.PYC_TAIL = _original_tail
 
 
-def _message(error, details, compare=None):
-    explanation = ''.join(assertionlib.format_details(details, compare=compare)).strip()
-    if error.args:
-        explanation = f'{str(error)}\n{explanation}'
-    error.args = (explanation,)
-    # Pytest displays this explanation through format_exception_only().
-    # Keep captures for plugins, but omit a second, default explanation.
-    error._assertion_explained = True
-
-
 @pytest.hookimpl(wrapper=True)
 def pytest_collection(session):
-    with assertionlib.handlers(on_failure=_message):
+    with assertionlib.formatter(lambda details: details.format()):
         return (yield)
 
 
@@ -65,11 +55,8 @@ def pytest_runtest_protocol(item):
             if result:
                 lines = truncate.materialize_with_truncation(result, item.config)
                 if lines:
-                    return [line.replace('\n', '\\n') for line in lines]
+                    return '\n'.join(line.replace('\n', '\\n') for line in lines)
         return None
 
-    def failure(error, details):
-        _message(error, details, compare)
-
-    with assertionlib.handlers(on_failure=failure):
+    with assertionlib.formatter(lambda details: details.format(compare=compare)):
         return (yield)

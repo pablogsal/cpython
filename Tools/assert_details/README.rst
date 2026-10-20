@@ -2,10 +2,8 @@ Native assertion diagnostics prototype
 ======================================
 
 The CPython compiler captures assertion values. The public ``assertionlib`` module
-provides expression graphs, formatters, and context-local callbacks.
+provides expression graphs and scoped formatters.
 See ``Doc/library/assertionlib.rst`` for the API contract and compiler flags.
-
-The proposed exception pickle policy still needs implementation work.
 
 Build and run
 -------------
@@ -53,15 +51,15 @@ Capture disables those shortcuts where necessary. This still contributes to
 the measured overhead. The implementation adds no opcodes or optimizer rules.
 
 An intrinsic builds the payload on failure. The public details object is lazy.
-Failure callbacks can replace the exception message before the caller catches it.
-With no callback, ``AssertionError.args`` and ``str(error)`` retain their
+A scoped formatter returns custom text before the caller catches the exception.
+Without a formatter, ``AssertionError.args`` and ``str(error)`` retain their
 normal behavior. Successful assertions in ordinary diagnostic mode create no
 diagnostic containers and perform no callback lookup.
 
 Captured references extend object lifetimes and do not freeze mutable state.
-Use ``assertionlib.clear_details(error)`` to detach them from an exception.
-A retained details object still owns its values. The private capture payload
-has no stable serialization contract.
+Read them through ``error.details`` and format them with ``details.format()``.
+Normal use needs no explicit cleanup. A retained details object owns its values.
+Exception serialization omits captures and the cached graph.
 
 Pytest adapter
 --------------
@@ -69,7 +67,7 @@ Pytest adapter
 The experimental adapter keeps pytest's import selection, module registration,
 comparison hooks, and report code. It replaces its source-to-code entry point.
 It compiles selected modules with ``optimize=0`` and uses a separate cache tag.
-It supports failure callbacks. It does not promise exact pytest explanation text.
+It uses the scoped formatter. It does not promise exact pytest explanation text.
 
 Add this directory, the pytest source directory, and its dependencies to
 ``PYTHONPATH``. Then run::
@@ -92,7 +90,7 @@ Run the microbenchmarks::
         --output /tmp/assert-results --iterations 1000 --cpu 17
 
 For a pytest comparison, pass ``--pytest-source`` and ``--pytest-deps``.
-Add ``--callbacks`` to measure failure callback latency.
+Add ``--callbacks`` to measure formatter latency.
 The benchmark uses one executable for all modes. It warms each function,
 randomizes mode order, and reports raw samples, medians, and median absolute
 deviations. Runtime includes loop and harness overhead.

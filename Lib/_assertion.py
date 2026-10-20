@@ -87,7 +87,9 @@ class _Explanation:
                     result = compare(comparison.operator, comparison.left.value,
                                      comparison.right.value)
                     if result is not None:
-                        self.overrides[comparison] = list(result)
+                        if not isinstance(result, str):
+                            raise TypeError('comparison formatter must return str or None')
+                        self.overrides[comparison] = result.splitlines()
 
     def represent(self, value):
         key = id(value)
@@ -208,4 +210,5 @@ def format_details(details, *, compare=None):
     """Return a compact explanation from captured values, without evaluation."""
     explanation = _Explanation(details, compare)
     text, bindings = explanation.render(details.root)
-    return [f'  assert {text}\n', *_format_bindings(bindings), *explanation.differences]
+    lines = [f'  assert {text}\n', *_format_bindings(bindings), *explanation.differences]
+    return ''.join(line[2:] for line in lines).rstrip('\n')

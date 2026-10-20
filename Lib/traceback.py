@@ -1161,8 +1161,9 @@ class TracebackException:
                 attributes = exc_value.__dict__
                 if ('_assertion' in attributes and
                         not attributes.get('_assertion_explained', False)):
-                    from assertionlib import get_details, format_details
-                    self._assertion_lines = tuple(format_details(get_details(exc_value)))
+                    self._assertion_lines = tuple(
+                        '  ' + line + '\n'
+                        for line in exc_value.details.format().splitlines())
             except Exception:
                 self._assertion_lines = ('  <assertion details unavailable>\n',)
         try:

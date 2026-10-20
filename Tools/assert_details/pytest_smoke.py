@@ -38,7 +38,7 @@ from native_helper import Box, check
 def test_caught_message():
     with pytest.raises(AssertionError, match='custom boxes: 1 == 2') as caught:
         assert Box(1) == Box(2)
-    assert assertionlib.get_details(caught.value) is not None
+    assert caught.value.details is not None
 
 def test_registered_helper():
     with pytest.raises(AssertionError, match='custom boxes: 3 == 4'):

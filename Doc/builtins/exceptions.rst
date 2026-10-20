@@ -197,6 +197,18 @@ The following exceptions are the exceptions that are usually raised.
 
    Raised when an :keyword:`assert` statement fails.
 
+   .. attribute:: details
+
+      Captured :class:`assertionlib.AssertionDetails`, or ``None`` when the
+      assertion has no capture data. Access builds and caches the graph.
+      See :mod:`assertionlib` for compiler controls and custom explanations.
+
+      Set this attribute to ``None`` to detach the exception's captures.
+      Other details objects and traceback frames can still retain operands.
+      Exception serialization omits captures and the cached graph.
+
+      .. versionadded:: 3.16
+
 
 .. exception:: AttributeError
 

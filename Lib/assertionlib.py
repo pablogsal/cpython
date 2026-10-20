@@ -1,4 +1,4 @@
-"""Structured diagnostics and callbacks for native assertions.
+"""Structured diagnostics and custom explanations for native assertions.
 
 Compile with ast.PyCF_ASSERT_DETAILS to retain values on failure.
 Values are live references; capture does not copy mutable objects.
@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 
 __all__ = [
     'AssertionDetails', 'Expression', 'Comparison', 'SourceLocation',
-    'get_details', 'clear_details', 'format_details', 'handlers',
+    'formatter',
 ]
 
-_handlers = ContextVar('assertionlib.handlers', default=None)
+_formatter = ContextVar('assertionlib.formatter', default=None)
 _dispatching = ContextVar('assertionlib.dispatching', default=None)
 
 
@@ -70,7 +70,15 @@ class AssertionDetails:
     root: Expression
     nodes: tuple[Expression, ...]
     comparisons: tuple[Comparison, ...]
-    _payload: tuple = field(repr=False)
+
+    def format(self, *, compare=None):
+        """Return explanation text without a terminal newline.
+
+        compare(op, left, right) returns custom text, or None for the default
+        explanation. An empty string suppresses the default difference.
+        """
+        from _assertion import format_details
+        return format_details(self, compare=compare)
 
 
 def _from_payload(payload):
@@ -142,63 +150,27 @@ def _from_payload(payload):
     set_attr(root, 'truth', False)
     set_attr(root, 'evaluated', True)
     return AssertionDetails(root.text, root.location, root, nodes,
-                            tuple(comparisons), payload)
-
-
-def get_details(error):
-    """Return native assertion details, or None for an ordinary exception."""
-    if not isinstance(error, AssertionError):
-        return None
-    payload = error.__dict__.get('_assertion')
-    if payload is None:
-        return None
-    details = error.__dict__.get('_assertion_details')
-    if details is None or details._payload is not payload:
-        details = _from_payload(payload)
-        error.__dict__['_assertion_details'] = details
-    return details
-
-
-def clear_details(error):
-    """Detach captured references from an exception.
-
-    A separately retained AssertionDetails object still owns its values.
-    """
-    error.__dict__.pop('_assertion', None)
-    error.__dict__.pop('_assertion_details', None)
-    error.__dict__.pop('_assertion_explained', None)
-
-
-def format_details(details, *, compare=None):
-    """Return explanation lines, including their terminal newlines.
-
-    compare(op, left, right) returns custom lines without terminal newlines,
-    or None to request the default explanation. Formatter errors propagate.
-    """
-    if not isinstance(details, AssertionDetails):
-        raise TypeError('expected AssertionDetails')
-    from _assertion import format_details
-    return format_details(details, compare=compare)
+                            tuple(comparisons))
 
 
 @contextmanager
-def handlers(*, on_failure=None):
-    """Install synchronous callbacks in the current execution context.
+def formatter(callback):
+    """Use callback(details) to format failed assertions in this context.
 
-    Nested scopes restore their previous callbacks. Context copies, including
-    new asyncio tasks, inherit these callbacks. Thread context rules apply.
+    Return text for a custom explanation, or None for the default explanation.
+    Pass None to suspend a surrounding formatter. Exit restores it.
     """
-    if on_failure is not None and not callable(on_failure):
-        raise TypeError('assertion callback must be callable or None')
-    token = _handlers.set(on_failure)
+    if callback is not None and not callable(callback):
+        raise TypeError('assertion formatter must be callable or None')
+    token = _formatter.set(callback)
     try:
         yield
     finally:
-        _handlers.reset(token)
+        _formatter.reset(token)
 
 
 def _dispatch(error):
-    callback = _handlers.get()
+    callback = _formatter.get()
     if callback is None:
         return
     active = _dispatching.get()
@@ -208,7 +180,16 @@ def _dispatch(error):
     active = [True]
     token = _dispatching.set(active)
     try:
-        callback(error, get_details(error))
+        text = callback(error.details)
+        if text is not None:
+            if not isinstance(text, str):
+                raise TypeError('assertion formatter must return str or None')
+            if error.args:
+                message = str(error)
+                if message:
+                    text = message + '\n' + text if text else message
+            error.args = (text,)
+            error._assertion_explained = True
     finally:
         active[0] = False
         _dispatching.reset(token)
