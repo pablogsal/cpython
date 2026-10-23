@@ -35,6 +35,12 @@ def fail(source, namespace=None):
     raise RuntimeError('assertion did not fail')
 
 
+def walk(expression):
+    yield expression
+    for child in expression.children:
+        yield from walk(child)
+
+
 class AssertionDetailsTests(unittest.TestCase):
     def test_comparison(self):
         exc = fail('left = 4\nright = 7\nassert left == right')
@@ -141,7 +147,7 @@ b = Value()
 
     def test_named_expression_capture(self):
         exc = fail('x = 2\nassert x + (x := 3) == 6')
-        values = {node.text: node.value for node in exc.details.nodes
+        values = {node.text: node.value for node in walk(exc.details.expression)
                   if node.evaluated}
         self.assertEqual(values['x'], 2)
         self.assertEqual(values['(x := 3)'], 3)
@@ -204,7 +210,8 @@ for value in [True, False]:
         text = ns['errors'][0].details.format()
         self.assertEqual(text, 'assert (False)')
         details = ns['errors'][0].details
-        skipped, = [node for node in details.nodes if node.text == '(other := True)']
+        skipped, = [node for node in walk(details.expression)
+                    if node.text == '(other := True)']
         self.assertFalse(skipped.evaluated)
         with self.assertRaises(ValueError):
             skipped.value
@@ -406,11 +413,12 @@ class PublicAssertionAPITests(unittest.TestCase):
                          f'AssertionDetails(expression={expression!r})')
         self.assertEqual(pprint.pformat(details), repr(details))
         comparison, = details.comparisons
-        self.assertIs(comparison.expression, details.root)
-        self.assertIs(details.root, details.nodes[0])
-        self.assertIs(comparison.left, details.root.children[0])
-        self.assertIs(comparison.right, details.root.children[1])
-        for value in (details.root, comparison):
+        self.assertIs(comparison.expression, details.expression)
+        self.assertIs(comparison.left, details.expression.children[0])
+        self.assertIs(comparison.right, details.expression.children[1])
+        self.assertEqual(repr(comparison),
+                         f'Comparison(text={expression!r}, truth=False)')
+        for value in (details.expression, comparison):
             for render in (repr, pprint.pformat):
                 with self.subTest(value=type(value).__name__, render=render):
                     text = render(value)
@@ -418,7 +426,8 @@ class PublicAssertionAPITests(unittest.TestCase):
                     self.assertIn('truth=False', text)
                     self.assertNotIn('location=', text)
                     self.assertNotIn('children=', text)
-        self.assertEqual(pprint.pformat(details.nodes).count('Expression('), 13)
+        nodes = tuple(walk(details.expression))
+        self.assertEqual(pprint.pformat(nodes).count('Expression('), 13)
         self.assertNotIn('Expression(', pprint.pformat(details.comparisons))
 
     def test_representations_do_not_call_captured_values(self):
@@ -429,9 +438,11 @@ class PublicAssertionAPITests(unittest.TestCase):
                 raise RuntimeError('bool called')
         value = Value()
         details = fail('assert value is None', {'value': value}).details
-        for item in (details, details.nodes, details.comparisons):
+        for item in (details, tuple(walk(details.expression)), details.comparisons):
             repr(item)
             pprint.pformat(item)
+        for item in (*walk(details.expression), *details.comparisons):
+            self.assertTrue(item.evaluated)
         self.assertIs(details.comparisons[0].left.value, value)
 
     def test_details_are_lazy(self):
@@ -545,18 +556,18 @@ except AssertionError as error:
         exc = fail('a = 3\nb = 4\nassert a == b and missing()')
         details = exc.details
         self.assertIs(details, exc.details)
-        self.assertEqual(details.root.kind, 'and')
-        self.assertFalse(details.root.truth)
-        self.assertFalse(details.root.children[1].evaluated)
+        self.assertEqual(details.expression.kind, 'and')
+        self.assertFalse(details.expression.truth)
+        self.assertFalse(details.expression.children[1].evaluated)
         with self.assertRaises(ValueError):
-            details.root.children[1].value
+            details.expression.children[1].value
         comparison, = details.comparisons
         self.assertEqual(comparison.operator, '==')
         self.assertEqual(comparison.left.value, 3)
         self.assertEqual(comparison.right.value, 4)
         self.assertIs(comparison.truth, False)
-        self.assertEqual(details.location.filename, '<assert-details>')
-        self.assertEqual(details.location.lineno, 3)
+        self.assertEqual(details.expression.location.filename, '<assert-details>')
+        self.assertEqual(details.expression.location.lineno, 3)
         self.assertIsNone(AssertionError().details)
         self.assertFalse(hasattr(ValueError(), 'details'))
 
@@ -569,20 +580,39 @@ except AssertionError as error:
         self.assertIsNone(comparison.left.value)
         self.assertEqual(comparison.right.value, 1)
 
+    def test_comparison_chain_results(self):
+        details = fail('assert 0 < 5 < 3 < missing()').details
+        first, failed, skipped = details.comparisons
+        self.assertEqual([c.text for c in details.comparisons],
+                         ['0 < 5', '5 < 3', '3 < missing()'])
+        self.assertIs(first.value, True)
+        self.assertIs(first.truth, True)
+        self.assertIs(failed.value, False)
+        self.assertIs(failed.truth, False)
+        self.assertIs(details.expression.value, False)
+        self.assertIs(first.right, failed.left)
+        self.assertIs(failed.right, skipped.left)
+        self.assertFalse(skipped.evaluated)
+        self.assertIsNone(skipped.truth)
+        with self.assertRaises(ValueError):
+            skipped.value
+        for comparison in details.comparisons:
+            self.assertIs(comparison.expression, details.expression)
+
     def test_nested_control_flow_values(self):
         for expression in ('(a or b) and a', 'not b', 'a if b else b', '0 < b < a < 9'):
             with self.subTest(expression=expression):
                 ns = {'a': 0, 'b': 2}
                 details = fail('assert ' + expression, ns).details
-                self.assertFalse(details.root.truth)
-                self.assertEqual(details.root.value, eval(expression, ns))
+                self.assertFalse(details.expression.truth)
+                self.assertEqual(details.expression.value, eval(expression, ns))
 
     def test_callbacks_before_catch_and_message_order(self):
         events = []
         def handler(details):
             events.append('callback')
             self.assertEqual(sys.exception().args, ('original',))
-            self.assertFalse(details.root.truth)
+            self.assertFalse(details.expression.truth)
             return 'custom explanation'
         with assertionlib.formatter(handler):
             exc = fail('assert events.append("condition"), '
@@ -657,7 +687,8 @@ except AssertionError as error:
         for expression, namespace, text, value in cases:
             with self.subTest(expression=expression):
                 details = fail('assert ' + expression, namespace).details
-                node = next(node for node in details.nodes if node.text == text)
+                node = next(node for node in walk(details.expression)
+                            if node.text == text)
                 self.assertTrue(node.evaluated)
                 self.assertEqual(node.value, value)
 
@@ -768,11 +799,11 @@ except AssertionError as error:
 
     def test_nested_not_and_slice_details(self):
         details = fail('assert (not x) == True', {'x': [1]}).details
-        node, = [node for node in details.nodes if node.text == 'x']
+        node, = [node for node in walk(details.expression) if node.text == 'x']
         self.assertIs(node.truth, True)
         details = fail('assert data[start:stop] == []', {'data': [1, 2], 'start': 0, 'stop': 1}).details
         self.assertTrue(any(node.evaluated and isinstance(node.value, slice)
-                            for node in details.nodes))
+                            for node in walk(details.expression)))
 
     def test_comparison_link_truth_does_not_change(self):
         class Result:
@@ -786,6 +817,7 @@ except AssertionError as error:
         details = fail('assert ((a < b < c) and False) == True', {'a': Value(), 'b': Value(), 'c': Value()}).details
         links = [c for c in details.comparisons if c.operator == '<']
         self.assertIs(links[0].truth, False)
+        self.assertIs(links[0].expression.truth, True)
         self.assertFalse(links[1].evaluated)
 
     def test_formatter_reuses_object_repr(self):
@@ -813,7 +845,8 @@ except AssertionError as error:
                 with self.assertRaises(AssertionError) as caught:
                     check(2.0, 3.0, 4.0, 99.0, 1000)
                 details = caught.exception.details
-                intermediate, = [node for node in details.nodes if node.text == 'a + b']
+                intermediate, = [node for node in walk(details.expression)
+                                 if node.text == 'a + b']
                 self.assertEqual(intermediate.value, 5.0)
                 self.assertEqual(details.comparisons[0].left.value, 20.0)
 

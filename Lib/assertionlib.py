@@ -26,50 +26,55 @@ class SourceLocation:
     end_col_offset: int
 
 
-@dataclass(frozen=True, slots=True, eq=False)
-class Expression:
-    id: int
-    text: str
-    kind: str
-    location: SourceLocation = field(repr=False)
-    children: tuple = field(default=(), repr=False)
-    evaluated: bool = False
-    truth: bool | None = None
-    _capture: tuple = field(default=(), repr=False)
+class _Captured:
+    __slots__ = ()
+
+    @property
+    def evaluated(self):
+        return bool(self._capture)
 
     @property
     def value(self):
         """The captured result. Raise ValueError if no result is available."""
         if not self._capture:
-            raise ValueError('expression has no captured result')
+            raise ValueError('no captured result')
         return self._capture[0]
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class Comparison:
-    operator: str
-    left: Expression = field(repr=False)
-    right: Expression = field(repr=False)
-    expression: Expression = field(repr=False)
+class Expression(_Captured):
     text: str
-    evaluated: bool
+    kind: str
+    location: SourceLocation = field(repr=False)
+    children: tuple = field(default=(), repr=False)
     truth: bool | None = None
     _capture: tuple = field(default=(), repr=False)
 
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Comparison(_Captured):
+    operator: str
+    left: Expression
+    right: Expression
+    expression: Expression
+    truth: bool | None = None
+    _capture: tuple = field(default=(), repr=False)
+
+    def __repr__(self):
+        return f'{type(self).__name__}(text={self.text!r}, truth={self.truth!r})'
+
     @property
-    def value(self):
-        if not self._capture:
-            raise ValueError('comparison was not evaluated')
-        return self._capture[0]
+    def text(self):
+        return f'{self.left.text} {self.operator} {self.right.text}'
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class AssertionDetails:
-    expression: str
-    location: SourceLocation = field(repr=False)
-    root: Expression = field(repr=False)
-    nodes: tuple[Expression, ...] = field(repr=False)
-    comparisons: tuple[Comparison, ...] = field(repr=False)
+    expression: Expression
+    comparisons: tuple[Comparison, ...]
+
+    def __repr__(self):
+        return f'{type(self).__name__}(expression={self.expression.text!r})'
 
     def format(self, *, compare=None):
         """Return explanation text without a terminal newline.
@@ -83,8 +88,8 @@ class AssertionDetails:
 
 def _from_payload(payload):
     records, values, plan, filename = payload
-    nodes = tuple(Expression(i, label, kind, SourceLocation(filename, *span))
-                  for i, (label, kind, span, children) in enumerate(plan))
+    nodes = tuple(Expression(label, kind, SourceLocation(filename, *span))
+                  for label, kind, span, children in plan)
     set_attr = object.__setattr__
     for node, descriptor in zip(nodes, plan):
         set_attr(node, 'children', tuple(nodes[i] for i in descriptor[3]))
@@ -95,21 +100,18 @@ def _from_payload(payload):
         node = nodes[node_id]
         if kind == 'value':
             set_attr(node, '_capture', captured)
-            set_attr(node, 'evaluated', bool(captured))
         elif kind == 'comparison':
             op, left_id, right_id = extra
             left, right = nodes[left_id], nodes[right_id]
-            comparison = Comparison(op, left, right, node,
-                                    f'{left.text} {op} {right.text}',
-                                    bool(captured), _capture=captured)
+            comparison = Comparison(op, left, right, node, _capture=captured)
             comparisons.append(comparison)
             if captured:
-                last_comparison[node_id] = comparison
+                last_comparison[node] = comparison
         elif captured:
             if extra is None:
                 set_attr(node, 'truth', captured[0])
             else:
-                set_attr(last_comparison[node_id], 'truth', captured[0])
+                set_attr(last_comparison[node], 'truth', captured[0])
 
     # Control-flow expressions need not materialize their result in bytecode.
     # Recover their selected result from captured children, without user calls.
@@ -132,23 +134,19 @@ def _from_payload(payload):
             result = not children[0].truth
             set_attr(node, '_capture', (result,))
             set_attr(node, 'truth', result)
-            set_attr(node, 'evaluated', True)
         elif node.kind == 'compare':
-            selected = last_comparison.get(node.id)
+            selected = last_comparison.get(node)
             if selected is not None:
                 if node.truth is not None and selected.truth is None:
                     set_attr(selected, 'truth', node.truth)
         if selected is not None:
             if not node._capture:
                 set_attr(node, '_capture', selected._capture)
-            set_attr(node, 'evaluated', selected.evaluated)
             if node.truth is None:
                 set_attr(node, 'truth', selected.truth)
     root = nodes[0]
     set_attr(root, 'truth', False)
-    set_attr(root, 'evaluated', True)
-    return AssertionDetails(root.text, root.location, root, nodes,
-                            tuple(comparisons))
+    return AssertionDetails(root, tuple(comparisons))
 
 
 @contextmanager

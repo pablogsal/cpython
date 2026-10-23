@@ -89,7 +89,7 @@ class _Explanation:
                             raise TypeError('comparison formatter must return str or None')
                         override = result.splitlines()
                 # A chain stops at its first false link.
-                self.comparisons[comparison.expression.id] = comparison, override
+                self.comparisons[comparison.expression] = comparison, override
 
     def represent(self, value):
         key = id(value)
@@ -98,7 +98,7 @@ class _Explanation:
         return self.representations[key]
 
     def comparison(self, node):
-        chosen, override = self.comparisons[node.id]
+        chosen, override = self.comparisons[node]
         if override:
             self.differences.extend('    ' + line + '\n' for line in override[1:])
             return override[0], []
@@ -203,6 +203,6 @@ def _format_bindings(bindings, depth=0):
 def format_details(details, *, compare=None):
     """Return a compact explanation from captured values, without evaluation."""
     explanation = _Explanation(details, compare)
-    text, bindings = explanation.render(details.root)
+    text, bindings = explanation.render(details.expression)
     lines = [f'  assert {text}\n', *_format_bindings(bindings), *explanation.differences]
     return ''.join(line[2:] for line in lines).rstrip('\n')

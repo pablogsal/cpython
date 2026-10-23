@@ -38,10 +38,17 @@ and caches the graph. Later accesses return the same object::
 
 .. class:: AssertionDetails
 
-   An immutable description of a failed assertion. Its attributes are
-   ``expression``, ``location``, ``root``, ``nodes``, and ``comparisons``.
-   ``nodes`` and ``comparisons`` are tuples. ``root`` identifies the top
-   expression node.
+   An immutable description of a failed assertion. ``expression`` is the
+   top-level :class:`Expression` node. Its ``children`` describe the nested
+   expressions. Read the assertion text from ``expression.text`` and its
+   location from ``expression.location``.
+
+   ``comparisons`` is a tuple of :class:`Comparison` records. A comparison
+   chain has one expression node but a separate result for each link.
+   For ``assert 0 < 5 < 3``, the expression result is ``False``. Its two
+   comparison records contain ``True`` for ``0 < 5`` and ``False`` for
+   ``5 < 3``. A reporter can select the failed link without another
+   comparison. The records share the expression tree's operand nodes.
 
    The representation shows only the assertion text::
 
@@ -124,15 +131,17 @@ Expression data
 
 .. class:: Expression
 
-   An immutable node with ``id``, ``text``, ``kind``, ``location``, ``children``,
-   ``evaluated``, ``value``, and ``truth`` attributes. IDs are unique within one
-   assertion. Repeated source expressions have distinct nodes. Children form
-   a tuple of expression nodes.
+   An immutable node with ``text``, ``kind``, ``location``, ``children``,
+   ``evaluated``, ``value``, and ``truth`` attributes. Repeated source
+   expressions have distinct nodes. Children form a tuple of expression nodes.
 
    Check ``evaluated`` before access to ``value``. An unavailable value raises
    :exc:`ValueError`. An evaluated value of ``None`` differs from a skipped
    expression. ``truth`` is the recorded truth result, or ``None`` when
    unavailable. It does not call ``bool(value)``.
+
+   ``evaluated`` reports whether a captured value exists. It does not perform
+   a truth conversion. A value can exist without a recorded truth result.
 
 .. class:: Comparison
 
@@ -140,6 +149,8 @@ Expression data
    ``text``, ``evaluated``, ``value``, and ``truth`` attributes. ``left`` and
    ``right`` identify operand nodes. A chain has one record for each link,
    including skipped links. ``value`` raises :exc:`ValueError` when unavailable.
+   ``expression`` identifies the comparison expression that contains the link.
+   ``text`` is derived from the operand text and operator.
 
 .. class:: SourceLocation
 
