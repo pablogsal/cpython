@@ -5,6 +5,7 @@ import asyncio
 import gc
 import marshal
 import pickle
+import pprint
 import sys
 import traceback
 import unittest
@@ -398,6 +399,41 @@ class AssertionRenderingTests(unittest.TestCase):
 
 
 class PublicAssertionAPITests(unittest.TestCase):
+    def test_compact_representations(self):
+        expression = 'x + y * z * 2 == x + y + y'
+        details = fail('assert ' + expression, {'x': 1, 'y': 2, 'z': 3}).details
+        self.assertEqual(repr(details),
+                         f'AssertionDetails(expression={expression!r})')
+        self.assertEqual(pprint.pformat(details), repr(details))
+        comparison, = details.comparisons
+        self.assertIs(comparison.expression, details.root)
+        self.assertIs(details.root, details.nodes[0])
+        self.assertIs(comparison.left, details.root.children[0])
+        self.assertIs(comparison.right, details.root.children[1])
+        for value in (details.root, comparison):
+            for render in (repr, pprint.pformat):
+                with self.subTest(value=type(value).__name__, render=render):
+                    text = render(value)
+                    self.assertEqual(text.count(type(value).__name__ + '('), 1)
+                    self.assertIn('truth=False', text)
+                    self.assertNotIn('location=', text)
+                    self.assertNotIn('children=', text)
+        self.assertEqual(pprint.pformat(details.nodes).count('Expression('), 13)
+        self.assertNotIn('Expression(', pprint.pformat(details.comparisons))
+
+    def test_representations_do_not_call_captured_values(self):
+        class Value:
+            def __repr__(self):
+                raise RuntimeError('repr called')
+            def __bool__(self):
+                raise RuntimeError('bool called')
+        value = Value()
+        details = fail('assert value is None', {'value': value}).details
+        for item in (details, details.nodes, details.comparisons):
+            repr(item)
+            pprint.pformat(item)
+        self.assertIs(details.comparisons[0].left.value, value)
+
     def test_details_are_lazy(self):
         from test.support.script_helper import assert_python_ok
         assert_python_ok('-c', '''

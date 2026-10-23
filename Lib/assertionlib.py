@@ -31,8 +31,8 @@ class Expression:
     id: int
     text: str
     kind: str
-    location: SourceLocation
-    children: tuple = ()
+    location: SourceLocation = field(repr=False)
+    children: tuple = field(default=(), repr=False)
     evaluated: bool = False
     truth: bool | None = None
     _capture: tuple = field(default=(), repr=False)
@@ -48,9 +48,9 @@ class Expression:
 @dataclass(frozen=True, slots=True, eq=False)
 class Comparison:
     operator: str
-    left: Expression
-    right: Expression
-    expression: Expression
+    left: Expression = field(repr=False)
+    right: Expression = field(repr=False)
+    expression: Expression = field(repr=False)
     text: str
     evaluated: bool
     truth: bool | None = None
@@ -66,10 +66,10 @@ class Comparison:
 @dataclass(frozen=True, slots=True, eq=False)
 class AssertionDetails:
     expression: str
-    location: SourceLocation
-    root: Expression
-    nodes: tuple[Expression, ...]
-    comparisons: tuple[Comparison, ...]
+    location: SourceLocation = field(repr=False)
+    root: Expression = field(repr=False)
+    nodes: tuple[Expression, ...] = field(repr=False)
+    comparisons: tuple[Comparison, ...] = field(repr=False)
 
     def format(self, *, compare=None):
         """Return explanation text without a terminal newline.

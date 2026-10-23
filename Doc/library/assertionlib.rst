@@ -43,6 +43,13 @@ and caches the graph. Later accesses return the same object::
    ``nodes`` and ``comparisons`` are tuples. ``root`` identifies the top
    expression node.
 
+   The representation shows only the assertion text::
+
+       AssertionDetails(expression='price * quantity == expected')
+
+   Node and comparison representations omit graph links, locations, and
+   captured values. These attributes remain available for inspection.
+
    .. method:: format(*, compare=None)
 
       Return explanation text without a terminal newline. This method does
