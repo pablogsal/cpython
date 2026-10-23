@@ -8,7 +8,9 @@
 #include "pycore_bitutils.h"        // _Py_popcount32()
 #include "pycore_ceval.h"       // _Py_set_eval_breaker_bit
 #include "pycore_code.h"            // _Py_GetBaseCodeUnit
+#include "pycore_frame.h"
 #include "pycore_interpframe.h"
+#include "pycore_lock.h"
 #include "pycore_object.h"          // _PyObject_GC_UNTRACK()
 #include "pycore_opcode_metadata.h" // _PyOpcode_OpName[]
 #include "pycore_opcode_utils.h"  // MAX_REAL_OPCODE
@@ -117,7 +119,7 @@ static _PyExecutorObject *
 make_executor_from_uops(_PyThreadStateImpl *tstate, _PyUOpInstruction *buffer, int length, const _PyBloomFilter *dependencies);
 
 static int
-uop_optimize(_PyInterpreterFrame *frame, PyThreadState *tstate,
+uop_optimize(_PyControlRecord *frame, PyThreadState *tstate,
              _PyExecutorObject **exec_ptr,
              bool progress_needed);
 
@@ -127,7 +129,7 @@ uop_optimize(_PyInterpreterFrame *frame, PyThreadState *tstate,
 // gh-137573: inlining this function causes stack overflows
 Py_NO_INLINE int
 _PyOptimizer_Optimize(
-    _PyInterpreterFrame *frame, PyThreadState *tstate)
+    _PyControlRecord *frame, PyThreadState *tstate)
 {
     _PyThreadStateImpl *_tstate = (_PyThreadStateImpl *)tstate;
     PyInterpreterState *interp = _PyInterpreterState_GET();
@@ -669,7 +671,7 @@ is_terminator(const _PyUOpInstruction *uop)
 Py_NO_INLINE int
 _PyJit_translate_single_bytecode_to_trace(
     PyThreadState *tstate,
-    _PyInterpreterFrame *frame,
+    _PyControlRecord *frame,
     _Py_CODEUNIT *next_instr,
     int stop_tracing_opcode)
 {
@@ -1078,7 +1080,7 @@ _PyJit_translate_single_bytecode_to_trace(
         ADD_TO_TRACE(guard_ip, 0, (uintptr_t)next_instr, 0);
         if (PyCode_Check(code)) {
             /* Record stack depth, in operand1 */
-            int stack_depth = (int)(frame->stackpointer - _PyFrame_Stackbase(frame));
+            int stack_depth = (int)(frame->stackpointer - _PyFrame_Stackbase(frame, frame->data));
             uop_buffer_last(trace)->operand1 = stack_depth;
             ADD_TO_TRACE(guard_code_version_uop[last_opcode], 0, ((PyCodeObject *)code)->co_version, 0);
         }
@@ -1115,7 +1117,7 @@ done:
 // gh-142543: inlining this function causes stack overflows
 Py_NO_INLINE int
 _PyJit_TryInitializeTracing(
-    PyThreadState *tstate, _PyInterpreterFrame *frame, _Py_CODEUNIT *curr_instr,
+    PyThreadState *tstate, _PyControlRecord *frame, _Py_CODEUNIT *curr_instr,
     _Py_CODEUNIT *start_instr, _Py_CODEUNIT *close_loop_instr, _PyStackRef *stack_pointer, int chain_depth,
     _PyExitData *exit, int oparg, _PyExecutorObject *current_executor)
 {
@@ -1136,7 +1138,7 @@ _PyJit_TryInitializeTracing(
     if (oparg > 0xFFFF) {
         return 0;
     }
-    PyObject *func = PyStackRef_AsPyObjectBorrow(frame->f_funcobj);
+    PyObject *func = PyStackRef_AsPyObjectBorrow(frame->data->f_funcobj);
     if (func == NULL || !PyFunction_Check(func)) {
         return 0;
     }
@@ -1170,7 +1172,7 @@ _PyJit_TryInitializeTracing(
     tracer->initial_state.func = (PyFunctionObject *)Py_NewRef(func);
     tracer->initial_state.executor = (_PyExecutorObject *)Py_XNewRef(current_executor);
     tracer->initial_state.exit = exit;
-    tracer->initial_state.stack_depth = (int)(stack_pointer - _PyFrame_Stackbase(frame));
+    tracer->initial_state.stack_depth = (int)(stack_pointer - _PyFrame_Stackbase(frame, frame->data));
     tracer->initial_state.chain_depth = chain_depth;
     tracer->prev_state.instr_code = (PyCodeObject *)Py_NewRef(_PyFrame_GetCode(frame));
     tracer->prev_state.instr = curr_instr;
@@ -1646,7 +1648,7 @@ stack_allocate(_PyUOpInstruction *buffer, _PyUOpInstruction *output, int length)
 
 static int
 uop_optimize(
-    _PyInterpreterFrame *frame,
+    _PyControlRecord *frame,
     PyThreadState *tstate,
     _PyExecutorObject **exec_ptr,
     bool progress_needed)

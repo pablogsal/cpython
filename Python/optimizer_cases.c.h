@@ -4227,10 +4227,6 @@
             break;
         }
 
-        case _CHECK_RECURSION_REMAINING: {
-            break;
-        }
-
         case _INIT_CALL_PY_EXACT_ARGS: {
             JitOptRef *args;
             JitOptRef self_or_null;
