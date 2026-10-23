@@ -321,7 +321,7 @@ validate_fixed_field(
 
 #define PY_REMOTE_DEBUG_GEN_OBJECT_FIELDS(APPLY, buffer_size) \
     APPLY(gen_object, gi_frame_state, sizeof(int8_t), _Alignof(int8_t), buffer_size); \
-    APPLY(gen_object, gi_iframe, FIELD_SIZE(PyGenObject, gi_iframe), _Alignof(_PyInterpreterFrame), buffer_size)
+    APPLY(gen_object, gi_iframe, FIELD_SIZE(PyGenObject, gi_iframe), _Alignof(_PyControlRecord), buffer_size)
 
 #define PY_REMOTE_DEBUG_TASK_OBJECT_FIELDS(APPLY, buffer_size) \
     APPLY(asyncio_task_object, task_name, sizeof(uintptr_t), _Alignof(uintptr_t), buffer_size); \
