@@ -304,7 +304,7 @@ Known values:
     Python 3.16a1 3704 (Replace DELETE_ATTR with PUSH_NULL; STORE_ATTR)
     Python 3.16a1 3705 (Add INTRINSIC_ADD_CONDITIONAL_ANNOTATION)
     Python 3.16a1 3706 (Add INTRINSIC_MATCH_CLASS_ISINSTANCE)
-    Python 3.16a1 3711 (Native assertion diagnostics; 3707-3710 used by earlier prototypes)
+    Python 3.16a1 3712 (Native assertion diagnostics; 3707-3711 used by earlier prototypes)
 
     Python 3.17 will start with 3750
 
@@ -314,7 +314,7 @@ Known values:
 
 */
 
-#define PYC_MAGIC_NUMBER 3711
+#define PYC_MAGIC_NUMBER 3712
 /* This is equivalent to converting PYC_MAGIC_NUMBER to 2 bytes
    (little-endian) and then appending b'\r\n'. */
 #define PYC_MAGIC_NUMBER_TOKEN \

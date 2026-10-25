@@ -43,9 +43,10 @@ codegen_assert_enter(assertion_context *ctx, expr_ty e)
             default: break;
         }
         PyObject *node = Py_BuildValue(
-            "(Ns(iiii)N)", _PyAST_ExprAsUnicode(e), kind,
+            "(Ns(iiii)NN)", _PyAST_ExprAsUnicode(e), kind,
             e->lineno, e->col_offset, e->end_lineno, e->end_col_offset,
-            PyList_New(0));
+            PyList_New(0), e->kind == Constant_kind
+                ? PyTuple_Pack(1, e->v.Constant.value) : PyTuple_New(0));
         if (node == NULL) {
             return ERROR;
         }
@@ -81,8 +82,9 @@ codegen_assert_capture(compiler *c, expr_ty e, const char *kind, int link)
     if (e->kind == Name_kind && e->v.Name.ctx != Load) {
         return SUCCESS;
     }
-    /* Comparison nodes use their last evaluated link as their value. */
-    if (e->kind == Compare_kind && strcmp(kind, "value") == 0) {
+    /* Constants come from the plan; comparisons use their last link. */
+    if ((e->kind == Constant_kind || e->kind == Compare_kind) &&
+        strcmp(kind, "value") == 0) {
         return SUCCESS;
     }
     PyObject *extra = NULL, *name = NULL, *record = NULL;

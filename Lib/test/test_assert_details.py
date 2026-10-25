@@ -599,6 +599,58 @@ except AssertionError as error:
         for comparison in details.comparisons:
             self.assertIs(comparison.expression, details.expression)
 
+    def test_constant_values(self):
+        for value in (None, False, 0, -0.0, 1j, b'bytes', 'text', (1, 2), ...):
+            with self.subTest(value=value):
+                tree = ast.parse('assert value == None')
+                tree.body[0].test.comparators[0].value = value
+                code = compile(tree, '<constant>', 'exec', flags=FLAGS)
+                code = marshal.loads(marshal.dumps(code))
+                constant = next(c for c in code.co_consts
+                                if type(c) is type(value) and c == value)
+                with self.assertRaises(AssertionError) as caught:
+                    exec(code, {'value': object()})
+                comparison, = caught.exception.details.comparisons
+                self.assertIs(comparison.right.value, constant)
+
+    def test_constants_in_skipped_branches(self):
+        cases = (
+            ('flag and missing(60)', False, [('60', False)]),
+            ('(11 if flag else 22) == 33', True,
+             [('11', True), ('22', False), ('33', True)]),
+            ('(11 if flag else 22) == 33', False,
+             [('11', False), ('22', True), ('33', True)]),
+            ('(flag and 11) == 22', False, [('11', False), ('22', True)]),
+            ('(flag or 11) == 22', True, [('11', False), ('22', True)]),
+            ('(flag or 11) == 22', False, [('11', True), ('22', True)]),
+            ('not (flag or 11)', False, [('11', True)]),
+            ('0 < 5 < 3 < 99', False,
+             [('0', True), ('5', True), ('3', True), ('99', False)]),
+        )
+        for source, flag, expected in cases:
+            with self.subTest(source=source, flag=flag):
+                details = fail('assert ' + source, {'flag': flag}).details
+                constants = [node for node in walk(details.expression)
+                             if node.kind == 'constant']
+                self.assertEqual([(node.text, node.evaluated)
+                                  for node in constants], expected)
+                for node in constants:
+                    if node.evaluated:
+                        self.assertEqual(node.value, ast.literal_eval(node.text))
+                    else:
+                        with self.assertRaises(ValueError):
+                            node.value
+
+    def test_constants_do_not_need_value_slots(self):
+        namespace = execute('def check():\n    assert 1 == 2')
+        check = namespace['check']
+        # Only the comparison result and its truth result need hidden slots.
+        self.assertEqual(check.__code__.co_nlocals, 2)
+        with self.assertRaises(AssertionError) as caught:
+            check()
+        comparison, = caught.exception.details.comparisons
+        self.assertEqual((comparison.left.value, comparison.right.value), (1, 2))
+
     def test_nested_control_flow_values(self):
         for expression in ('(a or b) and a', 'not b', 'a if b else b', '0 < b < a < 9'):
             with self.subTest(expression=expression):

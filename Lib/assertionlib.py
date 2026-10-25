@@ -89,10 +89,19 @@ class AssertionDetails:
 def _from_payload(payload):
     records, values, plan, filename = payload
     nodes = tuple(Expression(label, kind, SourceLocation(filename, *span))
-                  for label, kind, span, children in plan)
+                  for label, kind, span, children, constant in plan)
+    constants = {}
     set_attr = object.__setattr__
+
+    # Restore a constant only when captured results establish its execution.
+    def restore_constant(node):
+        if captured := constants.get(node):
+            set_attr(node, '_capture', captured)
+
     for node, descriptor in zip(nodes, plan):
         set_attr(node, 'children', tuple(nodes[i] for i in descriptor[3]))
+        if descriptor[4]:
+            constants[node] = descriptor[4]
     comparisons = []
     last_comparison = {}
     for record, captured in zip(records, values):
@@ -107,9 +116,12 @@ def _from_payload(payload):
             comparisons.append(comparison)
             if captured:
                 last_comparison[node] = comparison
+                restore_constant(left)
+                restore_constant(right)
         elif captured:
             if extra is None:
                 set_attr(node, 'truth', captured[0])
+                restore_constant(node)
             else:
                 set_attr(last_comparison[node], 'truth', captured[0])
 
@@ -121,6 +133,8 @@ def _from_payload(payload):
         if node.kind in ('and', 'or'):
             stop = node.kind == 'or'
             for child in children:
+                if node.evaluated:
+                    restore_constant(child)
                 if not child.evaluated:
                     break
                 selected = child
@@ -130,6 +144,7 @@ def _from_payload(payload):
             condition, body, otherwise = children
             if condition.truth is not None:
                 selected = body if condition.truth else otherwise
+                restore_constant(selected)
         elif node.kind == 'not' and children and children[0].truth is not None:
             result = not children[0].truth
             set_attr(node, '_capture', (result,))
@@ -139,6 +154,9 @@ def _from_payload(payload):
             if selected is not None:
                 if node.truth is not None and selected.truth is None:
                     set_attr(selected, 'truth', node.truth)
+        elif node.evaluated:
+            for child in children:
+                restore_constant(child)
         if selected is not None:
             if not node._capture:
                 set_attr(node, '_capture', selected._capture)
