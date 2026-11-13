@@ -34,8 +34,8 @@ def worker(target_python, count, loaded):
         results = {}
         # Preserve every thread so a lost state cannot appear as a speedup.
         for name in ('attach', 'wall', 'all', 'cpu', 'async'):
-            mode = {'wall': remote.PROFILING_MODE_WALL, 'all': remote.PROFILING_MODE_ALL,
-                    'cpu': remote.PROFILING_MODE_CPU}.get(name, remote.PROFILING_MODE_WALL)
+            mode = {'wall': 0, 'all': 3,
+                    'cpu': 1}.get(name, 0)
             unwinder = remote.RemoteUnwinder(child.pid, all_threads=True, mode=mode,
                                            skip_non_matching_threads=False)
             if name == 'attach':
@@ -67,7 +67,7 @@ def worker(target_python, count, loaded):
                         for interp in value:
                             for info in interp.threads:
                                 records += 1
-                                unknown += bool(info.status & remote.THREAD_STATUS_UNKNOWN)
+                                unknown += bool(info.status & (1 << 2))
                 samples.append(time.perf_counter_ns() - before)
             cpu_ns = time.process_time_ns() - cpu_start
             samples.sort()
