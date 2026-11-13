@@ -1,24 +1,13 @@
-name: Profiler Windows sampling measurements
+name: Profiler Intel repeated controls
 on:
   push:
-    branches: [bench-profiler-windows-20261113]
+    branches: [bench-profiler-intel-repeat-20261113]
   workflow_dispatch:
-concurrency:
-  group: profiler-windows-measurements
-  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
-  windows-sampling:
-    runs-on: windows-2025
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            builddir: amd64
-          - arch: Win32
-            builddir: win32
+  intel-repeat:
+    runs-on: macos-26-intel
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -29,27 +18,23 @@ jobs:
           ref: 2c2d8018a20da33c749f42cc6a4ae55664a88321
           path: baseline
           persist-credentials: false
-      - name: Build candidate
-        shell: cmd
-        run: PCbuild\build.bat -e --no-ssl --no-tkinter --no-ctypes -p ${{ matrix.arch }} -c Release > candidate-build.log 2>&1
-      - name: Build baseline
-        shell: cmd
-        working-directory: baseline
-        run: PCbuild\build.bat -e --no-ssl --no-tkinter --no-ctypes -p ${{ matrix.arch }} -c Release > ..\baseline-build.log 2>&1
-      - name: Compare full calls and target throughput
-        shell: pwsh
+      - name: Build both revisions with matching flags
+        shell: bash
         run: |
-          $base = (Resolve-Path "baseline/PCbuild/${{ matrix.builddir }}/python.exe").Path
-          $candidate = (Resolve-Path "PCbuild/${{ matrix.builddir }}/python.exe").Path
-          & $candidate Tools/profiler_platform_bench/sampling.py compare $base $candidate | Tee-Object -FilePath sampling-results.jsonl
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $candidate Tools/profiler_platform_bench/impact.py compare $base $candidate | Tee-Object -FilePath impact-results.jsonl
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./configure --without-ensurepip > candidate-configure.log 2>&1
+          make -j4 > candidate-build.log 2>&1
+          cd baseline
+          ./configure --without-ensurepip > ../baseline-configure.log 2>&1
+          make -j4 > ../baseline-build.log 2>&1
+      - name: Repeat with baseline controls
+        shell: bash
+        run: |
+          sudo -n python3 Tools/profiler_platform_bench/repeat_case.py compare "$PWD/baseline/python.exe" "$PWD/python.exe" | tee repeated-results.jsonl
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: sampling-windows-${{ matrix.arch }}
+          name: intel-repeated-controls
           path: |
-            sampling-results.*
-            impact-results.*
+            repeated-results.jsonl
             *-build.log
+            *-configure.log
