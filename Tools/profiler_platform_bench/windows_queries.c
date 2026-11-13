@@ -56,8 +56,8 @@ static ULONG direct_state(DWORD tid) {
                                                &info, sizeof(info), &size);
     CloseHandle(thread);
     if (status || size != sizeof(info) ||
-        (DWORD)(uintptr_t)info.ClientId.UniqueThread != tid ||
-        (DWORD)(uintptr_t)info.ClientId.UniqueProcess != GetCurrentProcessId()) {
+        (ULONG_PTR)info.ClientId.UniqueThread != (ULONG_PTR)tid ||
+        (ULONG_PTR)info.ClientId.UniqueProcess != (ULONG_PTR)GetCurrentProcessId()) {
         fprintf(stderr, "direct status=%lx size=%lu expected=%zu\n", (unsigned long)status,size,sizeof(info));
         exit(7);
     }

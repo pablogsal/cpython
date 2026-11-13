@@ -1,7 +1,5 @@
 """Compare the same target executable under two profiler builds."""
-import argparse
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -37,9 +35,9 @@ def worker(target_python, count, loaded):
             mode = {'wall': 0, 'all': 3,
                     'cpu': 1}.get(name, 0)
             unwinder = remote.RemoteUnwinder(child.pid, all_threads=True, mode=mode,
-                                           skip_non_matching_threads=False)
+                                           skip_non_matching_threads=False, cache_frames=True)
             if name == 'attach':
-                action = lambda: remote.RemoteUnwinder(child.pid, all_threads=True)
+                action = lambda: remote.RemoteUnwinder(child.pid, all_threads=True, cache_frames=True)
             elif name == 'async':
                 action = unwinder.get_all_awaited_by
             else:
@@ -54,7 +52,7 @@ def worker(target_python, count, loaded):
                         raise
             cpu_start = time.process_time_ns()
             start = time.perf_counter()
-            while len(samples) < 30 or time.perf_counter() - start < 0.15:
+            while len(samples) < 30 or time.perf_counter() - start < 1.0:
                 before = time.perf_counter_ns()
                 try:
                     value = action()
@@ -62,13 +60,15 @@ def worker(target_python, count, loaded):
                     if name != 'async' or loaded:
                         raise
                     failures += 1
+                    elapsed = time.perf_counter_ns() - before
                 else:
+                    elapsed = time.perf_counter_ns() - before
                     if name in ('all', 'cpu'):
                         for interp in value:
                             for info in interp.threads:
                                 records += 1
                                 unknown += bool(info.status & (1 << 2))
-                samples.append(time.perf_counter_ns() - before)
+                samples.append(elapsed)
             cpu_ns = time.process_time_ns() - cpu_start
             samples.sort()
             results[name] = {'median_ns': statistics.median(samples),
@@ -92,7 +92,7 @@ def compare(baseline, candidate):
                 for label, executable in order:
                     output = subprocess.check_output([executable, __file__, 'worker',
                                baseline, str(count), str(int(loaded))], text=True)
-                    row = {'build': label, 'threads': count, 'async_loaded': loaded,
+                    row = {'build': label, 'worker_threads': count, 'asyncio_imported': loaded,
                            'trial': trial, 'measurements': json.loads(output)}
                     results.append(row)
                     print(json.dumps(row), flush=True)
