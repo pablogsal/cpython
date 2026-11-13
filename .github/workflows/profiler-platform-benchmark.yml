@@ -1,0 +1,32 @@
+name: Profiler platform measurements
+on:
+  push:
+    branches: [bench-profiler-platform-inspection-20261113]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-queries:
+    runs-on: windows-2025
+    strategy:
+      matrix:
+        arch: [x86, x64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile query comparison
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
+          cl /O2 /W4 /Fe:windows_queries.exe Tools\profiler_platform_bench\windows_queries.c /link ntdll.lib
+      - name: Measure query methods
+        shell: pwsh
+        run: |
+          ./windows_queries.exe | Tee-Object -FilePath windows-queries.csv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows-queries-${{ matrix.arch }}
+          path: windows-queries.csv
