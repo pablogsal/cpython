@@ -30,3 +30,38 @@ jobs:
         with:
           name: windows-queries-${{ matrix.arch }}
           path: windows-queries.csv
+  macos-sampling:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-26, macos-26-intel]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: 2c2d8018a20da33c749f42cc6a4ae55664a88321
+          path: baseline
+          persist-credentials: false
+      - name: Build both revisions with matching flags
+        shell: bash
+        run: |
+          ./configure --without-ensurepip > candidate-configure.log 2>&1
+          make -j4 > candidate-build.log 2>&1
+          cd baseline
+          ./configure --without-ensurepip > ../baseline-configure.log 2>&1
+          make -j4 > ../baseline-build.log 2>&1
+      - name: Compare profiler calls against identical targets
+        shell: bash
+        run: |
+          python3 Tools/profiler_platform_bench/sampling.py compare "$PWD/baseline/python.exe" "$PWD/python.exe" | tee sampling-results.jsonl
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: sampling-${{ matrix.os }}
+          path: |
+            sampling-results.*
+            *-build.log
+            *-configure.log
