@@ -1,77 +1,18 @@
-name: Profiler platform measurements
+name: Profiler Windows sampling measurements
 on:
   push:
-    branches: [bench-profiler-platform-inspection-20261113]
+    branches: [bench-profiler-windows-20261113]
   workflow_dispatch:
 concurrency:
-  group: profiler-platform-measurements
+  group: profiler-windows-measurements
   cancel-in-progress: true
 permissions:
   contents: read
 jobs:
-  windows-queries:
-    runs-on: windows-2025
-    strategy:
-      matrix:
-        arch: [x86, x64]
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-      - name: Compile query comparison
-        shell: cmd
-        run: |
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
-          cl /O2 /W4 /Fe:windows_queries.exe Tools\profiler_platform_bench\windows_queries.c /link ntdll.lib
-      - name: Measure query methods
-        shell: pwsh
-        run: |
-          ./windows_queries.exe | Tee-Object -FilePath windows-queries.csv
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: windows-queries-${{ matrix.arch }}
-          path: windows-queries.csv
-  macos-sampling:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [macos-26, macos-26-intel]
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: 2c2d8018a20da33c749f42cc6a4ae55664a88321
-          path: baseline
-          persist-credentials: false
-      - name: Build both revisions with matching flags
-        shell: bash
-        run: |
-          ./configure --without-ensurepip > candidate-configure.log 2>&1
-          make -j4 > candidate-build.log 2>&1
-          cd baseline
-          ./configure --without-ensurepip > ../baseline-configure.log 2>&1
-          make -j4 > ../baseline-build.log 2>&1
-      - name: Compare profiler calls against identical targets
-        shell: bash
-        run: |
-          sudo -n python3 Tools/profiler_platform_bench/sampling.py compare "$PWD/baseline/python.exe" "$PWD/python.exe" | tee sampling-results.jsonl
-      - uses: actions/upload-artifact@v7.0.1
-        if: always()
-        with:
-          name: sampling-${{ matrix.os }}
-          path: |
-            sampling-results.*
-            *-build.log
-            *-configure.log
-
   windows-sampling:
     runs-on: windows-2025
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x64
@@ -90,11 +31,11 @@ jobs:
           persist-credentials: false
       - name: Build candidate
         shell: cmd
-        run: PCbuild\build.bat -E -p ${{ matrix.arch }} -c Release > candidate-build.log 2>&1
+        run: PCbuild\build.bat -e --no-ssl --no-tkinter --no-ctypes -p ${{ matrix.arch }} -c Release > candidate-build.log 2>&1
       - name: Build baseline
         shell: cmd
         working-directory: baseline
-        run: PCbuild\build.bat -E -p ${{ matrix.arch }} -c Release > ..\baseline-build.log 2>&1
+        run: PCbuild\build.bat -e --no-ssl --no-tkinter --no-ctypes -p ${{ matrix.arch }} -c Release > ..\baseline-build.log 2>&1
       - name: Compare full calls and target throughput
         shell: pwsh
         run: |
